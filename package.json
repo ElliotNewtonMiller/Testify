@@ -1,8 +1,8 @@
 {
-  "name": "testlink-sequel",
+  "name": "testify",
   "version": "1.0.0",
   "private": true,
-  "description": "Modernized TestLink Sequel Platform - High-Performance Test Management",
+  "description": "Modernized Testify Platform - High-Performance Test Management",
   "workspaces": [
     "packages/*",
     "apps/*"

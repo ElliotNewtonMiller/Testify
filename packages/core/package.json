@@ -1,5 +1,5 @@
 {
-  "name": "@testlink/core",
+  "name": "@testify/core",
   "version": "1.0.0",
   "private": true,
   "type": "module",

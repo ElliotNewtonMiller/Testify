@@ -1,13 +1,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
+import type { Database } from '@testify/db';
 import { sendPlanLockedError, sendBuildClosedError } from '../errors.js';
 import type {
   BatchExecutionRequest,
   BatchExecutionResponse,
   BatchExecutionSingleResult,
-} from '@testlink/core';
+} from '@testify/core';
 
 export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>) {
   app.post(
@@ -204,7 +204,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           failedCount++;
           if (allOrNothing) {
             return reply.status(422).send({
-              type: 'https://api.testlink-next.io/errors/VALIDATION_FAILED',
+              type: 'https://api.testify.dev/errors/VALIDATION_FAILED',
               title: 'Unprocessable Entity',
               status: 422,
               code: 'VALIDATION_FAILED',

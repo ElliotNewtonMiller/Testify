@@ -4,7 +4,7 @@ export interface PasswordValidationResult {
 }
 
 /**
- * Enforces TestLink Sequel Password Complexity Policy:
+ * Enforces Testify Password Complexity Policy:
  * 1. Total length must be between 8 and 100 characters.
  * 2. Passwords between 8 and 15 characters MUST contain:
  *    - At least one digit (0-9)

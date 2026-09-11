@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
-import { UserRepository, RoleRepository, RoleName } from '@testlink/db';
+import type { Database } from '@testify/db';
+import { UserRepository, RoleRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 
 export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
@@ -73,7 +73,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           resource_id: newUser.id,
           diff: JSON.stringify({ username: newUser.username, email: newUser.email, global_role: global_role || 'Tester' }),
           ip_address: '127.0.0.1',
-          user_agent: 'TestLinkAdminService',
+          user_agent: 'TestifyAdminService',
           created_at: now,
         })
         .execute();
@@ -142,7 +142,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_id: userId,
         diff: JSON.stringify({ global_role, project_roles }),
         ip_address: '127.0.0.1',
-        user_agent: 'TestLinkAdminService',
+        user_agent: 'TestifyAdminService',
         created_at: now,
       })
       .execute();
@@ -188,7 +188,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_id: userId,
         diff: JSON.stringify({ status }),
         ip_address: '127.0.0.1',
-        user_agent: 'TestLinkAdminService',
+        user_agent: 'TestifyAdminService',
         created_at: now,
       })
       .execute();

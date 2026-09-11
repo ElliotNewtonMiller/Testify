@@ -1,8 +1,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
-import { UserRepository, RoleRepository } from '@testlink/db';
-import { verifyJwt } from '@testlink/core';
+import type { Database } from '@testify/db';
+import { UserRepository, RoleRepository } from '@testify/db';
+import { verifyJwt } from '@testify/core';
 
 export interface AuthenticatedUser {
   id: string;

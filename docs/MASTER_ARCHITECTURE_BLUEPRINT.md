@@ -1,4 +1,4 @@
-# Master Architecture Blueprint: TestLink Sequel (Next-Gen Test Management Platform)
+# Master Architecture Blueprint: Testify (Next-Gen Test Management Platform)
 
 **Document Status:** Approved & Locked Master Blueprint  
 **Date:** September 8, 2026  
@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary & System Architecture
 
-TestLink Sequel is an enterprise-grade, modernized test management and execution platform engineered to eliminate TestLink's historical frictions—slow iframe page reloads, fragmented suite navigation, lost step-level history, clunky version branching, and brittle database migrations—while strictly maintaining core enterprise QA mental models (**Test Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Builds, Executions, and Dynamic Custom Fields**).
+Testify is an enterprise-grade, modernized test management and execution platform engineered to eliminate TestLink's historical frictions—slow iframe page reloads, fragmented suite navigation, lost step-level history, clunky version branching, and brittle database migrations—while strictly maintaining core enterprise QA mental models (**Test Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Builds, Executions, and Dynamic Custom Fields**).
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -30,7 +30,7 @@ TestLink Sequel is an enterprise-grade, modernized test management and execution
 |                                        APPLICATION & API GATEWAY                                  |
 |  +---------------------------------------------------------------------------------------------+  |
 |  | OpenAPI 3.1 Routing | RFC 7807 Error Handler | Token Bucket Rate Limiter (1,000 / 10,000 rpm)    |  |
-|  | Security Middleware | JWT & Machine API Token Validator (tl_live_..., tl_ci_...)              |  |
+|  | Security Middleware | JWT & Machine API Token Validator (tf_live_..., tf_ci_...)              |  |
 |  +---------------------------------------------------------------------------------------------+  |
 |  +-------------------------------------+       +-----------------------------------------------+  |
 |  | Core Spec & Execution Services      |       | Extensible Ingestion & Migration Engine       |  |
@@ -519,7 +519,7 @@ The ingestion engine parses legacy **TestLink XML**, **Native JSON Schema**, and
 
 ### 6.2 Machine API Token Security Protocol
 
-- **Token Format:** Prefixed entropy strings (`tl_live_...`, `tl_ci_...`).
+- **Token Format:** Prefixed entropy strings (`tf_live_...`, `tf_ci_...`).
 - **Disclosure:** Revealed **strictly once** in UI/API response upon creation.
 - **Storage:** Argon2id or SHA-256 salted hashes stored in `api_tokens` table.
 - **Scoping:** Bound strictly to target `project_id` and allowed capability array (`['EXECUTE_RUN', 'SPEC_VIEW']`).

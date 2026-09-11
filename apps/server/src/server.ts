@@ -8,14 +8,14 @@ import {
   migration001,
   seedCoreLoopData,
   type Database,
-} from '@testlink/db';
+} from '@testify/db';
 import type { Kysely } from 'kysely';
 import { registerIngestionRoutes } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { sendCaseVersionLockedError } from './errors.js';
-import { UserRepository } from '@testlink/db';
+import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
 // ephemeral, zero-config PGlite (WASM Postgres) instance -- no server, no native bindings,
@@ -164,7 +164,7 @@ export async function createServer(connectionString?: string) {
 
     if (build.build_status === 'CLOSED') {
       return reply.header('content-type', 'application/problem+json').status(422).send({
-        type: 'https://api.testlink-next.io/errors/BUILD_CLOSED',
+        type: 'https://api.testify.dev/errors/BUILD_CLOSED',
         title: 'Unprocessable Entity',
         status: 422,
         code: 'BUILD_CLOSED',
@@ -175,7 +175,7 @@ export async function createServer(connectionString?: string) {
 
     if (build.plan_status === 'LOCKED' || build.plan_status === 'ARCHIVED') {
       return reply.header('content-type', 'application/problem+json').status(422).send({
-        type: 'https://api.testlink-next.io/errors/PLAN_LOCKED',
+        type: 'https://api.testify.dev/errors/PLAN_LOCKED',
         title: 'Unprocessable Entity',
         status: 422,
         code: 'PLAN_LOCKED',

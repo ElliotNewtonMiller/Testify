@@ -77,7 +77,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
       name: 'S3StorageProvider',
       generatePresignedUploadUrl: async (key: string) => {
         return {
-          uploadUrl: `https://s3.amazonaws.com/testlink-attachments/${key}?token=mock-presigned`,
+          uploadUrl: `https://s3.amazonaws.com/testify-attachments/${key}?token=mock-presigned`,
           storageKey: key,
           expiresInSeconds: 900,
         };

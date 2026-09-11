@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
-import { UserRepository, RoleRepository } from '@testlink/db';
-import { signJwt } from '@testlink/core';
+import type { Database } from '@testify/db';
+import { UserRepository, RoleRepository } from '@testify/db';
+import { signJwt } from '@testify/core';
 import { authenticateRequest } from '../middleware/auth.js';
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
@@ -98,7 +98,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
           resource_id: activeUser.id,
           diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email }),
           ip_address: '127.0.0.1',
-          user_agent: 'TestLinkAuthService',
+          user_agent: 'TestifyAuthService',
           created_at: now,
         })
         .execute();

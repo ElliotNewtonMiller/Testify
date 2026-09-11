@@ -56,7 +56,7 @@
   - Ingestion engine uses an **Extensible Parser Plugin Architecture**.
   - **Built-in Out of the Box Formats:**
     1. TestLink XML (`<testsuite>`, `<testcase>`, `<steps>`)
-    2. Native TestLink-Next JSON Schema (`.json` test suite bundles)
+    2. Native Testify JSON Schema (`.json` test suite bundles)
     3. Standard CSV tabular spec sheets (`.csv`)
 - **Duplicate Reconciliation Engine:**
   - Interactive session modal prompts the importer upon encountering duplicate suite/case titles.

@@ -53,7 +53,7 @@ describe('User & Role Repositories', () => {
     const admin = await userRepo.seedInitialAdmin();
     expect(admin).not.toBeNull();
     expect(admin.username).toBe('admin');
-    expect(admin.email).toBe('admin@testlink.local');
+    expect(admin.email).toBe('admin@testify.local');
 
     const role = await roleRepo.getUserGlobalRole(admin.id);
     expect(role).toBe('Admin');
@@ -73,7 +73,7 @@ describe('User & Role Repositories', () => {
 
     const newUser = await userRepo.create({
       username: 'tester_john',
-      email: 'john@testlink.local',
+      email: 'john@testify.local',
       password: 'MyPassword123!',
       global_role: 'Tester',
     });
@@ -98,7 +98,7 @@ describe('User & Role Repositories', () => {
   it('enforces explicit project roles and privilege delegation', async () => {
     const lead = await userRepo.create({
       username: 'dev_lead',
-      email: 'lead@testlink.local',
+      email: 'lead@testify.local',
       password: 'LeadPassword1!',
       global_role: 'Tester', // Global Tester
     });

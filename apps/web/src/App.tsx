@@ -45,7 +45,7 @@ interface WorkspaceData {
 }
 
 const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
-  project: { id: "prj_01", name: "TestLink Sequel Core", prefix: "TLS" },
+  project: { id: "prj_01", name: "Testify Core", prefix: "TFY" },
   suites: [
     { id: "ste_01", name: "Authentication & Security", path: "/Security" },
     { id: "ste_02", name: "Execution Engine & Dual Driver", path: "/CoreLoop" },
@@ -57,7 +57,7 @@ const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
     {
       plan_case_id: "tpc_01",
       case_id: "cas_01",
-      external_id: "TLS-101",
+      external_id: "TFY-101",
       title: "Verify initial superuser admin login & password policy",
       priority: "HIGH",
       execution_type: "MANUAL",
@@ -86,7 +86,7 @@ const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
     {
       plan_case_id: "tpc_02",
       case_id: "cas_02",
-      external_id: "TLS-102",
+      external_id: "TFY-102",
       title: "Verify explicit per-project role enforcement & RBAC Admin Panel",
       priority: "CRITICAL",
       execution_type: "AUTOMATED",
@@ -129,7 +129,7 @@ export default function App() {
 
   // Entity Selection State (Project, Plan, Run)
   const [projectsList, setProjectsList] = useState<EntityItem[]>([
-    { id: "prj_01", name: "TestLink Sequel Core", prefix: "TLS" },
+    { id: "prj_01", name: "Testify Core", prefix: "TFY" },
     { id: "prj_02", name: "Security Audit Engine", prefix: "SEC" },
     { id: "prj_03", name: "Automation Framework", prefix: "AUTO" },
   ]);
@@ -197,7 +197,7 @@ export default function App() {
                 project: {
                   id: item.id,
                   name: item.name,
-                  prefix: item.prefix || "TLS",
+                  prefix: item.prefix || "TFY",
                 },
               }
             : prev,
@@ -232,7 +232,7 @@ export default function App() {
                   project: {
                     id: updated[0].id,
                     name: updated[0].name,
-                    prefix: updated[0].prefix || "TLS",
+                    prefix: updated[0].prefix || "TFY",
                   },
                 }
               : prev,
@@ -358,7 +358,7 @@ export default function App() {
               project: {
                 id: target.id,
                 name: target.name,
-                prefix: target.prefix || "TLS",
+                prefix: target.prefix || "TFY",
               },
             }
           : prev,

@@ -4,7 +4,7 @@ This file orients any AI coding agent (Claude, Gemini/Antigravity, etc.) or huma
 
 ## What this project is
 
-Testify (internal codename in the docs/config: **"TestLink Sequel"** / `testlink-sequel`) is an open-source, self-hostable test case management platform meant as a modern, faster, more extensible replacement for TestLink. Core entities: Projects → Test Suites (recursive tree) → Test Cases → Test Case Versions → Test Steps, plus Test Plans → Builds → Executions, dynamic Custom Fields, and a granular RBAC/permission system.
+Testify is an open-source, self-hostable test case management platform meant as a modern, faster, more extensible replacement for TestLink. Core entities: Projects → Test Suites (recursive tree) → Test Cases → Test Case Versions → Test Steps, plus Test Plans → Builds → Executions, dynamic Custom Fields, and a granular RBAC/permission system.
 
 The product direction was defined by an Antigravity (Gemini) multi-agent planning session — see **Doc map** below — before implementation started. Slices 0–2 (infra, read spine, execution loop) are substantially implemented; slices 3–4 (admin/RBAC UI, custom fields engine, import/export, storage) are partial or not yet started. See "Implementation status" below for specifics.
 
@@ -90,6 +90,19 @@ One thing this pass deliberately did **not** touch, worth a follow-up:
 
 Note: `apps/web/src/App.tsx` still sends an `X-User-Id` header on the `POST /api/v1/executions` call (the execution-logging inline route in `server.ts`). That's untouched and harmless either way, since that route -- like `ingestion.ts`/`batchExecution.ts` above -- has no auth check on the server side at all yet.
 
+## Renamed to Testify (2026-09-11)
+
+The codebase used to call itself "TestLink Sequel" (root `package.json` name `testlink-sequel`, npm workspace scope `@testlink/*`) even though the repo folder and Elliot's own name for the project were already "Testify" -- flagged as a gap in this file until now. Renamed everywhere it was self-referential:
+
+- `package.json` names: root `testlink-sequel` -> `testify`; workspace scope `@testlink/core|db|server|web` -> `@testify/core|db|server|web` (and every `import ... from '@testlink/...'` in `apps/server/src`). `npm install` re-links the workspaces after a scope rename like this -- ran fine offline.
+- Branding strings in code: the password-policy doc comment, audit-log `user_agent` values (`TestLinkAdminService`/`TestLinkAuthService` -> `TestifyAdminService`/`TestifyAuthService`), the RFC-7807 problem-type base URI (`https://api.testlink-next.io/errors/...` -> `https://api.testify.dev/errors/...`, both in code and the 3 tests asserting on it), and the default/seed admin & test-user email domain (`@testlink.local` -> `@testify.local`, across `user.repository.ts` and the tests that assert on it).
+- UI copy in `apps/web`: the login screen title ("TESTLINK SEQUEL" -> "TESTIFY"), the "contact your ... Administrator" copy, and the fallback/mock workspace data (`"TestLink Sequel Core"` -> `"Testify Core"`, external-ID prefix `TLS` -> `TFY`).
+- Docs: renamed every *self-referential* mention across `docs/00_requirements_alignment.md`, `docs/01_vertical_slices_roadmap.md`, `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`, and `docs/rfc_01..04*.md` -- including the RFCs that called the product "TestLink-Next" rather than "TestLink Sequel" (both were just this project's earlier names). Also renamed the not-yet-implemented machine API token prefix scheme documented there (`tl_live_...`/`tl_ci_...` -> `tf_live_...`/`tf_ci_...`) and a couple of cosmetic example strings (mock S3 bucket/webhook names) for consistency.
+
+Deliberately **left alone**, because it's describing the real external tool/format, not this product: every "TestLink" that means the legacy TestLink application Testify replaces or is migrating from (e.g. "replacement for TestLink", "TestLink's legacy pain points"), and the **TestLink XML** import format name (`TESTLINK_XML` format id, `SaxXmlParser`, related test names/fixtures) -- that's the actual name of the legacy interchange format Testify's importer parses, unrelated to what this product calls itself. Also left alone: the `.antigravity/` planning docs (they only ever say generic things like "a modernized TestLink alternative" -- they never named the product itself, so there was nothing to rename) and the stale `file://...testlink-local/...` cross-reference links inside the RFC docs (pre-existing broken links to an old machine-specific path, unrelated to branding -- same "historical planning artifact, don't rewrite" treatment already given to the pnpm/Turborepo assumptions in `01_vertical_slices_roadmap.md`).
+
+`npm test`: 74/74, unchanged. `tsc --noEmit` clean on `apps/web`/`packages/core`; the same 2 pre-existing errors remain on `apps/server`/`packages/db` (see "SQLite support was dropped" above), unrelated to this rename.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -103,7 +116,6 @@ Note: `apps/web/src/App.tsx` still sends an `X-User-Id` header on the `POST /api
 
 - **Auth tokens are now real, but three routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts`, `apps/server/src/routes/batchExecution.ts`, and the inline `POST /api/v1/executions` route in `server.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. See "Auth: unsigned tokens replaced with signed JWTs" above.
 - **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
-- **Project naming is inconsistent**: the folder is `Testify`, `package.json`'s `name` is `testlink-sequel`, and the docs call the product "TestLink Sequel" throughout. Worth picking one name and updating `package.json`/docs/UI copy to match if "Testify" is the real name going forward.
 
 ## Git
 

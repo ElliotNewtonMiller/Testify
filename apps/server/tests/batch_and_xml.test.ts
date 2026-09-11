@@ -368,7 +368,7 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       const err = JSON.parse(res.body);
       expect(err.code).toBe('PLAN_LOCKED');
       expect(err.status).toBe(422);
-      expect(err.type).toBe('https://api.testlink-next.io/errors/PLAN_LOCKED');
+      expect(err.type).toBe('https://api.testify.dev/errors/PLAN_LOCKED');
       expect(err.detail).toContain('locked');
     });
 
@@ -391,7 +391,7 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       const err = JSON.parse(res.body);
       expect(err.code).toBe('BUILD_CLOSED');
       expect(err.status).toBe(422);
-      expect(err.type).toBe('https://api.testlink-next.io/errors/BUILD_CLOSED');
+      expect(err.type).toBe('https://api.testify.dev/errors/BUILD_CLOSED');
       expect(err.invalid_params[0].name).toBe('build_id');
     });
 
@@ -413,7 +413,7 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       const err = JSON.parse(res.body);
       expect(err.code).toBe('CASE_VERSION_LOCKED');
       expect(err.status).toBe(422);
-      expect(err.type).toBe('https://api.testlink-next.io/errors/CASE_VERSION_LOCKED');
+      expect(err.type).toBe('https://api.testify.dev/errors/CASE_VERSION_LOCKED');
     });
   });
 });

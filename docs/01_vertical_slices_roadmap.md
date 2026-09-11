@@ -1,4 +1,4 @@
-# Vertical Slices Implementation Roadmap: TestLink Sequel
+# Vertical Slices Implementation Roadmap: Testify
 
 **Document Status:** Approved Architecture Implementation Guide  
 **Date:** September 8, 2026  
@@ -10,10 +10,10 @@
 
 ## 1. Executive Summary & Slicing Strategy
 
-This document establishes the official vertical slicing roadmap for **TestLink Sequel**, transforming the locked architectural specifications in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](file:///home/elliot/Documents/Code/testlink-local/docs/MASTER_ARCHITECTURE_BLUEPRINT.md) into 5 discrete, E2E executable, and independently testable implementation increments.
+This document establishes the official vertical slicing roadmap for **Testify**, transforming the locked architectural specifications in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](file:///home/elliot/Documents/Code/testlink-local/docs/MASTER_ARCHITECTURE_BLUEPRINT.md) into 5 discrete, E2E executable, and independently testable implementation increments.
 
 ### 1.1 Vertical Slicing Principles
-Rather than building by horizontal layers (e.g., all database tables first, then all backend routes, then UI screens), TestLink Sequel is sliced vertically across feature capabilities:
+Rather than building by horizontal layers (e.g., all database tables first, then all backend routes, then UI screens), Testify is sliced vertically across feature capabilities:
 1. **End-to-End Functionality**: Each slice delivers fully functioning capabilities across database migrations, core domain services, REST API endpoints, and user interface components.
 2. **Zero Architectural Drift**: Implementation strictly adheres to locked ERD schemas, OpenAPI 3.1 contracts, state machine invariants, keyboard focus zone rules, and RBAC permission matrices defined in the master blueprint.
 3. **Continuous Verification**: Every slice specifies deterministic verification commands (`pnpm test:*`) and measurable exit criteria before proceeding to downstream slices.
@@ -58,7 +58,7 @@ flowchart TD
 
     subgraph SLICE_4 [Slice 4 - Integrations & Storage E2E]
         S4_1[SAX Stream XML / CSV Importer Engine]
-        S4_2[Machine API Tokens tl_ci_ / tl_live_]
+        S4_2[Machine API Tokens tf_ci_ / tf_live_]
         S4_3[Out-of-Band S3 / Local Storage Provider]
     end
 ```
@@ -146,7 +146,7 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
 | `custom_field_values` | `VARCHAR(36)` | FK `custom_field_definition_id` | Polymorphic dynamic entity binding. |
 | `roles`, `permissions`, `role_permissions` | `VARCHAR(36)` | FKs linking roles to permissions | RBAC default matrix seeds. |
 | `user_project_roles`, `user_permission_overrides` | `VARCHAR(36)` | FKs to projects & users | Contextual security bindings. |
-| `api_tokens` | `VARCHAR(36)` | FK `project_id`; Unique `token_hash` | Salted token storage (`tl_live_...`, `tl_ci_...`). |
+| `api_tokens` | `VARCHAR(36)` | FK `project_id`; Unique `token_hash` | Salted token storage (`tf_live_...`, `tf_ci_...`). |
 
 #### 3.1.4 API Endpoints & Request/Response Contracts
 
@@ -171,7 +171,7 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
 - **Response `200 OK`**:
 ```json
 {
-  "name": "TestLink Sequel Core API",
+  "name": "Testify Core API",
   "version": "1.0.0",
   "api_version": "v1",
   "schema_version": "001_initial_schema",
@@ -193,22 +193,22 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
 #### 3.1.6 Concrete Verification Strategy & Test Commands
 1. **SQLite Migration Test**:
    ```bash
-   pnpm --filter @testlink/db test:migrate:sqlite
+   pnpm --filter @testify/db test:migrate:sqlite
    ```
    *Assertion*: Migrates schema cleanly on `better-sqlite3` in-memory DB and executes rollback cleanly.
 2. **PostgreSQL Migration Test**:
    ```bash
-   pnpm --filter @testlink/db test:migrate:postgres
+   pnpm --filter @testify/db test:migrate:postgres
    ```
    *Assertion*: Migrates schema cleanly on PostgreSQL instance.
 3. **Database Trigger Immutability Assertion**:
    ```bash
-   pnpm --filter @testlink/db test:triggers
+   pnpm --filter @testify/db test:triggers
    ```
    *Assertion*: Executing `UPDATE audit_logs ...` or `DELETE FROM audit_logs ...` raises an error with message `MUTATION_DENIED`.
 4. **Seed Validation Test**:
    ```bash
-   pnpm --filter @testlink/db db:seed
+   pnpm --filter @testify/db db:seed
    ```
    *Assertion*: Populates seed project (`PRJ-01`), 10 suites, 50 test cases, 5 test plans, and default RBAC roles without FK constraint failures.
 
@@ -224,7 +224,7 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
 ### 3.2 Slice 1: The Read Spine
 
 #### 3.2.1 Overview & Scope
-Slice 1 delivers the full read-only spine of TestLink Sequel. It implements the high-density 3-Pane UI layout skeleton, virtualized tree rendering for recursive suite structures, high-performance case queue tables, and read-only RESTful API endpoints for projects, suites, cases, versions, steps, plans, and builds.
+Slice 1 delivers the full read-only spine of Testify. It implements the high-density 3-Pane UI layout skeleton, virtualized tree rendering for recursive suite structures, high-performance case queue tables, and read-only RESTful API endpoints for projects, suites, cases, versions, steps, plans, and builds.
 
 #### 3.2.2 Target File Structure & Module Dependencies
 ```
@@ -511,7 +511,7 @@ apps/
 #### 3.3.6 Concrete Verification Strategy & Test Commands
 1. **State Machine Unit Tests**:
    ```bash
-   pnpm --filter @testlink/core test:unit:fsm
+   pnpm --filter @testify/core test:unit:fsm
    ```
    *Assertion*: Verifies all valid/invalid transitions for Case Version, Test Plan, Execution Run, and Focus Zone state machines.
 2. **Locked Plan Guard Test**:
@@ -631,7 +631,7 @@ apps/
 #### 3.4.6 Concrete Verification Strategy & Test Commands
 1. **RBAC Precedence Unit Test**:
    ```bash
-   pnpm --filter @testlink/core test:unit:rbac
+   pnpm --filter @testify/core test:unit:rbac
    ```
    *Assertion*: Evaluates all 5 levels of the precedence equation:
    $$\text{User Project Override} \succ \text{User System Override} \succ \text{Project Role Grant} \succ \text{Global Role Grant} \succ \text{Default Deny}$$
@@ -658,7 +658,7 @@ apps/
 ### 3.5 Slice 4: Integrations & Migrations
 
 #### 3.5.1 Overview & Scope
-Slice 4 completes the platform capabilities by delivering enterprise ingestion, machine API security, export utilities, and out-of-band artifact storage. It includes the multi-format ingestion engine (`IFileParser`: SAX XML parser for legacy TestLink XML, JSON Schema parser, CSV parser with strict memory bounds <64MB heap), dry-run diff preview and interactive reconciliation modals, Machine API Token management (`tl_live_...`, `tl_ci_...`), CSV export streaming, and out-of-band attachments storage via `IStorageProvider` (Local FS and AWS S3/MinIO).
+Slice 4 completes the platform capabilities by delivering enterprise ingestion, machine API security, export utilities, and out-of-band artifact storage. It includes the multi-format ingestion engine (`IFileParser`: SAX XML parser for legacy TestLink XML, JSON Schema parser, CSV parser with strict memory bounds <64MB heap), dry-run diff preview and interactive reconciliation modals, Machine API Token management (`tf_live_...`, `tf_ci_...`), CSV export streaming, and out-of-band attachments storage via `IStorageProvider` (Local FS and AWS S3/MinIO).
 
 #### 3.5.2 Target File Structure & Module Dependencies
 ```
@@ -679,7 +679,7 @@ apps/
 ├── server/
 │   ├── src/
 │   │   ├── middleware/
-│   │   │   └── tokenAuthMiddleware.ts   # Machine API token validator (tl_live_ / tl_ci_)
+│   │   │   └── tokenAuthMiddleware.ts   # Machine API token validator (tf_live_ / tf_ci_)
 │   │   └── routes/
 │   │       ├── imports.ts               # POST /imports/dry-run, POST /imports/execute
 │   │       ├── exports.ts               # GET /exports/csv
@@ -758,7 +758,7 @@ apps/
 {
   "id": "018f3a21-7b00-7000-8000-000000000555",
   "name": "GitHub Actions CI Runner",
-  "raw_token": "tl_ci_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b",
+  "raw_token": "tf_ci_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b",
   "capabilities": ["EXECUTE_RUN", "SPEC_VIEW"],
   "warning": "Copy this token now. It will never be shown again."
 }
@@ -769,7 +769,7 @@ apps/
 - **Response `200 OK`**:
 ```json
 {
-  "upload_url": "https://testlink-bucket.s3.amazonaws.com/attachments/exec_100/screenshot_failure.png?X-Amz-Signature=...",
+  "upload_url": "https://testify-bucket.s3.amazonaws.com/attachments/exec_100/screenshot_failure.png?X-Amz-Signature=...",
   "attachment_id": "att_991283",
   "file_key": "attachments/exec_100/screenshot_failure.png"
 }
@@ -786,19 +786,19 @@ apps/
 #### 3.5.6 Concrete Verification Strategy & Test Commands
 1. **SAX Parser Memory Bound Profiling Test**:
    ```bash
-   pnpm --filter @testlink/core test:perf:xml-memory
+   pnpm --filter @testify/core test:perf:xml-memory
    ```
    *Assertion*: Parsing a 100MB TestLink XML file containing 10,000 test cases maintains NodeJS heap memory below **64MB** maximum threshold throughout stream execution.
 2. **Multi-Format Ingestion Parity Test**:
    ```bash
-   pnpm --filter @testlink/core test:unit:importers
+   pnpm --filter @testify/core test:unit:importers
    ```
    *Assertion*: Parses TestLink XML, Native JSON Schema, and CSV files into identical internal `TestCaseSpec` structures.
 3. **Machine Token Authentication Test**:
    ```bash
    pnpm --filter server test:integration:api-tokens
    ```
-   *Assertion*: Requests header `Authorization: Bearer tl_ci_...` successfully authenticates and enforces scoped capability bounds.
+   *Assertion*: Requests header `Authorization: Bearer tf_ci_...` successfully authenticates and enforces scoped capability bounds.
 4. **S3 Pre-signed URL Attachment Integration Test**:
    ```bash
    pnpm --filter server test:integration:attachments
@@ -819,11 +819,11 @@ apps/
 
 | Slice ID | Target Focus | Key Deliverables | Primary Verification Commands | Exit Gate Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **Slice 0** | Infrastructure & Core Contract | Monorepo setup, dual-driver Kysely DB migrations (SQLite/Postgres), domain models, test seed generators | `pnpm --filter @testlink/db test:migrate:sqlite`<br>`pnpm --filter @testlink/db test:migrate:postgres`<br>`pnpm --filter @testlink/db test:triggers` | Clean migrations on SQLite & Postgres; DB trigger enforces append-only `audit_logs` (`MUTATION_DENIED`). |
+| **Slice 0** | Infrastructure & Core Contract | Monorepo setup, dual-driver Kysely DB migrations (SQLite/Postgres), domain models, test seed generators | `pnpm --filter @testify/db test:migrate:sqlite`<br>`pnpm --filter @testify/db test:migrate:postgres`<br>`pnpm --filter @testify/db test:triggers` | Clean migrations on SQLite & Postgres; DB trigger enforces append-only `audit_logs` (`MUTATION_DENIED`). |
 | **Slice 1** | The Read Spine | High-density 3-Pane UI layout (28px/32px height rules), virtualized tree/queue components, read-only API routes | `pnpm --filter server test:bench:read-spine`<br>`pnpm --filter web test:e2e:read-spine` | 5,000 suite tree query <35ms; Playwright virtualized list maintains 60fps at <100 DOM nodes. |
-| **Slice 2** | The Write & Execution Loop | Single-key hotkeys (`j/k/p/f/b/s/e`), Focus Zone FSM (Zone 1..5), batch execution ingestion (`/executions/batch`), plan lock HTTP 422 | `pnpm --filter @testlink/core test:unit:fsm`<br>`pnpm --filter server test:integration:batch-executions`<br>`pnpm --filter web test:e2e:hotkeys` | Batch ingestion of 500 cases <150ms; locked plan posts return HTTP 422; typing in text inputs auto-pauses hotkeys. |
-| **Slice 3** | Admin & Customization | Dynamic custom fields engine, RBAC permission evaluator (16 keys, precedence matrix), project settings | `pnpm --filter @testlink/core test:unit:rbac`<br>`pnpm --filter server test:integration:custom-fields` | 5-tier RBAC precedence equation validated; dynamic custom fields snapshot cleanly into execution history. |
-| **Slice 4** | Integrations & Migrations | SAX XML/JSON/CSV stream importer (<64MB heap), dry-run reconciliation, machine API tokens (`tl_ci_...`), S3 storage provider | `pnpm --filter @testlink/core test:perf:xml-memory`<br>`pnpm --filter server test:integration:api-tokens`<br>`pnpm --filter server test:integration:attachments` | 100MB XML file parsed with <64MB heap memory; API token authentication enforces scoped permissions; pre-signed S3 upload URLs valid. |
+| **Slice 2** | The Write & Execution Loop | Single-key hotkeys (`j/k/p/f/b/s/e`), Focus Zone FSM (Zone 1..5), batch execution ingestion (`/executions/batch`), plan lock HTTP 422 | `pnpm --filter @testify/core test:unit:fsm`<br>`pnpm --filter server test:integration:batch-executions`<br>`pnpm --filter web test:e2e:hotkeys` | Batch ingestion of 500 cases <150ms; locked plan posts return HTTP 422; typing in text inputs auto-pauses hotkeys. |
+| **Slice 3** | Admin & Customization | Dynamic custom fields engine, RBAC permission evaluator (16 keys, precedence matrix), project settings | `pnpm --filter @testify/core test:unit:rbac`<br>`pnpm --filter server test:integration:custom-fields` | 5-tier RBAC precedence equation validated; dynamic custom fields snapshot cleanly into execution history. |
+| **Slice 4** | Integrations & Migrations | SAX XML/JSON/CSV stream importer (<64MB heap), dry-run reconciliation, machine API tokens (`tf_ci_...`), S3 storage provider | `pnpm --filter @testify/core test:perf:xml-memory`<br>`pnpm --filter server test:integration:api-tokens`<br>`pnpm --filter server test:integration:attachments` | 100MB XML file parsed with <64MB heap memory; API token authentication enforces scoped permissions; pre-signed S3 upload URLs valid. |
 
 ---
 
@@ -853,4 +853,4 @@ This vertical slicing roadmap directly satisfies all 14 locked requirements esta
 ```
 
 ---
-*End of Vertical Slices Implementation Roadmap — TestLink Sequel v1.0 Production Baseline*
+*End of Vertical Slices Implementation Roadmap — Testify v1.0 Production Baseline*

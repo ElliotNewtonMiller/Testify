@@ -2,7 +2,7 @@
 
 **Status:** Draft / Approved Design (Amended 2026-09-11)  
 **Author:** Lead System Architect & QA Domain Specialist  
-**Target Platform:** TestLink Sequel Modernized Execution & Management Platform  
+**Target Platform:** Testify Modernized Execution & Management Platform  
 **Date:** September 8, 2026  
 
 > **2026-09-11 amendment:** Section 4 originally specified a dual-driver database layer
@@ -20,7 +20,7 @@
 
 ## 1. Executive Summary & Foundational Architectural Constraints
 
-This Request for Comments (RFC) establishes the foundational domain model, database normalization schema, state machines, granular permission matrix, and dynamic extension engine for the modernized TestLink platform. The architecture is engineered to eliminate TestLink’s legacy pain points—such as slow tree rendering, step-level data loss during re-runs, ambiguous build assignments, and schema upgrade lock-in—while strictly preserving core enterprise QA abstractions: **Test Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Builds, Executions, and Dynamic Custom Fields**.
+This Request for Comments (RFC) establishes the foundational domain model, database normalization schema, state machines, granular permission matrix, and dynamic extension engine for the modernized Testify platform. The architecture is engineered to eliminate TestLink’s legacy pain points—such as slow tree rendering, step-level data loss during re-runs, ambiguous build assignments, and schema upgrade lock-in—while strictly preserving core enterprise QA abstractions: **Test Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Builds, Executions, and Dynamic Custom Fields**.
 
 ```
                            +-------------------------------------+

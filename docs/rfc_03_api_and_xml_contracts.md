@@ -3,14 +3,14 @@
 **Document Status:** Approved & Locked  
 **Date:** September 8, 2026  
 **Author:** API & Integration Architecture Team  
-**Target Platform:** TestLink Sequel / Next-Gen Test Management  
+**Target Platform:** Testify / Next-Gen Test Management  
 **Related Documents:** [docs/00_requirements_alignment.md](file:///docs/00_requirements_alignment.md), [docs/rfc_01_domain_model.md](file:///docs/rfc_01_domain_model.md)
 
 ---
 
 ## 1. Architectural Principles & RESTful API Standards
 
-The TestLink Sequel API layer is built to solve two contrasting operational demands:
+The Testify API layer is built to solve two contrasting operational demands:
 1. **Real-Time Interactive UI:** Low-latency operations (< 50ms p95 response time) for browsing suite hierarchies, editing test cases, and toggling execution verdicts in the web application.
 2. **High-Throughput CI/CD Pipeline Ingestion:** Bulk result streaming capable of processing 1,000+ execution results per request from automated test runners (GitHub Actions, GitLab CI, Jenkins, Playwright, PyTest) without table locking or HTTP timeouts.
 
@@ -24,7 +24,7 @@ The TestLink Sequel API layer is built to solve two contrasting operational dema
                   | (Low-Latency RESTful JSON)                  | (High-Throughput Batch POST)
                   v                                             v
 +-----------------------------------------------------------------------------------+
-|                             TestLink Sequel API Gateway                           |
+|                             Testify API Gateway                                   |
 |  +-----------------------------------------------------------------------------+  |
 |  | Authentication (Bearer tk_...) & Rate Limiter (Token Bucket Engine)         |  |
 |  +-----------------------------------------------------------------------------+  |
@@ -197,7 +197,7 @@ Creates a Build entry under an active Test Plan.
 
 ## 3. High-Throughput CI/CD Ingestion Engine (`POST /executions/batch`)
 
-Modern automated test execution streams hundreds to thousands of test results in continuous integration pipelines. To support pipeline execution without causing connection pool exhaustion or lock contention, TestLink Sequel implements a specialized bulk ingestion endpoint.
+Modern automated test execution streams hundreds to thousands of test results in continuous integration pipelines. To support pipeline execution without causing connection pool exhaustion or lock contention, Testify implements a specialized bulk ingestion endpoint.
 
 ### 3.1 Bulk Endpoint Schema Specification
 
@@ -353,7 +353,7 @@ HTTP/1.1 422 Unprocessable Entity
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.testlink-next.io/errors/BUILD_CLOSED",
+  "type": "https://api.testify.dev/errors/BUILD_CLOSED",
   "title": "Unprocessable Entity",
   "status": 422,
   "code": "BUILD_CLOSED",
@@ -375,7 +375,7 @@ HTTP/1.1 422 Unprocessable Entity
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.testlink-next.io/errors/PLAN_LOCKED",
+  "type": "https://api.testify.dev/errors/PLAN_LOCKED",
   "title": "Unprocessable Entity",
   "status": 422,
   "code": "PLAN_LOCKED",
@@ -470,7 +470,7 @@ export interface IStorageProvider {
 
 ```
 +---------------+              +--------------------+              +--------------------+
-|  CI Runner /  |              | TestLink Sequel    |              | AWS S3 / MinIO     |
+|  CI Runner /  |              | Testify            |              | AWS S3 / MinIO     |
 | Client App    |              | API Gateway        |              | Storage Bucket     |
 +-------+-------+              +---------+----------+              +---------+----------+
         |                                |                                   |
@@ -505,7 +505,7 @@ export interface IStorageProvider {
 ```json
 {
   "storage_key": "att/proj-01/2026/09/0191c4d8-4444-7000-8000-000000000099.png",
-  "upload_url": "https://testlink-bucket.s3.us-east-1.amazonaws.com/att/proj-01/2026/09/0191c4d8-4444-7000-8000-000000000099.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&...",
+  "upload_url": "https://testify-bucket.s3.us-east-1.amazonaws.com/att/proj-01/2026/09/0191c4d8-4444-7000-8000-000000000099.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&...",
   "expires_at": "2026-09-08T13:30:00Z"
 }
 ```
@@ -514,13 +514,13 @@ export interface IStorageProvider {
 
 ## 6. Extensible Multi-Format Ingestion & Migration Engine
 
-Migrating legacy test repositories into TestLink Sequel requires supporting legacy **TestLink XML**, native **JSON**, and enterprise **CSV** format spec sheets while handling schema differences, missing custom fields, and duplicate suite titles.
+Migrating legacy test repositories into Testify requires supporting legacy **TestLink XML**, native **JSON**, and enterprise **CSV** format spec sheets while handling schema differences, missing custom fields, and duplicate suite titles.
 
 ```
 +-----------------------------------------------------------------------------------+
 |                        Multi-Format Ingestion Engine                              |
 |  +-----------------------+ +-----------------------+ +-------------------------+  |
-|  | Legacy TestLink XML   | | TestLink-Next JSON    | | Standard Tabular CSV    |  |
+|  | Legacy TestLink XML   | | Testify JSON          | | Standard Tabular CSV    |  |
 |  | (<testsuite>/<steps>) | | Schema Spec Sheet     | | Spec Sheets             |  |
 |  +-----------+-----------+ +-----------+-----------+ +------------+------------+  |
 +--------------|-------------------------|--------------------------|---------------+
@@ -610,7 +610,7 @@ export interface IFileParser {
 | `<custom_fields><custom_field>` | `TestCaseVersion.custom_fields` | `<name>` mapped to key, `<value>` mapped to value string. |
 
 #### Native JSON & CSV Mapping Policies:
-- **Native JSON (`.json`):** Validated against `testlink-next-suite.schema.json`. Directly mirrors domain models without loss.
+- **Native JSON (`.json`):** Validated against `testify-suite.schema.json`. Directly mirrors domain models without loss.
 - **Standard CSV (`.csv`):** Configurable column headers: `Suite Path`, `Title`, `External ID`, `Summary`, `Preconditions`, `Step Number`, `Step Action`, `Step Expected Result`, `Importance`, `Execution Type`, plus arbitrary custom field columns (`CF: Automation ID`).
 
 ---
@@ -781,7 +781,7 @@ Retry-After: 30
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.testlink-next.io/errors/RATE_LIMIT_EXCEEDED",
+  "type": "https://api.testify.dev/errors/RATE_LIMIT_EXCEEDED",
   "title": "Too Many Requests",
   "status": 429,
   "code": "RATE_LIMIT_EXCEEDED",
@@ -793,7 +793,7 @@ Content-Type: application/problem+json
 ---
 
 ### 7.3 Webhook Event Delivery & HMAC-SHA256 Signing Protocols
-TestLink Sequel pushes real-time event notifications to external webhooks (Slack, Jira, CI pipelines, custom microservices).
+Testify pushes real-time event notifications to external webhooks (Slack, Jira, CI pipelines, custom microservices).
 
 #### Supported Webhook Events:
 - `execution.failed`: Triggered when an automated or manual test run reports a `FAILED` or `BLOCKED` verdict.
@@ -809,7 +809,7 @@ Every outbound HTTP POST payload contains security headers allowing receivers to
 
 #### Outbound Webhook Request Example:
 ```http
-POST /hooks/testlink-notifications HTTP/1.1
+POST /hooks/testify-notifications HTTP/1.1
 Host: ci-bridge.company.com
 Content-Type: application/json
 X-Signature-Timestamp: 1757365166

@@ -1,5 +1,5 @@
 {
-  "name": "@testlink/db",
+  "name": "@testify/db",
   "version": "1.0.0",
   "private": true,
   "type": "module",

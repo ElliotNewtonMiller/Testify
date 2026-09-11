@@ -54,7 +54,7 @@ export class UserRepository {
     const adminUser: NewUser = {
       id: adminId,
       username: 'admin',
-      email: 'admin@testlink.local',
+      email: 'admin@testify.local',
       password_hash: `${salt}:${hash}`,
       status: 'ACTIVE',
       created_at: now,

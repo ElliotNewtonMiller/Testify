@@ -3,7 +3,7 @@
 | Metadata | Value |
 | :--- | :--- |
 | **Status** | Approved & Locked |
-| **Author** | TestLink-Next Architecture Team |
+| **Author** | Testify Architecture Team |
 | **Date** | September 8, 2026 |
 | **Target Release** | v1.0 Enterprise Baseline |
 | **Upstream Requirements** | [`00_requirements_alignment.md`](file:///docs/00_requirements_alignment.md), [UX Ergonomics Spec](file:///.antigravity/agents/ux_ergonomics.md) |
@@ -14,7 +14,7 @@
 
 TestLink's primary operational flaw is fragmented navigation requiring multi-page frame reloads to view steps or log execution outcomes. For QA engineers running hundreds of repetitive tests daily, mouse dependency and slow UI response create severe bottlenecks.
 
-**RFC 02** defines the UI/UX design tokens, layout topology, data-density guidelines, keyboard-first navigation model, focus state machine, and collision-free hotkey architecture for TestLink-Next. 
+**RFC 02** defines the UI/UX design tokens, layout topology, data-density guidelines, keyboard-first navigation model, focus state machine, and collision-free hotkey architecture for Testify. 
 
 ### Core Objectives
 1. **Zero-Latency Execution:** Instantaneous (<50ms) UI updates upon keypress with optimistic local state rendering.
@@ -409,7 +409,7 @@ Color design guarantees WCAG AAA contrast and colorblind safety (Protanopia, Deu
 
 ## 10. Summary & Next Steps
 
-RFC 02 guarantees that TestLink-Next will provide a high-density, zero-friction, keyboard-first environment for QA execution. 
+RFC 02 guarantees that Testify will provide a high-density, zero-friction, keyboard-first environment for QA execution. 
 
 Next steps:
 1. Complete architectural review of `docs/rfc_02_ux_density_and_hotkeys.md`.

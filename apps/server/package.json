@@ -1,5 +1,5 @@
 {
-  "name": "@testlink/server",
+  "name": "@testify/server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -13,8 +13,8 @@
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.0.3",
-    "@testlink/core": "*",
-    "@testlink/db": "*",
+    "@testify/core": "*",
+    "@testify/db": "*",
     "fastify": "^5.2.1",
     "uuid": "^11.0.5"
   },

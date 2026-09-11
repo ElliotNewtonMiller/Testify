@@ -12,7 +12,7 @@ export interface ProblemDetailsOptions {
 
 export function sendProblemDetails(reply: FastifyReply, options: ProblemDetailsOptions) {
   const status = options.status || 422;
-  const type = options.type || `https://api.testlink-next.io/errors/${options.code}`;
+  const type = options.type || `https://api.testify.dev/errors/${options.code}`;
   const title = options.title || (status === 422 ? 'Unprocessable Entity' : 'Error');
 
   reply.header('content-type', 'application/problem+json');

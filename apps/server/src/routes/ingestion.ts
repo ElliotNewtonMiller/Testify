@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { Readable } from 'node:stream';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
+import type { Database } from '@testify/db';
 import {
   SaxXmlParser,
   JsonSchemaParser,
@@ -15,7 +15,7 @@ import {
   type UnmappedCustomField,
   type DryRunWarning,
   type HierarchyPreviewNode,
-} from '@testlink/core';
+} from '@testify/core';
 
 export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<Database>) {
   // Helper to extract file buffer and configuration from request

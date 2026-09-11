@@ -3,7 +3,7 @@
 - **Document Status:** Approved & Locked Specification
 - **Author:** Security & RBAC Analyst
 - **Date:** September 8, 2026
-- **Target Version:** TestLink-Next v1.0
+- **Target Version:** Testify v1.0
 - **Upstream Alignment:** [00_requirements_alignment.md](file:///home/elliot/Documents/Code/testlink-local/docs/00_requirements_alignment.md), [.antigravity/agents/security_rbac.md](file:///home/elliot/Documents/Code/testlink-local/.antigravity/agents/security_rbac.md)
 
 ---
@@ -13,7 +13,7 @@
 ### 1.1 Context & Objectives
 Legacy TestLink implementations relied on coarse, monolithic, and brittle permission models. Permissions were difficult to audit, lacked distinction between human interactive users and automated runners, and allowed silent test case tampering and execution spoofing.
 
-TestLink-Next introduces an enterprise-grade Zero-Trust Security Framework designed for strict compliance standards (SOC 2 Type II, ISO/IEC 27001, HIPAA). The framework enforces:
+Testify introduces an enterprise-grade Zero-Trust Security Framework designed for strict compliance standards (SOC 2 Type II, ISO/IEC 27001, HIPAA). The framework enforces:
 1. **Atomic String-Constant Permission Keys:** Replacing arbitrary bitmasks with explicit, audited string constants.
 2. **Dual-Scoped RBAC & Project Overrides:** Allowing system-wide default roles with deterministic project-level override resolution.
 3. **Machine API Token Lifecycle:** Supporting high-entropy, scope-restricted tokens (`tl_live_...`, `tl_ci_...`) with single-view plaintext disclosure and Argon2id/SHA-256 salted digest persistence.
@@ -24,7 +24,7 @@ TestLink-Next introduces an enterprise-grade Zero-Trust Security Framework desig
 
 ## 2. Granular Permission Key Registry
 
-Permissions in TestLink-Next are immutable string constants scoped across administrative, authoring, execution, and data integration domains.
+Permissions in Testify are immutable string constants scoped across administrative, authoring, execution, and data integration domains.
 
 ```
 Domain Namespace Structure: <DOMAIN>_<ACTION>
@@ -56,7 +56,7 @@ Example: SPEC_APPROVE, EXECUTE_RUN, API_TOKEN_MANAGE
 
 ## 3. Built-in Role Templates & Scoping Hierarchy
 
-TestLink-Next ships with five standardized built-in role templates. Every role represents a distinct capability tier.
+Testify ships with five standardized built-in role templates. Every role represents a distinct capability tier.
 
 ### 3.1 Role Profiles
 
@@ -135,7 +135,7 @@ flowchart TD
 
 ## 4. Authentication Architecture & Token Lifecycle
 
-TestLink-Next enforces dual authentication modes: **Interactive User Sessions** for web UI users and **Machine API Tokens** for automated CI/CD pipelines.
+Testify enforces dual authentication modes: **Interactive User Sessions** for web UI users and **Machine API Tokens** for automated CI/CD pipelines.
 
 ### 4.1 Interactive User Sessions
 - **Access Tokens:** Short-lived JWTs (15-minute TTL) signed with RSA-256 or Ed25519. Payload includes `sub` (User ID), `global_role`, `jti` (JWT ID), and `exp`.
@@ -159,7 +159,7 @@ Examples:
 sequenceDiagram
     autonumber
     actor Admin as Test Lead / Admin
-    participant System as TestLink-Next API
+    participant System as Testify API
     participant DB as Database (api_tokens)
     actor Runner as CI/CD Runner
 

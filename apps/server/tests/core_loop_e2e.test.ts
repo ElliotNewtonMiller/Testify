@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.ts';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testlink/db';
+import type { Database } from '@testify/db';
 
 describe('Core Operational Loop E2E Integration Test', () => {
   let serverInstance: any;
