@@ -4,12 +4,12 @@ import type { Database } from '@testlink/db';
 import { UserRepository, RoleRepository, RoleName } from '@testlink/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 
-export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Database>) {
+export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
 
   // GET /api/v1/admin/users - List all system users & assigned roles (Gated by USER_MANAGE)
-  app.get('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db) }, async () => {
+  app.get('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     const rawUsers = await userRepo.findAll();
 
     const users = await Promise.all(
@@ -35,7 +35,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // POST /api/v1/admin/users - Admin provisions a new user account (Gated by USER_MANAGE)
-  app.post('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db) }, async (request, reply) => {
+  app.post('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { username, email, password, global_role, project_roles } = (request.body as any) || {};
 
@@ -103,7 +103,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // PUT /api/v1/admin/users/:userId/roles - Admin updates user privileges (Gated by USER_MANAGE)
-  app.put('/api/v1/admin/users/:userId/roles', { preHandler: requirePermission('USER_MANAGE', db) }, async (request, reply) => {
+  app.put('/api/v1/admin/users/:userId/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { global_role, project_roles } = (request.body as any) || {};
@@ -165,7 +165,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // PUT /api/v1/admin/users/:userId/status - Toggle user status (ACTIVE / DISABLED)
-  app.put('/api/v1/admin/users/:userId/status', { preHandler: requirePermission('USER_MANAGE', db) }, async (request, reply) => {
+  app.put('/api/v1/admin/users/:userId/status', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { status } = (request.body as { status: 'ACTIVE' | 'DISABLED' }) || {};
@@ -197,7 +197,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // GET /api/v1/admin/audit-logs - Filtered Security Audit Log Viewer (Gated by USER_MANAGE or SYSTEM_ADMIN)
-  app.get('/api/v1/admin/audit-logs', { preHandler: requirePermission('USER_MANAGE', db) }, async () => {
+  app.get('/api/v1/admin/audit-logs', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     const securityActions = [
       'USER_CREATED',
       'USER_DISABLED',

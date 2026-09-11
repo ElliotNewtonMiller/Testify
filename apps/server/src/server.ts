@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -27,6 +28,19 @@ export async function createServer(connectionString?: string) {
 
   const db: Kysely<Database> = createDbClient({ connectionString });
 
+  // Signing secret for session JWTs (see packages/core/src/security/jwt.ts). Set JWT_SECRET in
+  // production -- every server process serving the same sessions must share it, and it must not
+  // change across restarts or all existing tokens are invalidated. With no JWT_SECRET set, a
+  // random secret is generated for this process only; fine for local dev/tests (tokens just don't
+  // survive a restart), not for a real deployment.
+  const jwtSecret = process.env.JWT_SECRET || randomBytes(32).toString('hex');
+  if (!process.env.JWT_SECRET && process.env.NODE_ENV !== 'test') {
+    console.warn(
+      '[testify] JWT_SECRET is not set -- generated a random secret for this process only. ' +
+        'Set JWT_SECRET in your environment for production so sessions survive restarts and all server instances agree.'
+    );
+  }
+
   // Run migrations & seed core loop data & initial omnipotent admin user
   await migration001.up(db);
   const seed = await seedCoreLoopData(db);
@@ -36,8 +50,8 @@ export async function createServer(connectionString?: string) {
   // Register Ingestion, Batch Execution, Auth, & Admin Routes
   await registerIngestionRoutes(app, db);
   await registerBatchExecutionRoutes(app, db);
-  await registerAuthRoutes(app, db);
-  await registerAdminRoutes(app, db);
+  await registerAuthRoutes(app, db, jwtSecret);
+  await registerAdminRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {

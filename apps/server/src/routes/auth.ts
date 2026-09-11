@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testlink/db';
 import { UserRepository, RoleRepository } from '@testlink/db';
+import { signJwt } from '@testlink/core';
 import { authenticateRequest } from '../middleware/auth.js';
 
-export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>) {
+export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
 
@@ -28,8 +29,8 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const globalRole = await roleRepo.getUserGlobalRole(user.id);
     const permissions = await roleRepo.evaluatePermissions(user.id);
 
-    // Generate token string
-    const token = Buffer.from(JSON.stringify({ userId: user.id, username: user.username, exp: Date.now() + 15 * 60 * 1000 })).toString('base64');
+    // Sign a real HMAC-SHA256 JWT (15 minute lifetime) -- see packages/core/src/security/jwt.ts.
+    const token = signJwt({ sub: user.id, username: user.username }, jwtSecret);
 
     return reply.status(200).send({
       token,
@@ -50,7 +51,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
 
   // GET /api/v1/auth/me
   app.get('/api/v1/auth/me', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db);
+    const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
     return reply.status(200).send({ user });
@@ -58,7 +59,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
 
   // PUT /api/v1/auth/credentials - Self-service username & password update
   app.put('/api/v1/auth/credentials', async (request, reply) => {
-    const activeUser = await authenticateRequest(request, reply, db);
+    const activeUser = await authenticateRequest(request, reply, db, jwtSecret);
     if (!activeUser) return;
 
     const { newUsername, newPassword, newEmail } = (request.body as any) || {};

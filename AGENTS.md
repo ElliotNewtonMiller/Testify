@@ -65,6 +65,23 @@ Result: `npm test` is **66/66 passing, 10/10 test files green** (was 39 failing/
 
 Other docs that still describe a literal dual-SQLite-and-Postgres architecture as a requirement (`.antigravity/agents/lead_architect.md`'s "Dual-Driver Database Layer (SQLite + PostgreSQL)" section, `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`, `docs/01_vertical_slices_roadmap.md`) have **not** been rewritten to match — they're historical planning artifacts now, not current architecture. Don't use them as a reason to reintroduce a second dialect; check this file, `docs/rfc_01_domain_model.md`, and the actual code first.
 
+## Auth: unsigned tokens replaced with signed JWTs (2026-09-11)
+
+`apps/server/src/routes/auth.ts` used to issue `Buffer.from(JSON.stringify({...})).toString('base64')` as the session "token" -- anyone could base64-decode it, change `userId`, and re-encode a token for any account. Investigating that turned up two adjacent holes that were arguably worse: `apps/server/src/middleware/auth.ts` accepted an `X-User-Id` header as an outright impersonation shortcut (no proof of identity needed at all), and when a request carried *no* auth at all, it silently fell back to treating the caller as the seeded initial admin user. Fixing only the token signing would have left the API just as open via either of those two bypasses, so all three were fixed together:
+
+- New module `packages/core/src/security/jwt.ts` -- a small, dependency-free HMAC-SHA256 JWT implementation (`signJwt`/`verifyJwt`) built on Node's built-in `node:crypto` (`createHmac`, `timingSafeEqual`). No new npm dependency; produces/consumes standard three-segment compact JWTs. Covered by `packages/core/tests/jwt.test.ts` (valid round-trip, wrong secret, tampered payload, expiry, malformed input).
+- `apps/server/src/routes/auth.ts`: `POST /api/v1/auth/login` now signs a real JWT (`sub` = user id, 15 minute expiry) instead of the base64 blob.
+- `apps/server/src/middleware/auth.ts`: `authenticateRequest` now requires a valid `Authorization: Bearer <jwt>` and verifies its signature + expiry. The `X-User-Id` header is no longer read at all, and there is no more fallback to any user (admin or otherwise) when auth is missing or invalid -- an unauthenticated/invalid request gets a `401` and nothing else. `requirePermission` (used to gate all of `routes/admin.ts`) threads through the same check.
+- The signing secret (`jwtSecret`) is generated in `createServer()` (`apps/server/src/server.ts`): reads `process.env.JWT_SECRET` if set, otherwise generates a random 32-byte secret for that process only (fine for local dev -- tokens just don't survive a restart -- **not** fine for a real deployment, where `JWT_SECRET` must be set and shared across every server instance). A console warning fires when it's auto-generated outside of tests.
+- `apps/server/tests/auth_and_admin_api.test.ts`: every test that used to rely on the no-auth-means-admin fallback (or the `X-User-Id` header) now logs in for real and sends a Bearer token. Added explicit tests that a forged legacy-format token, a malformed token, no token, and the `X-User-Id` header are all now rejected with `401`, and that an authenticated non-admin user still gets `403` from admin-only routes.
+
+Result: `npm test` is **74/74 passing, 11/11 test files green** (up from 66/66 -- 8 new tests: 6 for the JWT module, 2 new auth-rejection cases).
+
+Two things this pass deliberately did **not** touch, both worth a follow-up:
+
+- `apps/server/src/routes/ingestion.ts` and `apps/server/src/routes/batchExecution.ts` still have **zero** auth/permission checks of any kind -- not even the old broken ones. That's a separate, arguably larger gap (it also ties into the machine API token system from RFC 04, `tl_live_...`/`tl_ci_...`, which doesn't exist yet), so it's flagged rather than folded into this fix.
+- `apps/web/src/App.tsx`'s `fetchCurrentUser()` has its own client-side fallback: if `/api/v1/auth/me` fails (401, or throws) and `localStorage` has `user_id === "usr_admin_01"` or `auth_token === "simulated_dev_token"`, the UI fabricates a full fake Admin session object entirely client-side, with no server round-trip. Since the server no longer accepts fake tokens for real API calls, this can't be used to actually act as admin against the API -- but it can make the UI *display* an admin session that isn't backed by anything real, which is confusing at best. Worth removing and replacing with a real "please log in" state.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -76,13 +93,16 @@ Other docs that still describe a literal dual-SQLite-and-Postgres architecture a
 
 ## Notable gaps / risks worth flagging before building on top of this
 
-- **Auth tokens are not real tokens.** `apps/server/src/routes/auth.ts` issues `Buffer.from(JSON.stringify({...})).toString('base64')` as the "token" — it's an unsigned, trivially-forgeable blob (anyone can base64-decode it, change `userId`, and re-encode). RFC 04 specifies short-lived signed JWTs. This should be fixed before any real auth/RBAC work is trusted.
+- **Auth tokens are now real, but two routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts` and `apps/server/src/routes/batchExecution.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. See "Auth: unsigned tokens replaced with signed JWTs" above.
+- **The web app has a client-side fake-admin fallback.** `apps/web/src/App.tsx`'s `fetchCurrentUser()` fabricates a fake Admin session in the UI (not the API) when `localStorage` holds a specific sentinel user id/token and the real `/auth/me` call fails. See "Auth" section above.
 - **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
 - **Project naming is inconsistent**: the folder is `Testify`, `package.json`'s `name` is `testlink-sequel`, and the docs call the product "TestLink Sequel" throughout. Worth picking one name and updating `package.json`/docs/UI copy to match if "Testify" is the real name going forward.
 
 ## Git
 
 Initialized 2026-09-11 (`git init`, branch `main`), with a `.gitignore` (excludes `node_modules/`, `dist/`, `.env*`, etc.), an MIT `LICENSE`, and one root commit importing everything that existed at that point. **No remote is configured yet** — this repo only exists locally on this machine so far. Claude sessions running in a sandboxed cloud/device shell generally can't push to a remote themselves (no network egress to GitHub-like hosts, no SSH keys/`gh` auth in that environment) — pushing, and setting up the remote in the first place, needs to happen from your own terminal.
+
+As of 2026-09-11, Elliot has authorized Claude sessions to commit directly to this local repo and manage it (logical, clearly-messaged commits per change) without asking first each time. The repo stays local/off GitHub for now, by choice — don't add a remote or attempt to push unless asked.
 
 ## Working conventions going forward
 
