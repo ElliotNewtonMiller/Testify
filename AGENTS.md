@@ -77,9 +77,12 @@ Other docs that still describe a literal dual-SQLite-and-Postgres architecture a
 ## Notable gaps / risks worth flagging before building on top of this
 
 - **Auth tokens are not real tokens.** `apps/server/src/routes/auth.ts` issues `Buffer.from(JSON.stringify({...})).toString('base64')` as the "token" — it's an unsigned, trivially-forgeable blob (anyone can base64-decode it, change `userId`, and re-encode). RFC 04 specifies short-lived signed JWTs. This should be fixed before any real auth/RBAC work is trusted.
-- **No git repository.** This directory has never been `git init`'d — there's no version history, no `.gitignore`, no branches. Worth setting up before more code accumulates.
-- **No README, LICENSE, or CI config.** Nothing tells a new contributor how to get started, what license the "open source" project uses, or runs tests automatically on changes.
+- **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
 - **Project naming is inconsistent**: the folder is `Testify`, `package.json`'s `name` is `testlink-sequel`, and the docs call the product "TestLink Sequel" throughout. Worth picking one name and updating `package.json`/docs/UI copy to match if "Testify" is the real name going forward.
+
+## Git
+
+Initialized 2026-09-11 (`git init`, branch `main`), with a `.gitignore` (excludes `node_modules/`, `dist/`, `.env*`, etc.), an MIT `LICENSE`, and one root commit importing everything that existed at that point. **No remote is configured yet** — this repo only exists locally on this machine so far. Claude sessions running in a sandboxed cloud/device shell generally can't push to a remote themselves (no network egress to GitHub-like hosts, no SSH keys/`gh` auth in that environment) — pushing, and setting up the remote in the first place, needs to happen from your own terminal.
 
 ## Working conventions going forward
 
@@ -88,3 +91,4 @@ Other docs that still describe a literal dual-SQLite-and-Postgres architecture a
 - Don't reintroduce a second SQL dialect (e.g. real SQLite) — see "SQLite support was dropped" above. Postgres-compatible SQL only, everywhere.
 - Keep using `npm run <script> --workspace=<path>` (not `pnpm --filter`) for workspace-scoped commands — this repo is npm workspaces, not pnpm/Turborepo, regardless of what `docs/01_vertical_slices_roadmap.md` shows.
 - Update this file when you fix one of the "Notable gaps" above or materially change the implementation status of a slice, so it stays a reliable map for the next session.
+- Git now has real history (see "Git" above) — commit logical chunks of work with clear messages instead of letting changes pile up uncommitted, so `git log`/`git diff` are actually useful going forward.
