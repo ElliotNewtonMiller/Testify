@@ -1,0 +1,28 @@
+{
+  "name": "@testlink/db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.16",
+    "kysely": "^0.27.6",
+    "pg": "^8.13.3",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/pg": "^8.11.11",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^3.0.5"
+  }
+}

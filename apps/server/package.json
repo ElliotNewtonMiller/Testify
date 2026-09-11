@@ -1,0 +1,26 @@
+{
+  "name": "@testlink/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/server.ts",
+    "dev": "tsx src/server.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/multipart": "^9.0.3",
+    "@testlink/core": "*",
+    "@testlink/db": "*",
+    "fastify": "^5.2.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.5.4"
+  }
+}

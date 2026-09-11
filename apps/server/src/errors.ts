@@ -1,0 +1,59 @@
+import type { FastifyReply } from 'fastify';
+
+export interface ProblemDetailsOptions {
+  type?: string;
+  title?: string;
+  status?: number;
+  code: string;
+  detail: string;
+  instance?: string;
+  invalid_params?: Array<{ name: string; reason: string }>;
+}
+
+export function sendProblemDetails(reply: FastifyReply, options: ProblemDetailsOptions) {
+  const status = options.status || 422;
+  const type = options.type || `https://api.testlink-next.io/errors/${options.code}`;
+  const title = options.title || (status === 422 ? 'Unprocessable Entity' : 'Error');
+
+  reply.header('content-type', 'application/problem+json');
+  return reply.status(status).send({
+    type,
+    title,
+    status,
+    code: options.code,
+    detail: options.detail,
+    instance: options.instance,
+    invalid_params: options.invalid_params,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function sendPlanLockedError(reply: FastifyReply, planId: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'PLAN_LOCKED',
+    detail: `Test Plan (ID: ${planId}) is locked. Plan specifications and execution states are frozen.`,
+    instance,
+  });
+}
+
+export function sendBuildClosedError(reply: FastifyReply, buildId: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'BUILD_CLOSED',
+    detail: `Build (ID: ${buildId}) is closed. Executions cannot be added or modified on a closed build.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'build_id',
+        reason: 'Build status is CLOSED',
+      },
+    ],
+  });
+}
+
+export function sendCaseVersionLockedError(reply: FastifyReply, versionId: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'CASE_VERSION_LOCKED',
+    detail: `Test Case Version (ID: ${versionId}) is approved and locked. Create a new draft version to make changes.`,
+    instance,
+  });
+}

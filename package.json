@@ -1,0 +1,21 @@
+{
+  "name": "testlink-sequel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modernized TestLink Sequel Platform - High-Performance Test Management",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:db": "npm run test --workspace=packages/db"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true,
+    "esbuild@0.28.2": true
+  }
+}
