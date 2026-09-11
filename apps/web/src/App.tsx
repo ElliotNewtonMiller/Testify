@@ -467,16 +467,23 @@ export default function App() {
     }, 3000);
   }, []);
 
-  // Fetch current user profile (/api/v1/auth/me)
+  // Fetch current user profile (/api/v1/auth/me). No client-side fallback session: if the
+  // server doesn't confirm the token, the user is logged out. (This used to fabricate a fake
+  // Admin session in the UI when a magic localStorage value was present or the request failed --
+  // that never granted real API access once the server started requiring signed tokens, but it
+  // could show a misleading "logged in as admin" state. Removed 2026-09-11.)
   const fetchCurrentUser = useCallback(async () => {
     try {
       const storedToken = localStorage.getItem("auth_token");
-      const storedUserId = localStorage.getItem("user_id");
-      const headers: Record<string, string> = {};
-      if (storedToken) headers["Authorization"] = `Bearer ${storedToken}`;
-      if (storedUserId) headers["X-User-Id"] = storedUserId;
+      if (!storedToken) {
+        setCurrentUser(null);
+        return;
+      }
 
-      const res = await fetch("/api/v1/auth/me", { headers });
+      const res = await fetch("/api/v1/auth/me", {
+        headers: { Authorization: `Bearer ${storedToken}` },
+      });
+
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
@@ -486,64 +493,15 @@ export default function App() {
           setCurrentUser(null);
         }
       } else {
-        if (
-          storedUserId === "usr_admin_01" ||
-          storedToken === "simulated_dev_token"
-        ) {
-          setCurrentUser({
-            id: "usr_admin_01",
-            username: "admin",
-            email: "admin@testlink.io",
-            global_role: "Admin",
-            permissions: [
-              "SYSTEM_ADMIN",
-              "USER_MANAGE",
-              "EXECUTE_RUN",
-              "EXECUTE_OVERWRITE",
-              "SPEC_VIEW",
-            ],
-          });
-          setUserPermissions([
-            "SYSTEM_ADMIN",
-            "USER_MANAGE",
-            "EXECUTE_RUN",
-            "EXECUTE_OVERWRITE",
-            "SPEC_VIEW",
-          ]);
-        } else {
-          setCurrentUser(null);
-        }
-      }
-    } catch {
-      const storedUserId = localStorage.getItem("user_id");
-      const storedToken = localStorage.getItem("auth_token");
-      if (
-        storedUserId === "usr_admin_01" ||
-        storedToken === "simulated_dev_token"
-      ) {
-        setCurrentUser({
-          id: "usr_admin_01",
-          username: "admin",
-          email: "admin@testlink.io",
-          global_role: "Admin",
-          permissions: [
-            "SYSTEM_ADMIN",
-            "USER_MANAGE",
-            "EXECUTE_RUN",
-            "EXECUTE_OVERWRITE",
-            "SPEC_VIEW",
-          ],
-        });
-        setUserPermissions([
-          "SYSTEM_ADMIN",
-          "USER_MANAGE",
-          "EXECUTE_RUN",
-          "EXECUTE_OVERWRITE",
-          "SPEC_VIEW",
-        ]);
-      } else {
+        // Token missing/expired/invalid per the server -- clear it so we don't keep retrying
+        // with a dead token, and show the login screen.
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user_id");
         setCurrentUser(null);
       }
+    } catch {
+      // Network error reaching the server -- treat as logged out rather than assuming a session.
+      setCurrentUser(null);
     } finally {
       setAuthChecking(false);
     }

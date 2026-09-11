@@ -42,32 +42,21 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
       onLoginSuccess(data.user, data.token);
     } catch (err: any) {
+      // No client-side fallback session here: a failed/unreachable login must not silently grant
+      // a fake Admin session. (Previously, hitting admin/password while the request errored out --
+      // e.g. offline -- fabricated one locally; removed 2026-09-11, since it never proved anything
+      // to the server and just risked showing a session that wasn't real.)
       const isNetworkError =
         err?.name === 'TypeError' ||
         err?.message?.includes('fetch') ||
         err?.message?.includes('Failed to fetch') ||
         err?.message?.includes('NetworkError');
 
-      if (isNetworkError) {
-        // Fallback for offline / client-side standalone preview
-        if ((username === 'admin' || username === 'admin@testlink.io') && password === 'password') {
-          const fallbackUser: UserProfile = {
-            id: 'usr_admin_01',
-            username: 'admin',
-            email: 'admin@testlink.io',
-            global_role: 'Admin',
-            permissions: ['SYSTEM_ADMIN', 'USER_MANAGE', 'EXECUTE_RUN', 'EXECUTE_OVERWRITE', 'SPEC_VIEW'],
-          };
-          localStorage.setItem('user_id', fallbackUser.id);
-          localStorage.setItem('auth_token', 'simulated_dev_token');
-          onLoginSuccess(fallbackUser, 'simulated_dev_token');
-          return;
-        } else {
-          setErrorMessage('The email and/or password are not correct.');
-        }
-      } else {
-        setErrorMessage('The email and/or password are not correct.');
-      }
+      setErrorMessage(
+        isNetworkError
+          ? 'Unable to reach the server. Please check your connection and try again.'
+          : 'The email and/or password are not correct.'
+      );
     } finally {
       setIsLoading(false);
     }

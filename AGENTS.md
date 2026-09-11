@@ -77,10 +77,18 @@ Other docs that still describe a literal dual-SQLite-and-Postgres architecture a
 
 Result: `npm test` is **74/74 passing, 11/11 test files green** (up from 66/66 -- 8 new tests: 6 for the JWT module, 2 new auth-rejection cases).
 
-Two things this pass deliberately did **not** touch, both worth a follow-up:
+One thing this pass deliberately did **not** touch, worth a follow-up:
 
 - `apps/server/src/routes/ingestion.ts` and `apps/server/src/routes/batchExecution.ts` still have **zero** auth/permission checks of any kind -- not even the old broken ones. That's a separate, arguably larger gap (it also ties into the machine API token system from RFC 04, `tl_live_...`/`tl_ci_...`, which doesn't exist yet), so it's flagged rather than folded into this fix.
-- `apps/web/src/App.tsx`'s `fetchCurrentUser()` has its own client-side fallback: if `/api/v1/auth/me` fails (401, or throws) and `localStorage` has `user_id === "usr_admin_01"` or `auth_token === "simulated_dev_token"`, the UI fabricates a full fake Admin session object entirely client-side, with no server round-trip. Since the server no longer accepts fake tokens for real API calls, this can't be used to actually act as admin against the API -- but it can make the UI *display* an admin session that isn't backed by anything real, which is confusing at best. Worth removing and replacing with a real "please log in" state.
+
+## Frontend: client-side fake-admin fallback removed (2026-09-11)
+
+`apps/web/src/App.tsx`'s `fetchCurrentUser()` and `apps/web/src/components/LoginPage.tsx`'s `handleLogin()` each had their own client-side fallback: if the real request failed (`/auth/me` returning non-OK or throwing; `/auth/login` throwing on a network error) and a magic value was present (`localStorage.user_id === "usr_admin_01"`, `auth_token === "simulated_dev_token"`, or typing `admin`/`password` while offline), the UI fabricated a full fake Admin session object purely client-side -- no server round-trip. Once the server started requiring real signed tokens (see "Auth" above), this could no longer be used to actually act as admin against the API, but it could still make the UI *display* an admin session backed by nothing real, which was confusing and pure dead-code risk at that point. Removed both fallbacks:
+
+- `fetchCurrentUser()` now: no stored token → logged out; server rejects the token → the stale token is cleared from `localStorage` and the user is logged out; network error → logged out. No fabricated session in any path. Also dropped the `X-User-Id` header it used to send to `/auth/me` (the backend hasn't honored that header since the Auth fix above; sending it was vestigial).
+- `LoginPage.tsx`'s `handleLogin()` now just surfaces an error message on any failure -- "Unable to reach the server..." for a network error, the usual invalid-credentials message otherwise -- instead of minting a `simulated_dev_token` session for `admin`/`password`.
+
+Note: `apps/web/src/App.tsx` still sends an `X-User-Id` header on the `POST /api/v1/executions` call (the execution-logging inline route in `server.ts`). That's untouched and harmless either way, since that route -- like `ingestion.ts`/`batchExecution.ts` above -- has no auth check on the server side at all yet.
 
 ## Implementation status vs. the roadmap
 
@@ -93,8 +101,7 @@ Two things this pass deliberately did **not** touch, both worth a follow-up:
 
 ## Notable gaps / risks worth flagging before building on top of this
 
-- **Auth tokens are now real, but two routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts` and `apps/server/src/routes/batchExecution.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. See "Auth: unsigned tokens replaced with signed JWTs" above.
-- **The web app has a client-side fake-admin fallback.** `apps/web/src/App.tsx`'s `fetchCurrentUser()` fabricates a fake Admin session in the UI (not the API) when `localStorage` holds a specific sentinel user id/token and the real `/auth/me` call fails. See "Auth" section above.
+- **Auth tokens are now real, but three routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts`, `apps/server/src/routes/batchExecution.ts`, and the inline `POST /api/v1/executions` route in `server.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. See "Auth: unsigned tokens replaced with signed JWTs" above.
 - **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
 - **Project naming is inconsistent**: the folder is `Testify`, `package.json`'s `name` is `testlink-sequel`, and the docs call the product "TestLink Sequel" throughout. Worth picking one name and updating `package.json`/docs/UI copy to match if "Testify" is the real name going forward.
 
