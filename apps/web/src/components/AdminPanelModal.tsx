@@ -65,11 +65,19 @@ export function AdminPanelModal({
     }
   }, [isOpen]);
 
+  // Builds the Authorization header from the signed JWT in localStorage. The admin API
+  // requires a real Bearer token on every request (see apps/server/src/middleware/auth.ts) --
+  // there is no X-User-Id impersonation header anymore, so callers must always use this.
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem("auth_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/v1/admin/users", {
-        headers: { "X-User-Id": currentUser?.id || "" },
+        headers: getAuthHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -95,7 +103,7 @@ export function AdminPanelModal({
   const fetchAuditLogs = async () => {
     try {
       const res = await fetch("/api/v1/admin/audit-logs", {
-        headers: { "X-User-Id": currentUser?.id || "" },
+        headers: getAuthHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -115,7 +123,7 @@ export function AdminPanelModal({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": currentUser?.id || "",
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           username: newUsername,
@@ -147,7 +155,7 @@ export function AdminPanelModal({
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": currentUser?.id || "",
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({ status: nextStatus }),
       });
@@ -189,7 +197,7 @@ export function AdminPanelModal({
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": currentUser?.id || "",
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           global_role: selectedGlobalRole,
@@ -260,7 +268,7 @@ export function AdminPanelModal({
               RBAC & User Administration Panel
             </h2>
             <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-              Provision users, assign global/project privileges, and inspect
+              Add users, assign global/project privileges, and inspect
               security audit logs.
             </span>
           </div>
@@ -349,7 +357,7 @@ export function AdminPanelModal({
           </div>
         )}
 
-        {/* TAB 1: USER ROSTER & PROVISIONING */}
+        {/* TAB 1: USER ROSTER & ADD USER */}
         {activeTab === "ROSTER" && (
           <div
             style={{
@@ -378,7 +386,7 @@ export function AdminPanelModal({
                   color: "#e2e8f0",
                 }}
               >
-                Provision New User
+                Add New User
               </h3>
               <form onSubmit={handleCreateUser}>
                 <div style={{ marginBottom: "10px" }}>
@@ -513,7 +521,7 @@ export function AdminPanelModal({
                     cursor: "pointer",
                   }}
                 >
-                  Provision Account
+                  Add User
                 </button>
               </form>
             </div>

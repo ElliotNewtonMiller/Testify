@@ -128,6 +128,18 @@ Checked before rewriting rather than assumed: `packages/db/src/client.ts` and `d
 
 `npm test`: 74/74, unchanged (docs-only change). No code was touched in this pass.
 
+## Fixed: RBAC & User Administration Panel couldn't actually create users (2026-09-14)
+
+The auth rework on 2026-09-11 (see "Auth: unsigned tokens replaced with signed JWTs" above) made the server require a real `Authorization: Bearer <jwt>` on every admin request and stopped honoring the old `X-User-Id` header entirely. `apps/web/src/components/AdminPanelModal.tsx` was never updated to match -- all 5 of its fetch calls (`fetchUsers`, `fetchAuditLogs`, `handleCreateUser`, `handleToggleStatus`, `handleSavePrivileges`) still sent `"X-User-Id": currentUser?.id || ""`, which the server just ignores now, so every admin-panel request came back `401 Unauthorized: missing Bearer token` -- including the roster/audit-log loads on open, not just user creation.
+
+Fixed by adding a small `getAuthHeaders()` helper inside the component that reads the JWT from `localStorage["auth_token"]` (the same key/pattern `App.tsx`'s `fetchCurrentUser` already uses) and returns an `Authorization: Bearer <token>` header, then using it in place of the `X-User-Id` header at all 5 call sites. No prop threading needed -- `AdminPanelModal` reads the token directly, matching how `App.tsx` itself does it (there's no shared `token` React state anywhere in this app; it's always read from `localStorage` at the point of use).
+
+Also renamed the panel's create-user copy per Elliot's request, since "provision" read as unnecessarily formal for what's just adding a user: the form heading "Provision New User" -> "Add New User", the submit button "Provision Account" -> "Add User", and the panel subtitle "Provision users, assign global/project privileges..." -> "Add users, assign global/project privileges...".
+
+Known, separate, pre-existing issue **not** touched by this fix: `App.tsx`'s `submitVerdict` (`POST /api/v1/executions`) still sends the same stale `X-User-Id` header. It was flagged and deliberately left alone back on 2026-09-11 because that route has no server-side auth check at all yet (see "Notable gaps" below) -- the header is currently a no-op either way, unlike the admin panel where it actively broke every request. Worth fixing together with adding real auth to that route.
+
+`npx tsc --noEmit -p apps/web` clean. `npm test`: 74/74, unchanged (no test currently exercises `AdminPanelModal`'s fetch calls directly).
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
