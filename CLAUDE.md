@@ -140,6 +140,23 @@ Known, separate, pre-existing issue **not** touched by this fix: `App.tsx`'s `su
 
 `npx tsc --noEmit -p apps/web` clean. `npm test`: 74/74, unchanged (no test currently exercises `AdminPanelModal`'s fetch calls directly).
 
+## Fixed: execution-submission route had no auth, and used a hardcoded fake tester (2026-09-14)
+
+Elliot asked about `App.tsx`'s execution-submission call (the hotkey-driven Pass/Fail/Blocked/Skipped verdict recorder, wired to `submitVerdict` and the `j/k/p/f/b/s` hotkeys) and authorized adding real auth to it -- this was one of the three routes flagged as auth-free back on 2026-09-11 (see "Notable gaps" below), deliberately left out of the original JWT rework since it wasn't asked for at the time.
+
+Two separate problems fixed together, since they're the same root cause (the route never looked at who was calling it):
+
+- **No auth check at all.** `POST /api/v1/executions` in `apps/server/src/server.ts` took no token and required no permission -- anyone could record execution verdicts. Gated it behind `requirePermission('EXECUTE_RUN', db, jwtSecret)`, the same permission key already used for this concept in `packages/db/src/repositories/role.repository.ts`'s `ROLE_PERMISSIONS` (held by Admin, Test Lead, Tester, and Automation Service -- everyone except Viewer, which is exactly the right shape for "can record a test run").
+- **Hardcoded fake actor.** Both the `executions.tester_id` column and the `audit_logs.actor_id` column were being written as the literal string `'usr_tester_01'` regardless of who actually submitted the verdict -- so every execution and every audit log entry lied about who recorded it. Now both are set from `request.user!.id`, the real authenticated caller (available once `requirePermission`'s `preHandler` runs and populates `request.user`).
+
+Frontend (`apps/web/src/App.tsx`'s `submitVerdict`) updated to match: sends `Authorization: Bearer <token>` (read from `localStorage["auth_token"]`, same pattern as everywhere else in this app) instead of the old ignored `X-User-Id` header. Also added explicit handling for the two failure modes a real permission check makes newly possible: a `401` (token missing/expired -- login tokens are 15-minute JWTs with no refresh mechanism, so this can now happen mid-session) clears the dead token and drops the user back to a logged-out state with a clear "Session expired" status instead of silently failing every subsequent verdict; a `403` (authenticated but lacking `EXECUTE_RUN`, e.g. a Viewer) shows "Not permitted: your role can't record executions" instead of a generic error.
+
+`apps/server/tests/core_loop_e2e.test.ts` updated: logs in as admin and sends a real Bearer token on both execution-recording calls (it would otherwise now fail with 401), and gained new assertions that `tester_id`/`actor_id` on the recorded execution and audit log equal the real logged-in user's id rather than the old hardcoded stub, plus a new test asserting a request with no token gets `401` and a Viewer (provisioned via the admin API, the one role without `EXECUTE_RUN`) gets `403` -- and that neither attempt actually recorded anything.
+
+`npx tsc --noEmit` clean on `apps/server` and `apps/web`. `npm test`: **75/75** (was 74/74 -- the new rejection test), all green.
+
+Still open, not part of this fix: `ingestion.ts` and `batchExecution.ts` remain auth-free (see "Notable gaps" below) -- worth doing together with the not-yet-built machine API token system (RFC 04), since those two are meant for both interactive and CI/automation callers.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -151,7 +168,7 @@ Known, separate, pre-existing issue **not** touched by this fix: `App.tsx`'s `su
 
 ## Notable gaps / risks worth flagging before building on top of this
 
-- **Auth tokens are now real, but three routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts`, `apps/server/src/routes/batchExecution.ts`, and the inline `POST /api/v1/executions` route in `server.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. See "Auth: unsigned tokens replaced with signed JWTs" above.
+- **Auth tokens are now real, but two routes still bypass auth entirely.** `apps/server/src/routes/ingestion.ts` and `apps/server/src/routes/batchExecution.ts` never call `authenticateRequest`/`requirePermission` at all -- anyone can hit them with no token. (The inline `POST /api/v1/executions` route in `server.ts` was fixed 2026-09-14 -- see "Fixed: execution-submission route had no auth" below -- it's no longer in this category.) See "Auth: unsigned tokens replaced with signed JWTs" above.
 - **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
 
 ## Git

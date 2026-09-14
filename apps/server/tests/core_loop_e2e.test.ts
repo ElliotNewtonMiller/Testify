@@ -14,8 +14,22 @@ describe('Core Operational Loop E2E Integration Test', () => {
     await serverInstance.db.destroy();
   });
 
+  /** Logs in as the seeded initial admin and returns a real, signed Bearer token + user id. */
+  async function loginAsAdmin(app: any): Promise<{ token: string; userId: string }> {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: 'password' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    return { token: body.token as string, userId: body.user.id as string };
+  }
+
   it('hydrates 10 seeded test cases and records optimistic + immutable verdict transitions', async () => {
     const { app, db, seed } = serverInstance;
+    const { token, userId: adminId } = await loginAsAdmin(app);
+    const authHeaders = { authorization: `Bearer ${token}` };
 
     // 1. Hydrate Workspace - Verify 10 test cases are seeded
     const workspaceRes = await app.inject({
@@ -37,6 +51,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const passRes = await app.inject({
       method: 'POST',
       url: '/api/v1/executions',
+      headers: authHeaders,
       payload: {
         build_id: seed.buildId,
         test_plan_case_id: case1.plan_case_id,
@@ -60,6 +75,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const failRes = await app.inject({
       method: 'POST',
       url: '/api/v1/executions',
+      headers: authHeaders,
       payload: {
         build_id: seed.buildId,
         test_plan_case_id: case2.plan_case_id,
@@ -95,11 +111,14 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(exec1.status).toBe('COMPLETED');
     expect(exec1.build_id).toBe(seed.buildId);
     expect(exec1.test_plan_case_id).toBe(case1.plan_case_id);
+    // tester_id is the real authenticated caller now, not the old hardcoded 'usr_tester_01' stub.
+    expect(exec1.tester_id).toBe(adminId);
 
     const exec2 = verification.executions.find((e: any) => e.id === failData.id);
     expect(exec2).toBeDefined();
     expect(exec2.verdict).toBe('FAILED');
     expect(exec2.notes).toBe('Regressed token secret assertion - step 2 failed');
+    expect(exec2.tester_id).toBe(adminId);
 
     // Verify step verdicts recorded
     expect(verification.steps.length).toBe(4);
@@ -110,6 +129,8 @@ describe('Core Operational Loop E2E Integration Test', () => {
     // Verify append-only audit trail entries
     expect(verification.auditLogs.length).toBe(2);
     expect(verification.auditLogs[0].action).toBe('EXECUTION_RECORDED');
+    // actor_id is the real authenticated caller now, not the old hardcoded 'usr_tester_01' stub.
+    expect(verification.auditLogs[0].actor_id).toBe(adminId);
 
     // 5. Re-fetch workspace to confirm updated verdicts in queue list
     const updatedWorkspaceRes = await app.inject({
@@ -121,5 +142,54 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(updatedWorkspace.cases[0].latest_verdict).toBe('PASSED');
     expect(updatedWorkspace.cases[1].latest_verdict).toBe('FAILED');
     expect(updatedWorkspace.cases[2].latest_verdict).toBe('UNTESTED');
+  });
+
+  it('rejects execution recording with no token, and for an authenticated user without EXECUTE_RUN', async () => {
+    const { app, seed } = serverInstance;
+    const { token: adminToken } = await loginAsAdmin(app);
+
+    const workspaceRes = await app.inject({ method: 'GET', url: '/api/v1/workspace' });
+    const targetCase = JSON.parse(workspaceRes.body).cases[0];
+
+    const payload = {
+      build_id: seed.buildId,
+      test_plan_case_id: targetCase.plan_case_id,
+      verdict: 'PASSED',
+    };
+
+    // No token at all.
+    const noAuthRes = await app.inject({ method: 'POST', url: '/api/v1/executions', payload });
+    expect(noAuthRes.statusCode).toBe(401);
+
+    // Provision a Viewer (the one role without EXECUTE_RUN) and log in as them.
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/users',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        username: 'readonly_viewer',
+        email: 'readonly_viewer@testify.local',
+        password: 'ReadonlyViewer1!',
+        global_role: 'Viewer',
+      },
+    });
+    const viewerLoginRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'readonly_viewer', password: 'ReadonlyViewer1!' },
+    });
+    const viewerToken = JSON.parse(viewerLoginRes.payload).token as string;
+
+    const forbiddenRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/executions',
+      headers: { authorization: `Bearer ${viewerToken}` },
+      payload,
+    });
+    expect(forbiddenRes.statusCode).toBe(403);
+
+    // Neither attempt should have recorded an execution.
+    const verifyRes = await app.inject({ method: 'GET', url: '/api/v1/executions/verify' });
+    expect(JSON.parse(verifyRes.body).total_executions).toBe(0);
   });
 });

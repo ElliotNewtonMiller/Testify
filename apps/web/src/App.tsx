@@ -565,11 +565,12 @@ export default function App() {
 
       // 2. DISPATCH BACKGROUND API CALL
       try {
+        const storedToken = localStorage.getItem("auth_token");
         const response = await fetch("/api/v1/executions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-User-Id": currentUser?.id || "",
+            ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
           },
           body: JSON.stringify({
             build_id: workspace.build.id,
@@ -590,6 +591,17 @@ export default function App() {
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
           verifyDatabase();
+        } else if (response.status === 401) {
+          // Session expired or token invalid -- the server now requires a real, current
+          // JWT for this route (EXECUTE_RUN permission). Clear the dead token and drop back
+          // to the login screen rather than silently failing every subsequent keystroke.
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("user_id");
+          setCurrentUser(null);
+          setUserPermissions([]);
+          setSyncStatus("Session expired -- please log in again");
+        } else if (response.status === 403) {
+          setSyncStatus("Not permitted: your role can't record executions");
         } else {
           setSyncStatus("API Error recording verdict");
         }
@@ -597,7 +609,7 @@ export default function App() {
         setSyncStatus("Network Error");
       }
     },
-    [activeCase, workspace, failureNotes, verifyDatabase, currentUser?.id],
+    [activeCase, workspace, failureNotes, verifyDatabase],
   );
 
   // Global Hotkey Engine Hook wiring

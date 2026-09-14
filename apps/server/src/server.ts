@@ -14,6 +14,7 @@ import { registerIngestionRoutes } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { requirePermission } from './middleware/auth.js';
 import { sendCaseVersionLockedError } from './errors.js';
 import { UserRepository } from '@testify/db';
 
@@ -138,8 +139,9 @@ export async function createServer(connectionString?: string) {
     };
   });
 
-  // POST /api/v1/executions - Execution logging endpoint
-  app.post('/api/v1/executions', async (request, reply) => {
+  // POST /api/v1/executions - Execution logging endpoint (Gated by EXECUTE_RUN)
+  app.post('/api/v1/executions', { preHandler: requirePermission('EXECUTE_RUN', db, jwtSecret) }, async (request, reply) => {
+    const actorId = request.user!.id;
     const body = request.body as {
       build_id: string;
       test_plan_case_id: string;
@@ -194,7 +196,7 @@ export async function createServer(connectionString?: string) {
         id: execId,
         build_id: body.build_id,
         test_plan_case_id: body.test_plan_case_id,
-        tester_id: 'usr_tester_01',
+        tester_id: actorId,
         status: body.status || 'COMPLETED',
         verdict: body.verdict,
         execution_duration_ms: body.execution_duration_ms || 450,
@@ -229,7 +231,7 @@ export async function createServer(connectionString?: string) {
       .insertInto('audit_logs')
       .values({
         id: uuidv4(),
-        actor_id: 'usr_tester_01',
+        actor_id: actorId,
         actor_type: 'USER',
         action: 'EXECUTION_RECORDED',
         resource_type: 'execution',
