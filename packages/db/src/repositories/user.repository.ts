@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid';
 import crypto from 'node:crypto';
 import type { Database, UsersTable, UserRolesTable, UserProjectRolesTable } from '../types.js';
 import { validatePasswordPolicy } from '../../../core/src/security/passwordPolicy.js';
+import type { RoleName } from './role.repository.js';
 
 export type User = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;
@@ -13,7 +14,7 @@ export interface CreateUserInput {
   username: string;
   email: string;
   password: string;
-  global_role?: 'Admin' | 'Test Lead' | 'Tester' | 'Viewer';
+  global_role?: RoleName;
   status?: 'ACTIVE' | 'DISABLED';
 }
 

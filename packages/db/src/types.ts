@@ -209,7 +209,7 @@ export interface UserRolesTable {
 export interface UserProjectRolesTable {
   id: string;
   user_id: string;
-  project_id: string | null;
+  project_id: string;
   role: string;
   created_at: string;
 }

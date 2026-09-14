@@ -250,7 +250,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .createTable('user_project_roles')
     .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
     .addColumn('user_id', 'varchar(36)', (col) => col.notNull())
-    .addColumn('project_id', 'varchar(36)', (col) => col.references('projects.id').onDelete('cascade'))
+    .addColumn('project_id', 'varchar(36)', (col) => col.notNull().references('projects.id').onDelete('cascade'))
     .addColumn('role', 'varchar(50)', (col) => col.notNull())
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .execute();

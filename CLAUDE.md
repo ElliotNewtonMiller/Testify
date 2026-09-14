@@ -103,6 +103,15 @@ Deliberately **left alone**, because it's describing the real external tool/form
 
 `npm test`: 74/74, unchanged. `tsc --noEmit` clean on `apps/web`/`packages/core`; the same 2 pre-existing errors remain on `apps/server`/`packages/db` (see "SQLite support was dropped" above), unrelated to this rename.
 
+## Resolved: 2 pre-existing tsc type errors fixed (2026-09-11)
+
+Two of the three `tsc` type errors found during the SQLite-removal sanity check (see above) were real bugs, not just noise `vitest`'s transpile-only mode had been hiding. Both were type drift between two independently-typed representations of the same "role name" concept:
+
+- `packages/db/src/repositories/role.repository.ts(92,5)`: `getUserProjectRoles()` declared its return type as `Array<{ project_id: string; role: RoleName }>`, but `user_project_roles.project_id` was typed `string | null` in `types.ts` -- because the migration never actually marked that column `NOT NULL`, even though the only code path that ever inserts a row into that table (`assignProjectRole`) always supplies a `projectId: string`. Fixed at the source: added `.notNull()` to the `project_id` column in `packages/db/src/migrations/001_initial_schema.ts` and narrowed `UserProjectRolesTable.project_id` in `types.ts` from `string | null` to `string` to match. (Safe to edit the initial migration directly rather than adding a new `ALTER TABLE` migration -- there's no persisted production database yet; see the same reasoning applied to the SQLite removal above. `user_permission_overrides.project_id` has the identical nullable pattern but is unused by any repository yet, so it was left alone.)
+- `apps/server/src/routes/admin.ts(51,9)`: `POST /admin/users` casts the request body's `global_role` to `RoleName` (which includes `'Automation Service'`), but `UserRepository`'s `CreateUserInput.global_role` was a separately hand-typed union that had drifted and forgotten `'Automation Service'`. Fixed by having `CreateUserInput.global_role` import and use the real `RoleName` type from `role.repository.ts` instead of re-declaring a narrower one -- one source of truth for role names instead of two that can drift apart again.
+
+`npm run build --workspace=apps/server` is now clean. `npm test`: 74/74, unchanged (including the FK/migration/RBAC tests, which cover the `NOT NULL` change). The third error (`user.repository.ts(5,40)`, a cross-package `rootDir` config issue from importing `packages/core/src/security/passwordPolicy.ts` by relative path instead of via the `@testify/core` package) is a distinct, separate problem and is still open -- `npm run build --workspace=packages/db` still fails on it. Worth fixing by importing `validatePasswordPolicy` from `@testify/core` instead of `../../../core/src/...`, but that wasn't part of what was asked here.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
