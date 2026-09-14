@@ -7,9 +7,9 @@ Crucially, the architecture must treat **Admin Extensibility** as a first-class 
 
 ## Core Architectural Constraints
 
-### 1. Dual-Driver Database Layer (SQLite + PostgreSQL)
-- **Zero Lock-In:** The platform must function identically on a zero-config single-file local SQLite instance (for local evaluation/offline runners) and multi-user PostgreSQL (for production/team servers).
-- **Driver Abstraction:** Utilize a strongly typed query builder layer (e.g., Kysely) or neutral ORM. Strictly prohibit engine-specific dialect lock-ins (e.g., avoid Postgres-only `ENUM` types; use string constants with check constraints. Ensure JSON extraction and date/timestamp handling are normalized across drivers).
+### 1. Postgres-Compatible Database Layer
+- **Zero Lock-In, One Dialect:** The platform runs on a single Postgres-compatible SQL dialect everywhere: a zero-config, embedded `PGlite` (WASM Postgres) instance for local evaluation/offline runners, and a real multi-user PostgreSQL server for production/team deployments, selected purely by whether a `DATABASE_URL` connection string is supplied.
+- **Driver Abstraction:** Utilize a strongly typed query builder layer (Kysely). Avoid Postgres-specific niceties that add friction without real benefit (e.g. prefer string constants with `CHECK` constraints over native `ENUM` types, for simpler migrations), but there is no second dialect to normalize against.
 - **Primary Keys:** Standardize on UUIDv7 across all entities for monotonic, time-ordered indexing and client-side safe ID generation.
 - **Foreign Keys & Indices:** Enforce strict cascade rules (`ON DELETE RESTRICT` for historical runs, `CASCADE` for transient drafts). Include index strategies specifically optimized for recursive tree lookups, custom field filtering, and bulk status writes.
 
@@ -24,7 +24,7 @@ Crucially, the architecture must treat **Admin Extensibility** as a first-class 
 ### 4. Admin Customization & Dynamic Field Engine
 - **Entity Extensibility:** Admins must be able to attach arbitrary custom fields to `TestCaseVersion`, `TestSuite`, `Execution`, or `Project`.
 - **Supported Field Types:** `STRING`, `NUMBER`, `BOOLEAN`, `DATE`, `SINGLE_SELECT`, `MULTI_SELECT`, `MARKDOWN_TEXT`.
-- **Storage Strategy:** Implement a hybrid design using a strongly typed metadata definition table (`custom_field_definitions`) paired with structured JSON storage or an EAV mapping layer normalized across both PostgreSQL (JSONB) and SQLite (JSON1/TEXT).
+- **Storage Strategy:** Implement a hybrid design using a strongly typed metadata definition table (`custom_field_definitions`) paired with structured JSON storage (serialized JSON text columns via the Kysely driver layer) or an EAV mapping layer.
 - **Validation & Scoping:** Custom fields can be scoped globally or to specific projects, with configurable constraints (`required`, `default_value`, `allowed_options`, `regex_pattern`).
 
 ### 5. Flexible RBAC & Miscellaneous User Permissions
@@ -62,9 +62,9 @@ Produce `docs/rfc_01_domain_model.md` containing:
    - Core tables: `projects`, `test_suites`, `test_cases`, `test_case_versions`, `test_steps`, `test_plans`, `builds`, `test_plan_cases`, `executions`, `execution_steps`, `audit_logs`.
    - Admin & Extensibility tables: `custom_field_definitions`, `custom_field_options`, `custom_field_values`, `roles`, `permissions`, `role_permissions`, `user_project_roles`, `user_permission_overrides`, `system_settings`.
    - Exact column definitions, nullability, foreign key actions, and index specifications.
-2. **Dual-Driver Normalization Spec:**
-   - Unified migration strategy for SQLite and PostgreSQL.
-   - Cross-database compatibility matrix (datetime handling, JSON storage/querying for custom fields, dialect conversions).
+2. **Migration & Schema Versioning Spec:**
+   - Migration strategy for the single Postgres-compatible dialect (PGlite locally, real PostgreSQL in production), including rollback behavior.
+   - Type & column conventions (datetime handling, JSON storage for custom fields, primary key format).
 3. **Custom Field & Metadata Storage Architecture:**
    - Detailed trade-off analysis and technical decision for Custom Field storage (JSON column vs. EAV vs. hybrid).
    - Snapshot freezing mechanics: How custom fields are immutably captured at execution time.

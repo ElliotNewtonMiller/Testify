@@ -4,11 +4,11 @@
 **Date:** September 8, 2026  
 **Version:** v1.0 Production Baseline  
 **Synthesized From:**  
-- [`docs/00_requirements_alignment.md`](file:///home/elliot/Documents/Code/testlink-local/docs/00_requirements_alignment.md)  
-- [`docs/rfc_01_domain_model.md`](file:///home/elliot/Documents/Code/testlink-local/docs/rfc_01_domain_model.md)  
-- [`docs/rfc_02_ux_density_and_hotkeys.md`](file:///home/elliot/Documents/Code/testlink-local/docs/rfc_02_ux_density_and_hotkeys.md)  
-- [`docs/rfc_03_api_and_xml_contracts.md`](file:///home/elliot/Documents/Code/testlink-local/docs/rfc_03_api_and_xml_contracts.md)  
-- [`docs/rfc_04_rbac_security_matrix.md`](file:///home/elliot/Documents/Code/testlink-local/docs/rfc_04_rbac_security_matrix.md)  
+- [`docs/00_requirements_alignment.md`](./00_requirements_alignment.md)  
+- [`docs/rfc_01_domain_model.md`](./rfc_01_domain_model.md)  
+- [`docs/rfc_02_ux_density_and_hotkeys.md`](./rfc_02_ux_density_and_hotkeys.md)  
+- [`docs/rfc_03_api_and_xml_contracts.md`](./rfc_03_api_and_xml_contracts.md)  
+- [`docs/rfc_04_rbac_security_matrix.md`](./rfc_04_rbac_security_matrix.md)  
 
 ---
 
@@ -42,7 +42,7 @@ Testify is an enterprise-grade, modernized test management and execution platfor
 +---------------------------------------------------------------------------------------------------+
 |                                       DATA & STORAGE PERSISTENCE                                  |
 |  +---------------------------------------------------------------------------------------------+  |
-|  | Dual-Driver Database Layer: SQLite (Local/Dev) <---> PostgreSQL (Prod/Enterprise)          |  |
+|  | Postgres-Compatible Database Layer: PGlite (Local/Dev, zero-config) <---> PostgreSQL (Prod)  |  |
 |  | UUIDv7 Primary Keys | Strict FK Rules | Append-Only Audit Triggers | Version Freezing     |  |
 |  +---------------------------------------------------------------------------------------------+  |
 |  +---------------------------------------------------------------------------------------------+  |
@@ -139,7 +139,7 @@ flowchart TD
 
 ---
 
-## 3. Relational ERD & Database Schema (PostgreSQL & SQLite)
+## 3. Relational ERD & Database Schema (PostgreSQL-Compatible)
 
 ### 3.1 Entity Relationship Diagram (ERD)
 
@@ -178,7 +178,7 @@ erDiagram
 
 ---
 
-### 3.2 Unified Dual-Driver SQL DDL
+### 3.2 PostgreSQL-Compatible Schema DDL
 
 ```sql
 -- 1. Projects Table
@@ -337,15 +337,11 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_actor ON audit_logs(actor_id, created_at);
 CREATE INDEX idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
 
--- PostgreSQL Immutability Triggers for audit_logs
+-- Immutability Triggers for audit_logs (Postgres/PGlite -- the only supported engine)
 -- CREATE OR REPLACE FUNCTION suppress_audit_log_mutation() RETURNS TRIGGER AS $$
 -- BEGIN RAISE EXCEPTION 'MUTATION_DENIED: audit_logs table is append-only.'; END; $$ LANGUAGE plpgsql;
 -- CREATE TRIGGER trg_prevent_audit_update BEFORE UPDATE ON audit_logs FOR EACH ROW EXECUTE FUNCTION suppress_audit_log_mutation();
 -- CREATE TRIGGER trg_prevent_audit_delete BEFORE DELETE ON audit_logs FOR EACH ROW EXECUTE FUNCTION suppress_audit_log_mutation();
-
--- SQLite Immutability Triggers for audit_logs
--- CREATE TRIGGER trg_prevent_audit_update_sq BEFORE UPDATE ON audit_logs BEGIN SELECT RAISE(FAIL, 'MUTATION_DENIED'); END;
--- CREATE TRIGGER trg_prevent_audit_delete_sq BEFORE DELETE ON audit_logs BEGIN SELECT RAISE(FAIL, 'MUTATION_DENIED'); END;
 ```
 
 ---
@@ -485,8 +481,8 @@ The ingestion engine parses legacy **TestLink XML**, **Native JSON Schema**, and
 
 - Execution history default retention: **365 days (1 year)**, admin-modifiable.
 - Log snippets >4KB and binary attachments are stored out-of-band via `IStorageProvider`:
-  - `LocalStorageProvider` (Local FS for dev/SQLite).
-  - `S3StorageProvider` (MinIO/S3 pre-signed upload URLs for prod/PostgreSQL).
+  - `LocalStorageProvider` (Local FS -- typical for dev, also usable in prod).
+  - `S3StorageProvider` (MinIO/S3 pre-signed upload URLs -- typical for prod).
 
 ---
 
@@ -543,4 +539,4 @@ The ingestion engine parses legacy **TestLink XML**, **Native JSON Schema**, and
 | 11 | **Multi-Format Import** | Extensible parser engine supporting TestLink XML, JSON Schema, and CSV. | `00_alignment` §4, `rfc_03` §6.1 | Section 5.3 | Multi-format streaming parser unit test | Locked |
 | 12 | **Import Reconciliation**| Setup modals for Custom Field mapping and Duplicate title resolution. | `00_alignment` §4, `rfc_03` §6.4 | Section 5.3 | Interactive dry-run import API test | Locked |
 | 13 | **Streaming Ingestion**| SAX stream parsing bounded to <64MB heap on 100MB+ files. | `00_alignment` §4, `rfc_03` §6.3 | Section 5.3 | Memory heap profiling test on 100MB XML | Locked |
-| 14 | **Dual-Driver Parity** | 100% parity across SQLite (local/dev) and PostgreSQL (production). | `rfc_01` §4.2 | Section 3.2 | Cross-database integration test suite | Locked |
+| 14 | **Operational Integrity** | Full core-loop workflow (spec, plan, execution, RBAC, audit) runs cleanly end-to-end on the single Postgres-compatible dialect (PGlite locally, PostgreSQL in production). | `rfc_01` §4.2 | Section 3.2 | Single-engine integration test suite | Locked |

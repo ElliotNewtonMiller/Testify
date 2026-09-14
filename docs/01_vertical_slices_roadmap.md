@@ -4,19 +4,19 @@
 **Date:** September 8, 2026  
 **Version:** v1.0 Target Execution Specification  
 **Lead System Architect:** Antigravity AI  
-**Primary Reference:** [`docs/MASTER_ARCHITECTURE_BLUEPRINT.md`](file:///home/elliot/Documents/Code/testlink-local/docs/MASTER_ARCHITECTURE_BLUEPRINT.md)
+**Primary Reference:** [`docs/MASTER_ARCHITECTURE_BLUEPRINT.md`](./MASTER_ARCHITECTURE_BLUEPRINT.md)
 
 ---
 
 ## 1. Executive Summary & Slicing Strategy
 
-This document establishes the official vertical slicing roadmap for **Testify**, transforming the locked architectural specifications in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](file:///home/elliot/Documents/Code/testlink-local/docs/MASTER_ARCHITECTURE_BLUEPRINT.md) into 5 discrete, E2E executable, and independently testable implementation increments.
+This document establishes the official vertical slicing roadmap for **Testify**, transforming the locked architectural specifications in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](./MASTER_ARCHITECTURE_BLUEPRINT.md) into 5 discrete, E2E executable, and independently testable implementation increments.
 
 ### 1.1 Vertical Slicing Principles
 Rather than building by horizontal layers (e.g., all database tables first, then all backend routes, then UI screens), Testify is sliced vertically across feature capabilities:
 1. **End-to-End Functionality**: Each slice delivers fully functioning capabilities across database migrations, core domain services, REST API endpoints, and user interface components.
 2. **Zero Architectural Drift**: Implementation strictly adheres to locked ERD schemas, OpenAPI 3.1 contracts, state machine invariants, keyboard focus zone rules, and RBAC permission matrices defined in the master blueprint.
-3. **Continuous Verification**: Every slice specifies deterministic verification commands (`pnpm test:*`) and measurable exit criteria before proceeding to downstream slices.
+3. **Continuous Verification**: Every slice specifies deterministic verification commands (`npm test`, run per-workspace via `--workspace=<path>`) and measurable exit criteria before proceeding to downstream slices.
 4. **Parallelization Directives**: Decoupled module contracts enable concurrent development across backend API services, frontend UI components, and storage drivers within each slice.
 
 ---
@@ -33,8 +33,8 @@ flowchart TD
     S3 --> S4
 
     subgraph SLICE_0 [Slice 0 - Monorepo & DB Engine]
-        S0_1[Monorepo / Turborepo Setup]
-        S0_2[Dual-Driver Kysely Migrations]
+        S0_1[Monorepo / npm Workspaces Setup]
+        S0_2[Postgres-Compatible Kysely Migrations]
         S0_3[Base Domain Types & Zod Schemas]
     end
 
@@ -72,14 +72,12 @@ flowchart TD
 ### 3.1 Slice 0: Infrastructure & Core Contract
 
 #### 3.1.1 Overview & Scope
-Slice 0 establishes the monorepo foundation, developer tooling, logging, dual-driver database migrations (SQLite for local development and PostgreSQL for enterprise production via Kysely query builder), core domain TypeScript types, Zod validation contracts, and deterministic data seeding utilities.
+Slice 0 establishes the monorepo foundation, developer tooling, logging, Postgres-compatible database migrations (an embedded, zero-config PGlite instance for local development; a real PostgreSQL server for enterprise production, both via the same Kysely query builder and migrations, with no per-dialect branching), core domain TypeScript types, Zod validation contracts, and deterministic data seeding utilities.
 
 #### 3.1.2 Target File Structure & Module Dependencies
 ```
-testlink-local/
-├── package.json
-├── pnpm-workspace.yaml
-├── turbo.json
+testify/
+├── package.json                          # npm workspaces root ("workspaces": ["packages/*", "apps/*"])
 ├── tsconfig.base.json
 ├── packages/
 │   ├── config/
@@ -89,10 +87,9 @@ testlink-local/
 │   │   ├── package.json
 │   │   ├── src/
 │   │   │   ├── index.ts
-│   │   │   ├── client.ts                 # Dual-driver Kysely connection pool (SQLite / Postgres)
+│   │   │   ├── client.ts                 # Postgres-compatible Kysely connection (PGlite / real Postgres)
 │   │   │   ├── dialects/
-│   │   │   │   ├── sqlite.ts             # better-sqlite3 driver wrapper
-│   │   │   │   └── postgres.ts           # pg pool driver wrapper
+│   │   │   │   └── postgres.ts           # PostgresDialect wrapper -- PGlite (no connection string) or pg.Pool
 │   │   │   ├── migrations/
 │   │   │   │   ├── 001_initial_schema.ts # Complete initial DDL
 │   │   │   │   └── migrator.ts           # Kysely CLI/Programmatic migration runner
@@ -123,14 +120,14 @@ testlink-local/
 ```
 
 **Module Dependencies:**
-- `kysely`, `better-sqlite3`, `pg`, `zod`, `pino`, `uuidv7`, `fastify`, `@fastify/cors`, `turborepo`.
+- `kysely`, `@electric-sql/pglite`, `pg`, `zod`, `pino`, `uuidv7`, `fastify`, `@fastify/cors`.
 
 #### 3.1.3 Included Database Tables & Schema Objects
-Initial migration (`001_initial_schema.ts`) provisions all master tables and indexes with 100% dialect parity across SQLite and PostgreSQL:
+Initial migration (`001_initial_schema.ts`) provisions all master tables and indexes for the single Postgres-compatible dialect:
 
-| Table Name | Primary Key | Key Foreign Keys & Indexes | SQLite / Postgres Specifics |
+| Table Name | Primary Key | Key Foreign Keys & Indexes | Column Notes |
 | :--- | :--- | :--- | :--- |
-| `projects` | `VARCHAR(36)` (UUIDv7) | `prefix` UNIQUE | Settings JSON column stored as `TEXT` in SQLite / `JSONB` in Postgres. |
+| `projects` | `VARCHAR(36)` (UUIDv7) | `prefix` UNIQUE | Settings stored as a serialized JSON string in a `TEXT` column via the Kysely driver layer. |
 | `test_suites` | `VARCHAR(36)` | FK `project_id`, FK `parent_suite_id`; Index `idx_test_suites_project`, `idx_test_suites_parent` | `path` column stores materialized path (e.g. `/uuid1/uuid2`). |
 | `test_cases` | `VARCHAR(36)` | FK `project_id`, FK `test_suite_id`; Unique `(project_id, external_id)`; Index `idx_test_cases_suite` | `priority` and `execution_type` check constraints. |
 | `test_case_versions` | `VARCHAR(36)` | FK `test_case_id`; Unique `(test_case_id, version_number)`; Index `idx_case_versions_lookup` | `status` check constraint (`DRAFT`, `IN_REVIEW`, `APPROVED`, `DEPRECATED`). |
@@ -158,7 +155,8 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
   "status": "healthy",
   "environment": "development",
   "database": {
-    "driver": "sqlite",
+    "engine": "postgres",
+    "mode": "pglite",
     "connected": true,
     "latency_ms": 1.2
   },
@@ -176,9 +174,7 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
   "api_version": "v1",
   "schema_version": "001_initial_schema",
   "features": {
-    "sqlite_support": true,
-    "postgres_support": true,
-    "dual_driver": true
+    "postgres_compatible_engine": true
   }
 }
 ```
@@ -191,31 +187,31 @@ Initial migration (`001_initial_schema.ts`) provisions all master tables and ind
   - Visual theme tokens (Dark Mode & Sleek Slate palette).
 
 #### 3.1.6 Concrete Verification Strategy & Test Commands
-1. **SQLite Migration Test**:
+1. **Migration Test (PGlite)**:
    ```bash
-   pnpm --filter @testify/db test:migrate:sqlite
+   npm run test:migrate --workspace=packages/db
    ```
-   *Assertion*: Migrates schema cleanly on `better-sqlite3` in-memory DB and executes rollback cleanly.
-2. **PostgreSQL Migration Test**:
+   *Assertion*: Migrates schema cleanly on an ephemeral PGlite instance and executes rollback cleanly.
+2. **Migration Test (PostgreSQL)**:
    ```bash
-   pnpm --filter @testify/db test:migrate:postgres
+   DATABASE_URL=postgres://... npm run test:migrate --workspace=packages/db
    ```
-   *Assertion*: Migrates schema cleanly on PostgreSQL instance.
+   *Assertion*: Migrates schema cleanly on a real PostgreSQL instance, using the same migrations as the PGlite path.
 3. **Database Trigger Immutability Assertion**:
    ```bash
-   pnpm --filter @testify/db test:triggers
+   npm run test:triggers --workspace=packages/db
    ```
    *Assertion*: Executing `UPDATE audit_logs ...` or `DELETE FROM audit_logs ...` raises an error with message `MUTATION_DENIED`.
 4. **Seed Validation Test**:
    ```bash
-   pnpm --filter @testify/db db:seed
+   npm run db:seed --workspace=packages/db
    ```
    *Assertion*: Populates seed project (`PRJ-01`), 10 suites, 50 test cases, 5 test plans, and default RBAC roles without FK constraint failures.
 
 #### 3.1.7 Prerequisite Dependencies & Parallel Execution Directives
-- **Prerequisites**: Node.js >= 20.0.0, pnpm >= 9.0.0, Docker (optional for PostgreSQL local test).
+- **Prerequisites**: Node.js >= 20.0.0, npm >= 10.0.0 (workspaces support), Docker (optional for a real PostgreSQL local test).
 - **Parallel Workstreams**:
-  - Developer A: `packages/db` migrations and dual-driver client setup.
+  - Developer A: `packages/db` migrations and Postgres-compatible client setup.
   - Developer B: `packages/core` Zod schemas and UUIDv7 utilities.
   - Developer C: `apps/server` Fastify setup and `/health` endpoints.
 
@@ -360,17 +356,17 @@ apps/
 #### 3.2.6 Concrete Verification Strategy & Test Commands
 1. **Suite Tree Materialized Path Query Test**:
    ```bash
-   pnpm --filter server test:unit:suites
+   npm run test:unit:suites --workspace=apps/server
    ```
    *Assertion*: Deeply nested suite hierarchy (5 levels deep) returns correctly ordered JSON tree structure.
 2. **Read Performance Benchmark**:
    ```bash
-   pnpm --filter server test:bench:read-spine
+   npm run test:bench:read-spine --workspace=apps/server
    ```
    *Assertion*: Fetching tree with 1,000 suites and 10,000 cases executes in <35ms.
 3. **UI Render & Virtualization E2E Test**:
    ```bash
-   pnpm --filter web test:e2e:read-spine
+   npm run test:e2e:read-spine --workspace=apps/web
    ```
    *Assertion*: Playwright verifies scrolling through 5,000 test case rows maintains 60fps frame rate and total DOM node count remains under 100 elements.
 
@@ -511,22 +507,22 @@ apps/
 #### 3.3.6 Concrete Verification Strategy & Test Commands
 1. **State Machine Unit Tests**:
    ```bash
-   pnpm --filter @testify/core test:unit:fsm
+   npm run test:unit:fsm --workspace=packages/core
    ```
    *Assertion*: Verifies all valid/invalid transitions for Case Version, Test Plan, Execution Run, and Focus Zone state machines.
 2. **Locked Plan Guard Test**:
    ```bash
-   pnpm --filter server test:integration:locks
+   npm run test:integration:locks --workspace=apps/server
    ```
    *Assertion*: Posting an execution to a `LOCKED` plan returns `HTTP 422` with code `PLAN_LOCKED`.
 3. **Batch Execution API Stress Test**:
    ```bash
-   pnpm --filter server test:integration:batch-executions
+   npm run test:integration:batch-executions --workspace=apps/server
    ```
    *Assertion*: Submitting batch of 500 execution results completes in <150ms in a single DB transaction.
 4. **Playwright Hotkey Navigation & Focus E2E**:
    ```bash
-   pnpm --filter web test:e2e:hotkeys
+   npm run test:e2e:hotkeys --workspace=apps/web
    ```
    *Assertion*: 
    - Pressing `j` moves row selection down.
@@ -631,18 +627,18 @@ apps/
 #### 3.4.6 Concrete Verification Strategy & Test Commands
 1. **RBAC Precedence Unit Test**:
    ```bash
-   pnpm --filter @testify/core test:unit:rbac
+   npm run test:unit:rbac --workspace=packages/core
    ```
    *Assertion*: Evaluates all 5 levels of the precedence equation:
    $$\text{User Project Override} \succ \text{User System Override} \succ \text{Project Role Grant} \succ \text{Global Role Grant} \succ \text{Default Deny}$$
 2. **Forbidden Access Middleware Test**:
    ```bash
-   pnpm --filter server test:integration:rbac-middleware
+   npm run test:integration:rbac-middleware --workspace=apps/server
    ```
    *Assertion*: Accessing `POST /test-suites` without `SPEC_CREATE` key returns `HTTP 403 Forbidden` with detailed error response.
 3. **Custom Field Snapshot Verification**:
    ```bash
-   pnpm --filter server test:integration:custom-fields
+   npm run test:integration:custom-fields --workspace=apps/server
    ```
    *Assertion*: Modifying custom field options after recording execution leaves `execution.custom_fields_snapshot` unaltered.
 
@@ -786,22 +782,22 @@ apps/
 #### 3.5.6 Concrete Verification Strategy & Test Commands
 1. **SAX Parser Memory Bound Profiling Test**:
    ```bash
-   pnpm --filter @testify/core test:perf:xml-memory
+   npm run test:perf:xml-memory --workspace=packages/core
    ```
    *Assertion*: Parsing a 100MB TestLink XML file containing 10,000 test cases maintains NodeJS heap memory below **64MB** maximum threshold throughout stream execution.
 2. **Multi-Format Ingestion Parity Test**:
    ```bash
-   pnpm --filter @testify/core test:unit:importers
+   npm run test:unit:importers --workspace=packages/core
    ```
    *Assertion*: Parses TestLink XML, Native JSON Schema, and CSV files into identical internal `TestCaseSpec` structures.
 3. **Machine Token Authentication Test**:
    ```bash
-   pnpm --filter server test:integration:api-tokens
+   npm run test:integration:api-tokens --workspace=apps/server
    ```
    *Assertion*: Requests header `Authorization: Bearer tf_ci_...` successfully authenticates and enforces scoped capability bounds.
 4. **S3 Pre-signed URL Attachment Integration Test**:
    ```bash
-   pnpm --filter server test:integration:attachments
+   npm run test:integration:attachments --workspace=apps/server
    ```
    *Assertion*: Verifies generation of valid S3 pre-signed upload URLs and out-of-band binary storage flow.
 
@@ -819,17 +815,17 @@ apps/
 
 | Slice ID | Target Focus | Key Deliverables | Primary Verification Commands | Exit Gate Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **Slice 0** | Infrastructure & Core Contract | Monorepo setup, dual-driver Kysely DB migrations (SQLite/Postgres), domain models, test seed generators | `pnpm --filter @testify/db test:migrate:sqlite`<br>`pnpm --filter @testify/db test:migrate:postgres`<br>`pnpm --filter @testify/db test:triggers` | Clean migrations on SQLite & Postgres; DB trigger enforces append-only `audit_logs` (`MUTATION_DENIED`). |
-| **Slice 1** | The Read Spine | High-density 3-Pane UI layout (28px/32px height rules), virtualized tree/queue components, read-only API routes | `pnpm --filter server test:bench:read-spine`<br>`pnpm --filter web test:e2e:read-spine` | 5,000 suite tree query <35ms; Playwright virtualized list maintains 60fps at <100 DOM nodes. |
-| **Slice 2** | The Write & Execution Loop | Single-key hotkeys (`j/k/p/f/b/s/e`), Focus Zone FSM (Zone 1..5), batch execution ingestion (`/executions/batch`), plan lock HTTP 422 | `pnpm --filter @testify/core test:unit:fsm`<br>`pnpm --filter server test:integration:batch-executions`<br>`pnpm --filter web test:e2e:hotkeys` | Batch ingestion of 500 cases <150ms; locked plan posts return HTTP 422; typing in text inputs auto-pauses hotkeys. |
-| **Slice 3** | Admin & Customization | Dynamic custom fields engine, RBAC permission evaluator (16 keys, precedence matrix), project settings | `pnpm --filter @testify/core test:unit:rbac`<br>`pnpm --filter server test:integration:custom-fields` | 5-tier RBAC precedence equation validated; dynamic custom fields snapshot cleanly into execution history. |
-| **Slice 4** | Integrations & Migrations | SAX XML/JSON/CSV stream importer (<64MB heap), dry-run reconciliation, machine API tokens (`tf_ci_...`), S3 storage provider | `pnpm --filter @testify/core test:perf:xml-memory`<br>`pnpm --filter server test:integration:api-tokens`<br>`pnpm --filter server test:integration:attachments` | 100MB XML file parsed with <64MB heap memory; API token authentication enforces scoped permissions; pre-signed S3 upload URLs valid. |
+| **Slice 0** | Infrastructure & Core Contract | Monorepo setup, Postgres-compatible Kysely DB migrations (PGlite locally / PostgreSQL in production, one dialect), domain models, test seed generators | `npm run test:migrate --workspace=packages/db`<br>`DATABASE_URL=postgres://... npm run test:migrate --workspace=packages/db`<br>`npm run test:triggers --workspace=packages/db` | Clean migrations on PGlite & PostgreSQL; DB trigger enforces append-only `audit_logs` (`MUTATION_DENIED`). |
+| **Slice 1** | The Read Spine | High-density 3-Pane UI layout (28px/32px height rules), virtualized tree/queue components, read-only API routes | `npm run test:bench:read-spine --workspace=apps/server`<br>`npm run test:e2e:read-spine --workspace=apps/web` | 5,000 suite tree query <35ms; Playwright virtualized list maintains 60fps at <100 DOM nodes. |
+| **Slice 2** | The Write & Execution Loop | Single-key hotkeys (`j/k/p/f/b/s/e`), Focus Zone FSM (Zone 1..5), batch execution ingestion (`/executions/batch`), plan lock HTTP 422 | `npm run test:unit:fsm --workspace=packages/core`<br>`npm run test:integration:batch-executions --workspace=apps/server`<br>`npm run test:e2e:hotkeys --workspace=apps/web` | Batch ingestion of 500 cases <150ms; locked plan posts return HTTP 422; typing in text inputs auto-pauses hotkeys. |
+| **Slice 3** | Admin & Customization | Dynamic custom fields engine, RBAC permission evaluator (16 keys, precedence matrix), project settings | `npm run test:unit:rbac --workspace=packages/core`<br>`npm run test:integration:custom-fields --workspace=apps/server` | 5-tier RBAC precedence equation validated; dynamic custom fields snapshot cleanly into execution history. |
+| **Slice 4** | Integrations & Migrations | SAX XML/JSON/CSV stream importer (<64MB heap), dry-run reconciliation, machine API tokens (`tf_ci_...`), S3 storage provider | `npm run test:perf:xml-memory --workspace=packages/core`<br>`npm run test:integration:api-tokens --workspace=apps/server`<br>`npm run test:integration:attachments --workspace=apps/server` | 100MB XML file parsed with <64MB heap memory; API token authentication enforces scoped permissions; pre-signed S3 upload URLs valid. |
 
 ---
 
 ## 5. Architectural Alignment Verification
 
-This vertical slicing roadmap directly satisfies all 14 locked requirements established in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](file:///home/elliot/Documents/Code/testlink-local/docs/MASTER_ARCHITECTURE_BLUEPRINT.md):
+This vertical slicing roadmap directly satisfies all 14 locked requirements established in [`MASTER_ARCHITECTURE_BLUEPRINT.md`](./MASTER_ARCHITECTURE_BLUEPRINT.md):
 
 ```
 +-------------------------------------------------------------------------------------------------------+
@@ -848,7 +844,7 @@ This vertical slicing roadmap directly satisfies all 14 locked requirements esta
 |  [✓] Req 11: Multi-Format Ingestion Engine             ---> Implemented in Slice 4 IFileParser        |
 |  [✓] Req 12: Import Reconciliation Setup Modals        ---> Implemented in Slice 4 UI Wizard           |
 |  [✓] Req 13: SAX Stream Memory Bound (<64MB Heap)      ---> Implemented in Slice 4 SaxXmlParser        |
-|  [✓] Req 14: Dual-Driver DB Parity (SQLite/Postgres)   ---> Implemented in Slice 0 Kysely DB Client   |
+|  [✓] Req 14: Operational Integrity (Postgres-Compatible)---> Implemented in Slice 0 Kysely DB Client  |
 +-------------------------------------------------------------------------------------------------------+
 ```
 
