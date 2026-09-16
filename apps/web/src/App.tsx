@@ -1840,13 +1840,6 @@ export default function App() {
                     {activeCase.summary}
                   </div>
                 </div>
-
-                {/* VISUAL HOTKEY STATUS BADGE COMPONENT */}
-                <FocusIndicatorBadge
-                  status={fsm.hotkeyStatus}
-                  currentZone={fsm.currentZone}
-                  onToggleHotkeys={fsm.toggleHotkeys}
-                />
               </div>
 
               {/* CASE DETAILS & STEP VERIFICATION */}
