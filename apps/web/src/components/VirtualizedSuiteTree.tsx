@@ -9,6 +9,10 @@ export interface SuiteTreeNode {
   passedCount?: number;
   totalCount?: number;
   isExpanded?: boolean;
+  /** Specification-mode plan-inclusion counts, summed recursively over the subtree
+   * (from GET /api/v1/projects/:id/spec-tree). Drive the tri-state cascade indicator. */
+  inPlanCount?: number;
+  totalCaseCount?: number;
 }
 
 export interface VirtualizedSuiteTreeProps {
@@ -16,6 +20,14 @@ export interface VirtualizedSuiteTreeProps {
   selectedSuiteId?: string | null;
   onSelectSuite?: (suiteId: string) => void;
   onToggleExpand?: (suiteId: string, expanded: boolean) => void;
+  /** EXECUTION (default) shows the pass/fail progress pill; SPECIFICATION shows the
+   * plan-inclusion tri-state indicator instead. */
+  mode?: 'EXECUTION' | 'SPECIFICATION';
+  /** Whether the current user holds PLAN_MANAGE -- gates the inclusion indicator's click
+   * handler (view-only otherwise, matching how execute buttons are disabled elsewhere). */
+  canManagePlan?: boolean;
+  /** Fired when a suite's inclusion indicator is clicked in Specification mode. */
+  onToggleSuiteInclusion?: (suiteId: string, action: 'ADD' | 'REMOVE') => void;
 }
 
 const TREE_ROW_HEIGHT = 28; // Explicit 28px tree node standard (RFC 02 §3.1)
@@ -32,6 +44,9 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   selectedSuiteId,
   onSelectSuite,
   onToggleExpand,
+  mode = 'EXECUTION',
+  canManagePlan = false,
+  onToggleSuiteInclusion,
 }) => {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
 
@@ -67,6 +82,59 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   );
 
   const flatNodes = flattenTree(suites);
+
+  const renderInclusionIndicator = (node: SuiteTreeNode) => {
+    const total = node.totalCaseCount ?? 0;
+    const inPlan = node.inPlanCount ?? 0;
+    if (total === 0) return null;
+
+    const state: 'all' | 'partial' | 'none' = inPlan === 0 ? 'none' : inPlan === total ? 'all' : 'partial';
+    // Partial always escalates to fully-on first, same as a standard tri-state checkbox.
+    const nextAction: 'ADD' | 'REMOVE' = state === 'all' ? 'REMOVE' : 'ADD';
+
+    const bg = state === 'all' ? '#15803d' : state === 'partial' ? '#b45309' : 'transparent';
+    const border = state === 'all' ? '#22c55e' : state === 'partial' ? '#f59e0b' : '#4b5563';
+    const symbol = state === 'all' ? '✓' : state === 'partial' ? '–' : '';
+
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0, marginLeft: '8px' }}>
+        <span style={{ fontSize: '10px', color: '#9ca3af' }}>
+          {inPlan}/{total}
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!canManagePlan) return;
+            onToggleSuiteInclusion?.(node.id, nextAction);
+          }}
+          disabled={!canManagePlan}
+          title={
+            canManagePlan
+              ? `${inPlan}/${total} in plan -- click to ${nextAction === 'ADD' ? 'add all' : 'remove all'}`
+              : 'Requires plan management permission'
+          }
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '16px',
+            height: '16px',
+            borderRadius: '3px',
+            backgroundColor: bg,
+            border: `1px solid ${border}`,
+            color: '#ffffff',
+            fontSize: '10px',
+            fontWeight: 700,
+            cursor: canManagePlan ? 'pointer' : 'not-allowed',
+            opacity: canManagePlan ? 1 : 0.5,
+            padding: 0,
+          }}
+        >
+          {symbol}
+        </button>
+      </span>
+    );
+  };
 
   return (
     <div
@@ -146,23 +214,25 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
               </span>
             </div>
 
-            {/* Progress Pill (e.g. 12/15 P) */}
-            {total > 0 && (
-              <span
-                style={{
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
-                  backgroundColor: 'rgba(31, 41, 55, 0.8)',
-                  padding: '1px 6px',
-                  borderRadius: '9999px',
-                  flexShrink: 0,
-                  marginLeft: '8px',
-                }}
-              >
-                {passed}/{total} P
-              </span>
-            )}
+            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator (Specification mode) */}
+            {mode === 'SPECIFICATION'
+              ? renderInclusionIndicator(node)
+              : total > 0 && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
+                      backgroundColor: 'rgba(31, 41, 55, 0.8)',
+                      padding: '1px 6px',
+                      borderRadius: '9999px',
+                      flexShrink: 0,
+                      marginLeft: '8px',
+                    }}
+                  >
+                    {passed}/{total} P
+                  </span>
+                )}
           </div>
         );
       })}

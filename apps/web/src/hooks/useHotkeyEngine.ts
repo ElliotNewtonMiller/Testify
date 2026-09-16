@@ -5,6 +5,9 @@ export type VerdictType = 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
 
 export interface HotkeyEngineOptions {
   fsm: FocusFSMState;
+  /** SPECIFICATION mode disables the verdict hotkeys (p/f/b/s) -- there's nothing to execute
+   * there, only cases to browse and toggle in/out of the plan. Defaults to EXECUTION. */
+  mode?: 'EXECUTION' | 'SPECIFICATION';
   caseCount: number;
   selectedIndex: number;
   onSelectIndex: (index: number) => void;
@@ -26,6 +29,7 @@ export interface HotkeyEngineOptions {
 export function createHotkeyHandler(options: HotkeyEngineOptions) {
   const {
     fsm,
+    mode = 'EXECUTION',
     caseCount,
     selectedIndex,
     onSelectIndex,
@@ -52,6 +56,10 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
       // Ctrl+Enter or Cmd+Enter to submit verdict/notes from input
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
+        if (mode === 'SPECIFICATION') {
+          onPermissionDeniedToast?.('Verdict hotkeys are unavailable in Specification mode');
+          return;
+        }
         if (!fsm.canExecute) {
           onPermissionDeniedToast?.('Permission Denied: EXECUTE_RUN required to submit execution');
           return;
@@ -152,6 +160,11 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
     if (key === 'p' || key === 'f' || key === 'b' || key === 's') {
       event.preventDefault();
 
+      if (mode === 'SPECIFICATION') {
+        onPermissionDeniedToast?.('Verdict hotkeys are unavailable in Specification mode');
+        return;
+      }
+
       // RBAC Permission Checks
       if (!fsm.canExecute) {
         onPermissionDeniedToast?.('Permission Denied: EXECUTE_RUN key required for verdict hotkeys');
@@ -215,6 +228,7 @@ export function useHotkeyEngine(options: HotkeyEngineOptions) {
     },
     [
       options.fsm,
+      options.mode,
       options.caseCount,
       options.selectedIndex,
       options.onSelectIndex,

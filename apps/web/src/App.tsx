@@ -10,6 +10,10 @@ import {
   VirtualizedSuiteTree,
   SuiteTreeNode,
 } from "./components/VirtualizedSuiteTree";
+import {
+  SpecCaseListGrid,
+  SpecCaseGridItem,
+} from "./components/SpecCaseListGrid";
 import { AuthModal, UserProfile } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
 import { LoginPage } from "./components/LoginPage";
@@ -34,6 +38,7 @@ interface TestCase extends TestCaseGridItem {
   preconditions: string;
   steps: Step[];
   latest_execution_id: string | null;
+  test_suite_id?: string;
 }
 
 interface WorkspaceData {
@@ -42,6 +47,42 @@ interface WorkspaceData {
   plan: { id: string; name: string; status: string };
   build: { id: string; name: string; status: string };
   cases: TestCase[];
+}
+
+// --- Specification mode: types for GET /api/v1/projects/:id/spec-tree and
+// GET /api/v1/test-cases/:id/latest-version. Curation-only -- read-only case/step detail,
+// plus per-case/suite plan-inclusion toggles. See docs/rfc_01_domain_model.md §2.3.
+interface SpecSuiteNode {
+  id: string;
+  name: string;
+  path: string;
+  parent_suite_id: string | null;
+  children: SpecSuiteNode[];
+  total_case_count: number;
+  in_plan_count: number;
+}
+
+interface SpecTreeData {
+  project: { id: string; name: string; prefix: string; settings: { allow_draft_plan_linking: boolean } };
+  suites: SpecSuiteNode[];
+  cases: SpecCaseGridItem[];
+}
+
+interface SpecCaseDetail {
+  test_case: { id: string; external_id: string; title: string; priority: string; execution_type: string };
+  version: {
+    id: string;
+    version_number: number;
+    status: string;
+    summary: string | null;
+    preconditions: string | null;
+    steps: Step[];
+  };
+}
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("auth_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
@@ -120,6 +161,20 @@ export default function App() {
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Specification / Execution mode toggle (Pane 1 header) & Specification-mode state
+  const [workspaceMode, setWorkspaceMode] = useState<"EXECUTION" | "SPECIFICATION">(
+    "EXECUTION",
+  );
+  const [specData, setSpecData] = useState<SpecTreeData | null>(null);
+  const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+  const [specSelectedCaseId, setSpecSelectedCaseId] = useState<string | null>(
+    null,
+  );
+  const [specCaseDetail, setSpecCaseDetail] = useState<SpecCaseDetail | null>(
+    null,
+  );
+  const [pendingToggleId, setPendingToggleId] = useState<string | null>(null);
+
   // Authentication & RBAC User State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
@@ -159,6 +214,21 @@ export default function App() {
 
   const notesInputRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Guard against out-of-order fetch responses: selectedProjectId/selectedPlanId go through
+  // a fake-seed -> real-id bootstrap sequence (see loadProjects/loadPlans), which can fire
+  // several requests in quick succession. Without this, a slower, now-stale response (e.g.
+  // for the fake seed id) can resolve after a newer one and silently overwrite fresh data.
+  const specTreeRequestSeq = useRef(0);
+  const executionWorkspaceRequestSeq = useRef(0);
+
+  // Display Toast Notification (moved above the entity/spec handlers below, which reference it)
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 3000);
+  }, []);
 
   const openEntityModal = (entityType: EntityType, actionType: ActionType) => {
     let targetItem: EntityItem | null = null;
@@ -349,104 +419,229 @@ export default function App() {
 
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
+    setSelectedSuiteId(null);
+    setSpecSelectedCaseId(null);
     const target = projectsList.find((p) => p.id === projectId);
-    if (target) {
-      setWorkspace((prev) =>
-        prev
-          ? {
-              ...prev,
-              project: {
-                id: target.id,
-                name: target.name,
-                prefix: target.prefix || "TFY",
-              },
-            }
-          : prev,
-      );
-      showToast(`Switched to Project: ${target.name}`);
-    }
+    if (target) showToast(`Switched to Project: ${target.name}`);
   };
 
   const handleSelectPlan = (planId: string) => {
     setSelectedPlanId(planId);
     const target = plansList.find((p) => p.id === planId);
-    if (target) {
-      setWorkspace((prev) =>
-        prev
-          ? {
-              ...prev,
-              plan: {
-                id: target.id,
-                name: target.name,
-                status: target.status || "ACTIVE",
-              },
-            }
-          : prev,
-      );
-      showToast(`Switched to Test Plan: ${target.name}`);
-    }
+    if (target) showToast(`Switched to Test Plan: ${target.name}`);
   };
 
   const handleSelectRun = (runId: string) => {
     setSelectedRunId(runId);
     const target = runsList.find((r) => r.id === runId);
-    if (target) {
-      setWorkspace((prev) =>
-        prev
-          ? {
-              ...prev,
-              build: {
-                id: target.id,
-                name: target.name,
-                status: target.status || "OPEN",
-              },
-            }
-          : prev,
-      );
-      showToast(`Switched to Test Run: ${target.name}`);
-    }
+    if (target) showToast(`Switched to Test Run: ${target.name}`);
   };
 
-  // Hydrate initial workspace data from API server
-  const loadWorkspace = useCallback(async () => {
+  // Real project/plan listings (replaces the hardcoded fake dropdown data that used to live
+  // here -- prj_01/02/03, pln_01/02/03 -- none of which exist in the DB).
+  const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/workspace");
+      const res = await fetch("/api/v1/projects", { headers: authHeaders() });
       if (res.ok) {
-        const data: WorkspaceData = await res.json();
-        setWorkspace(data);
-        if (data.project) {
-          setProjectsList((prev) =>
-            prev.some((p) => p.id === data.project.id)
-              ? prev
-              : [data.project, ...prev],
+        const data = await res.json();
+        if (data.projects && data.projects.length > 0) {
+          const mapped: EntityItem[] = data.projects.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            prefix: p.prefix,
+          }));
+          setProjectsList(mapped);
+          setSelectedProjectId((prev) =>
+            mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
           );
-          setSelectedProjectId(data.project.id);
         }
-        if (data.plan) {
-          setPlansList((prev) =>
-            prev.some((p) => p.id === data.plan.id)
-              ? prev
-              : [data.plan, ...prev],
+      }
+    } catch {
+      // Network error -- keep the existing (fallback) list
+    }
+  }, []);
+
+  const loadPlans = useCallback(async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/v1/projects/${projectId}/plans`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.plans && data.plans.length > 0) {
+          const mapped: EntityItem[] = data.plans.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            status: p.status,
+          }));
+          setPlansList(mapped);
+          setSelectedPlanId((prev) =>
+            mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
           );
-          setSelectedPlanId(data.plan.id);
         }
-        if (data.build) {
-          const runItem = {
-            ...data.build,
-            name: data.build.name.replace(/^Build\s+/i, "Run "),
-          };
-          setRunsList((prev) =>
-            prev.some((r) => r.id === runItem.id) ? prev : [runItem, ...prev],
+      }
+    } catch {
+      // Network error -- keep the existing (fallback) list
+    }
+  }, []);
+
+  // Execution-mode workspace: parameterized by the selected plan (and optionally build)
+  // instead of hardcoded to the seed plan/build like the old /api/v1/workspace endpoint.
+  const refreshExecutionWorkspace = useCallback(async () => {
+    if (!selectedPlanId) return;
+    const seq = ++executionWorkspaceRequestSeq.current;
+    try {
+      const url = selectedRunId
+        ? `/api/v1/test-plans/${selectedPlanId}/cases?build_id=${encodeURIComponent(selectedRunId)}`
+        : `/api/v1/test-plans/${selectedPlanId}/cases`;
+      const res = await fetch(url, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        if (executionWorkspaceRequestSeq.current !== seq) return; // a newer request already resolved
+        const projectEntity = projectsList.find((p) => p.id === selectedProjectId);
+        const builds = data.builds || [];
+
+        setWorkspace({
+          project: projectEntity
+            ? {
+                id: projectEntity.id,
+                name: projectEntity.name,
+                prefix: projectEntity.prefix || "TFY",
+              }
+            : DEFAULT_FALLBACK_WORKSPACE.project,
+          suites: [],
+          plan: { id: data.plan.id, name: data.plan.name, status: data.plan.status },
+          build: builds[0]
+            ? { id: builds[0].id, name: builds[0].name, status: builds[0].status }
+            : DEFAULT_FALLBACK_WORKSPACE.build,
+          cases: data.cases.map((c: any) => ({
+            plan_case_id: c.plan_case_id,
+            case_id: c.case_id,
+            test_suite_id: c.test_suite_id,
+            external_id: c.external_id,
+            title: c.title,
+            priority: c.priority,
+            execution_type: c.execution_type,
+            version_number: c.version_number,
+            summary: c.summary,
+            preconditions: c.preconditions,
+            steps: c.steps,
+            latest_verdict: c.latest_verdict || "UNTESTED",
+            latest_execution_id: c.latest_execution_id || null,
+          })),
+        });
+
+        if (builds.length > 0) {
+          const runItems: EntityItem[] = builds.map((b: any) => ({
+            id: b.id,
+            name: (b.name || "").replace(/^Build\s+/i, "Run "),
+            status: b.status,
+          }));
+          setRunsList(runItems);
+          setSelectedRunId((prev) =>
+            runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
           );
-          setSelectedRunId(runItem.id);
         }
         return;
       }
     } catch {
       // API offline fallback
     }
-    setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
-  }, []);
+    if (executionWorkspaceRequestSeq.current === seq) {
+      setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
+    }
+  }, [selectedPlanId, selectedProjectId, selectedRunId, projectsList]);
+
+  // Specification-mode data: the whole project's suite/case spec, annotated with the
+  // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
+  // suiteNodes below), fixing the tree's pre-existing flat/fake-count display.
+  const refreshSpecTree = useCallback(async () => {
+    if (!selectedProjectId || !selectedPlanId) return;
+    const seq = ++specTreeRequestSeq.current;
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/spec-tree?plan_id=${selectedPlanId}`,
+        { headers: authHeaders() },
+      );
+      const data = res.ok ? await res.json() : null;
+      if (specTreeRequestSeq.current === seq) setSpecData(data);
+    } catch {
+      if (specTreeRequestSeq.current === seq) setSpecData(null);
+    }
+  }, [selectedProjectId, selectedPlanId]);
+
+  // Per-case/suite plan-inclusion toggles (Specification mode). Both call the new
+  // apps/server/src/routes/testPlanCases.ts endpoints, then refresh the spec tree so
+  // in_plan/tri-state counts reflect the change.
+  const handleToggleCaseInclusion = useCallback(
+    async (testCaseId: string, include: boolean) => {
+      if (!selectedPlanId) return;
+      setPendingToggleId(testCaseId);
+      try {
+        const res = await fetch(
+          include
+            ? `/api/v1/test-plans/${selectedPlanId}/cases`
+            : `/api/v1/test-plans/${selectedPlanId}/cases/${testCaseId}`,
+          {
+            method: include ? "POST" : "DELETE",
+            // Content-Type: application/json on a bodyless DELETE trips Fastify's JSON body
+            // parser (it 400s on an empty body when that header is present) -- only set it
+            // when there's actually a JSON body to send.
+            headers: include
+              ? { "Content-Type": "application/json", ...authHeaders() }
+              : { ...authHeaders() },
+            body: include ? JSON.stringify({ test_case_id: testCaseId }) : undefined,
+          },
+        );
+        if (res.ok) {
+          showToast(include ? "Added to plan" : "Removed from plan");
+          await refreshSpecTree();
+        } else {
+          const body = await res.json().catch(() => ({}) as any);
+          showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
+        }
+      } catch {
+        showToast("Network error updating plan membership");
+      } finally {
+        setPendingToggleId(null);
+      }
+    },
+    [selectedPlanId, showToast, refreshSpecTree],
+  );
+
+  const handleToggleSuiteInclusion = useCallback(
+    async (suiteId: string, action: "ADD" | "REMOVE") => {
+      if (!selectedPlanId) return;
+      setPendingToggleId(suiteId);
+      try {
+        const res = await fetch(
+          `/api/v1/test-plans/${selectedPlanId}/suites/${suiteId}/cascade`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ action }),
+          },
+        );
+        if (res.ok) {
+          const body = await res.json();
+          const parts: string[] = [];
+          if (body.added) parts.push(`${body.added} added`);
+          if (body.removed) parts.push(`${body.removed} removed`);
+          if (body.skipped?.length) parts.push(`${body.skipped.length} skipped`);
+          showToast(parts.length > 0 ? parts.join(", ") : "No changes");
+          await refreshSpecTree();
+        } else {
+          const body = await res.json().catch(() => ({}) as any);
+          showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
+        }
+      } catch {
+        showToast("Network error updating plan membership");
+      } finally {
+        setPendingToggleId(null);
+      }
+    },
+    [selectedPlanId, showToast, refreshSpecTree],
+  );
 
   const activeCase = workspace?.cases[selectedIndex] || null;
   const isCompleted =
@@ -458,14 +653,6 @@ export default function App() {
     permissions: userPermissions,
     isExecutionCompleted: Boolean(isCompleted),
   });
-
-  // Display Toast Notification
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 3000);
-  }, []);
 
   // Fetch current user profile (/api/v1/auth/me). No client-side fallback session: if the
   // server doesn't confirm the token, the user is logged out. (This used to fabricate a fake
@@ -536,9 +723,66 @@ export default function App() {
 
   useEffect(() => {
     fetchCurrentUser();
-    loadWorkspace();
     verifyDatabase();
-  }, [fetchCurrentUser, loadWorkspace, verifyDatabase]);
+  }, [fetchCurrentUser, verifyDatabase]);
+
+  // Real project list only resolves once authenticated (the endpoint requires a Bearer
+  // token) -- (re)load it whenever a session is established, whether from a restored
+  // token on mount or a fresh login.
+  useEffect(() => {
+    if (currentUser) {
+      loadProjects();
+    }
+  }, [currentUser, loadProjects]);
+
+  // Real plan list for whichever project is currently selected.
+  useEffect(() => {
+    if (currentUser && selectedProjectId) {
+      loadPlans(selectedProjectId);
+    }
+  }, [currentUser, selectedProjectId, loadPlans]);
+
+  // The actual workspace data fetch: Specification mode always needs the spec tree (it also
+  // drives Pane 1's suite tree in Execution mode -- see suiteNodes below); Execution mode
+  // additionally needs the plan's execution queue.
+  useEffect(() => {
+    if (!currentUser || !selectedProjectId || !selectedPlanId) return;
+    refreshSpecTree();
+    if (workspaceMode === "EXECUTION") {
+      refreshExecutionWorkspace();
+    }
+  }, [
+    currentUser,
+    workspaceMode,
+    selectedProjectId,
+    selectedPlanId,
+    refreshSpecTree,
+    refreshExecutionWorkspace,
+  ]);
+
+  // Lazy per-case detail (steps/preconditions) for whichever case is selected in
+  // Specification mode -- kept out of the bulk spec-tree payload to stay light for large
+  // projects.
+  useEffect(() => {
+    if (workspaceMode !== "SPECIFICATION" || !specSelectedCaseId) {
+      setSpecCaseDetail(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/test-cases/${specSelectedCaseId}/latest-version`, {
+          headers: authHeaders(),
+        });
+        if (!cancelled) setSpecCaseDetail(res.ok ? await res.json() : null);
+      } catch {
+        if (!cancelled) setSpecCaseDetail(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceMode, specSelectedCaseId]);
 
   // Execute verdict submission (Optimistic UI + Background API)
   const submitVerdict = useCallback(
@@ -612,12 +856,34 @@ export default function App() {
     [activeCase, workspace, failureNotes, verifyDatabase],
   );
 
-  // Global Hotkey Engine Hook wiring
+  // Cases visible in Pane 2 for Specification mode: the whole project, or just the
+  // currently selected suite's direct cases if one is selected in the tree.
+  const specCasesForSuite: SpecCaseGridItem[] = specData
+    ? specData.cases.filter((c) => !selectedSuiteId || c.test_suite_id === selectedSuiteId)
+    : [];
+
+  // Global Hotkey Engine Hook wiring. j/k/[/]//  stay valid in both modes; p/f/b/s
+  // (verdict recording) are disabled in Specification mode -- see useHotkeyEngine's
+  // `mode` option.
   useHotkeyEngine({
     fsm,
-    caseCount: workspace?.cases.length || 0,
-    selectedIndex,
-    onSelectIndex: (idx) => setSelectedIndex(idx),
+    mode: workspaceMode,
+    caseCount:
+      workspaceMode === "SPECIFICATION"
+        ? specCasesForSuite.length
+        : workspace?.cases.length || 0,
+    selectedIndex:
+      workspaceMode === "SPECIFICATION"
+        ? specCasesForSuite.findIndex((c) => c.id === specSelectedCaseId)
+        : selectedIndex,
+    onSelectIndex: (idx) => {
+      if (workspaceMode === "SPECIFICATION") {
+        const target = specCasesForSuite[idx];
+        if (target) setSpecSelectedCaseId(target.id);
+      } else {
+        setSelectedIndex(idx);
+      }
+    },
     onVerdict: (verdict) => {
       submitVerdict(verdict);
       if (verdict === "FAILED" || verdict === "BLOCKED") {
@@ -670,7 +936,8 @@ export default function App() {
           setCurrentUser(user);
           setUserPermissions(user.permissions || []);
           showToast(`Welcome back, ${user.username}!`);
-          loadWorkspace();
+          // No explicit loadWorkspace() call needed here -- the currentUser-keyed effects
+          // above pick up the new session and load projects/plans/workspace automatically.
           verifyDatabase();
         }}
       />
@@ -701,19 +968,50 @@ export default function App() {
     (c) => c.latest_verdict === "FAILED",
   ).length;
 
-  // Build SuiteTreeNode hierarchy for VirtualizedSuiteTree
-  const suiteNodes: SuiteTreeNode[] = workspace.suites.map((s) => ({
-    id: s.id,
-    name: s.name,
-    path: s.path,
-    passedCount,
-    totalCount: workspace.cases.length,
-  }));
+  // Build the real, nested SuiteTreeNode hierarchy from the Specification-mode spec-tree
+  // fetch, which drives Pane 1 in BOTH modes (fixes the tree's pre-existing flat/fake-count
+  // display). Execution mode's pass/fail counts are computed per-suite from the current
+  // plan's cases (workspace.cases); Specification mode's in-plan/total counts come straight
+  // from the server (spec-tree already sums them recursively over each subtree).
+  const execCountsBySuite = new Map<string, { passed: number; total: number }>();
+  if (workspaceMode === "EXECUTION") {
+    for (const c of workspace.cases) {
+      if (!c.test_suite_id) continue;
+      const entry = execCountsBySuite.get(c.test_suite_id) || { passed: 0, total: 0 };
+      entry.total += 1;
+      if (c.latest_verdict === "PASSED") entry.passed += 1;
+      execCountsBySuite.set(c.test_suite_id, entry);
+    }
+  }
+
+  const buildSuiteNodes = (nodes: SpecSuiteNode[]): SuiteTreeNode[] =>
+    nodes.map((n) => {
+      const exec = execCountsBySuite.get(n.id);
+      return {
+        id: n.id,
+        name: n.name,
+        path: n.path,
+        parentId: n.parent_suite_id,
+        children: buildSuiteNodes(n.children),
+        passedCount: exec?.passed ?? 0,
+        totalCount: exec?.total ?? 0,
+        inPlanCount: n.in_plan_count,
+        totalCaseCount: n.total_case_count,
+      };
+    });
+
+  const suiteNodes: SuiteTreeNode[] = specData ? buildSuiteNodes(specData.suites) : [];
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
   const hasUserManagePermission =
     userPermissions.includes("USER_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
+  const hasPlanManagePermission =
+    userPermissions.includes("PLAN_MANAGE") ||
+    userPermissions.includes("SYSTEM_ADMIN");
+
+  const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
+  const specVersionDetail = specCaseDetail?.version || null;
 
   return (
     <div
@@ -1125,16 +1423,63 @@ export default function App() {
             style={{
               padding: "10px 12px",
               borderBottom: "1px solid #1f2937",
-              fontSize: "11px",
-              fontWeight: 600,
-              color: "#6b7280",
-              textTransform: "uppercase",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
             }}
           >
-            SUITE TREE
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 600,
+                color: "#6b7280",
+                textTransform: "uppercase",
+              }}
+            >
+              SUITE TREE
+            </span>
+            {/* SPECIFICATION / EXECUTION MODE TOGGLE -- visible to any authenticated user
+                (per-case/suite plan-inclusion buttons are the part gated by PLAN_MANAGE,
+                not this toggle itself). */}
+            <div
+              style={{
+                display: "flex",
+                border: "1px solid #334155",
+                borderRadius: "4px",
+                overflow: "hidden",
+              }}
+            >
+              {(["EXECUTION", "SPECIFICATION"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setWorkspaceMode(m)}
+                  style={{
+                    border: "none",
+                    padding: "3px 8px",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
+                    color: workspaceMode === m ? "#ffffff" : "#9ca3af",
+                  }}
+                >
+                  {m === "EXECUTION" ? "Execute" : "Spec"}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <VirtualizedSuiteTree suites={suiteNodes} />
+          <VirtualizedSuiteTree
+            suites={suiteNodes}
+            selectedSuiteId={selectedSuiteId}
+            onSelectSuite={(suiteId) => {
+              setSelectedSuiteId((prev) => (prev === suiteId ? null : suiteId));
+              if (workspaceMode === "SPECIFICATION") setSpecSelectedCaseId(null);
+            }}
+            mode={workspaceMode}
+            canManagePlan={hasPlanManagePermission}
+            onToggleSuiteInclusion={handleToggleSuiteInclusion}
+          />
 
           {/* DB STATS LOG */}
           <div
@@ -1187,20 +1532,38 @@ export default function App() {
                 textTransform: "uppercase",
               }}
             >
-              QUEUE GRID
+              {workspaceMode === "SPECIFICATION" ? "SPECIFICATION" : "QUEUE GRID"}
             </span>
-            <span style={{ fontSize: "11px", color: "#9ca3af" }}>
-              <span style={{ color: "#10b981" }}>{passedCount} Pass</span> |{" "}
-              <span style={{ color: "#ef4444" }}>{failedCount} Fail</span>
-            </span>
+            {workspaceMode === "SPECIFICATION" ? (
+              <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                {specCasesForSuite.filter((c) => c.in_plan).length}/{specCasesForSuite.length} in plan
+              </span>
+            ) : (
+              <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                <span style={{ color: "#10b981" }}>{passedCount} Pass</span> |{" "}
+                <span style={{ color: "#ef4444" }}>{failedCount} Fail</span>
+              </span>
+            )}
           </div>
 
-          <TestCaseQueueGrid
-            cases={workspace.cases}
-            selectedIndex={selectedIndex}
-            onSelectCase={(idx) => setSelectedIndex(idx)}
-            filterQuery={searchQuery}
-          />
+          {workspaceMode === "SPECIFICATION" ? (
+            <SpecCaseListGrid
+              cases={specCasesForSuite}
+              selectedCaseId={specSelectedCaseId}
+              onSelectCase={(caseId) => setSpecSelectedCaseId(caseId)}
+              filterQuery={searchQuery}
+              canManagePlan={hasPlanManagePermission}
+              onToggleInclusion={handleToggleCaseInclusion}
+              pendingCaseId={pendingToggleId}
+            />
+          ) : (
+            <TestCaseQueueGrid
+              cases={workspace.cases}
+              selectedIndex={selectedIndex}
+              onSelectCase={(idx) => setSelectedIndex(idx)}
+              filterQuery={searchQuery}
+            />
+          )}
         </div>
 
         {/* PANE 3: EXECUTION & DETAIL WORKSPACE (FLUID) */}
@@ -1212,7 +1575,222 @@ export default function App() {
             flexDirection: "column",
           }}
         >
-          {activeCase ? (
+          {workspaceMode === "SPECIFICATION" ? (
+            specActiveCase ? (
+              <>
+                {/* SPEC CASE HEADER + PLAN-INCLUSION TOGGLE */}
+                <div
+                  style={{
+                    padding: "16px 20px",
+                    borderBottom: "1px solid #1f2937",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb" }}>
+                      {specActiveCase.external_id}
+                    </span>
+                    <span style={{ fontSize: "14px", color: "#9ca3af" }}>
+                      {specActiveCase.title}
+                    </span>
+                    {specActiveCase.latest_version && (
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          backgroundColor:
+                            specActiveCase.latest_version.status === "APPROVED"
+                              ? "#064e3b"
+                              : "#1f2937",
+                          color:
+                            specActiveCase.latest_version.status === "APPROVED"
+                              ? "#34d399"
+                              : "#9ca3af",
+                          fontWeight: 600,
+                        }}
+                      >
+                        v{specActiveCase.latest_version.version_number}{" "}
+                        {specActiveCase.latest_version.status}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      handleToggleCaseInclusion(specActiveCase.id, !specActiveCase.in_plan)
+                    }
+                    disabled={
+                      pendingToggleId === specActiveCase.id ||
+                      !hasPlanManagePermission ||
+                      (!specActiveCase.in_plan && !specActiveCase.linkable)
+                    }
+                    title={
+                      !hasPlanManagePermission
+                        ? "Requires plan management permission"
+                        : !specActiveCase.in_plan && !specActiveCase.linkable
+                          ? "Latest version is not Approved -- this project does not allow linking draft versions to a plan"
+                          : specActiveCase.in_plan
+                            ? "Remove from plan"
+                            : "Add to plan"
+                    }
+                    style={{
+                      flexShrink: 0,
+                      padding: "6px 14px",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      border: specActiveCase.in_plan
+                        ? "1px solid #22c55e"
+                        : "1px solid #334155",
+                      backgroundColor: specActiveCase.in_plan
+                        ? "rgba(34, 197, 94, 0.15)"
+                        : "transparent",
+                      color: specActiveCase.in_plan ? "#4ade80" : "#9ca3af",
+                      cursor:
+                        pendingToggleId === specActiveCase.id ||
+                        !hasPlanManagePermission ||
+                        (!specActiveCase.in_plan && !specActiveCase.linkable)
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    {pendingToggleId === specActiveCase.id
+                      ? "…"
+                      : specActiveCase.in_plan
+                        ? "✓ In Plan"
+                        : "+ Add to Plan"}
+                  </button>
+                </div>
+
+                {/* CASE DETAILS (READ-ONLY -- CURATION ONLY, NO EDITING IN THIS VIEW) */}
+                <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                  <div
+                    style={{
+                      marginBottom: "16px",
+                      backgroundColor: "#111827",
+                      padding: "12px",
+                      borderRadius: "6px",
+                      border: "1px solid #1f2937",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: "#6b7280",
+                        textTransform: "uppercase",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      Preconditions
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                      {specVersionDetail?.preconditions || "—"}
+                    </div>
+                  </div>
+
+                  {specVersionDetail?.summary && (
+                    <div
+                      style={{
+                        marginBottom: "16px",
+                        backgroundColor: "#111827",
+                        padding: "12px",
+                        borderRadius: "6px",
+                        border: "1px solid #1f2937",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          color: "#6b7280",
+                          textTransform: "uppercase",
+                          marginBottom: "4px",
+                        }}
+                      >
+                        Summary
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                        {specVersionDetail.summary}
+                      </div>
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: "#6b7280",
+                      textTransform: "uppercase",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Ordered Step Specification (read-only)
+                  </div>
+
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid #1f2937",
+                          color: "#9ca3af",
+                          textAlign: "left",
+                        }}
+                      >
+                        <th style={{ padding: "6px", width: "50px" }}>#</th>
+                        <th style={{ padding: "6px" }}>Action</th>
+                        <th style={{ padding: "6px" }}>Expected Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(specVersionDetail?.steps || []).map((step) => (
+                        <tr
+                          key={step.id}
+                          style={{ borderBottom: "1px solid #1f2937", color: "#d1d5db" }}
+                        >
+                          <td style={{ padding: "8px 6px", fontWeight: 600 }}>
+                            {step.step_number}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>{step.action}</td>
+                          <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
+                            {step.expected_result}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!specVersionDetail && (
+                    <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
+                      Loading step detail…
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#6b7280",
+                  fontSize: "13px",
+                }}
+              >
+                Select a test case to view its specification.
+              </div>
+            )
+          ) : activeCase ? (
             <>
               {/* CASE HEADER WITH VISUAL HOTKEY STATUS BADGE */}
               <div

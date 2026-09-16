@@ -253,6 +253,74 @@ describe('Keyboard Focus FSM & Hotkey Engine Tests', () => {
       expect(fsm.setZone).toHaveBeenCalledWith('TEXT_INPUT');
     });
 
+    it('Specification mode: verdict hotkeys (p/f/b/s) are disabled with a toast, even with full permissions', () => {
+      const onVerdict = vi.fn();
+      const onPermissionDeniedToast = vi.fn();
+      const fsm = createMockFSM(); // canExecute/canOverwrite both true
+
+      const handler = createHotkeyHandler({
+        fsm,
+        mode: 'SPECIFICATION',
+        caseCount: 5,
+        selectedIndex: 0,
+        onSelectIndex: vi.fn(),
+        onVerdict,
+        onPermissionDeniedToast,
+      });
+
+      for (const key of ['p', 'f', 'b', 's']) {
+        handler({ key, preventDefault: vi.fn() } as any);
+      }
+
+      expect(onVerdict).not.toHaveBeenCalled();
+      expect(onPermissionDeniedToast).toHaveBeenCalledWith(
+        expect.stringContaining('Specification mode')
+      );
+    });
+
+    it('Specification mode: Ctrl+Enter submit is also disabled with a toast', () => {
+      const onSubmitNotes = vi.fn();
+      const onPermissionDeniedToast = vi.fn();
+      const fsm = createMockFSM({ currentZone: 'TEXT_INPUT', hotkeyStatus: 'TYPING MODE' });
+      const mockTextarea = { tagName: 'TEXTAREA', value: 'irrelevant', blur: vi.fn() };
+      activeElementMock = mockTextarea;
+
+      const handler = createHotkeyHandler({
+        fsm,
+        mode: 'SPECIFICATION',
+        caseCount: 3,
+        selectedIndex: 0,
+        onSelectIndex: vi.fn(),
+        onVerdict: vi.fn(),
+        onSubmitNotes,
+        onPermissionDeniedToast,
+        notesInputRef: { current: mockTextarea as any },
+      });
+
+      handler({ key: 'Enter', ctrlKey: true, preventDefault: vi.fn() } as any);
+      expect(onSubmitNotes).not.toHaveBeenCalled();
+      expect(onPermissionDeniedToast).toHaveBeenCalledWith(
+        expect.stringContaining('Specification mode')
+      );
+    });
+
+    it('Specification mode: navigation (j/k) still works -- only verdict recording is disabled', () => {
+      const onSelectIndex = vi.fn();
+      const fsm = createMockFSM();
+
+      const handler = createHotkeyHandler({
+        fsm,
+        mode: 'SPECIFICATION',
+        caseCount: 5,
+        selectedIndex: 1,
+        onSelectIndex,
+        onVerdict: vi.fn(),
+      });
+
+      handler({ key: 'j', preventDefault: vi.fn() } as any);
+      expect(onSelectIndex).toHaveBeenCalledWith(2);
+    });
+
     it('Bracket shortcuts ([ and ]) trigger tree collapse and expand callbacks', () => {
       const onToggleSuiteExpand = vi.fn();
       const fsm = createMockFSM();
