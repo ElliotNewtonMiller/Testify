@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
+import { TestCaseRepository, TestCaseVersionRepository } from '@testify/db';
 
 describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
   let serverInstance: any;
@@ -344,6 +345,52 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       const data = JSON.parse(res.body);
       expect(data.code).toBe('VALIDATION_FAILED');
       expect(data.invalid_params).toBeDefined();
+    });
+
+    it('does not auto-link a case whose latest version is not APPROVED (same rule the Specification-mode toggle enforces)', async () => {
+      const { app, db, seed } = serverInstance;
+
+      const caseRepo = new TestCaseRepository(db);
+      const versionRepo = new TestCaseVersionRepository(db);
+
+      const draftCase = await caseRepo.create({
+        project_id: seed.projectId,
+        test_suite_id: seed.suiteId,
+        external_id: 'SHOP-BATCH-DRAFT-1',
+        title: 'Not yet in the plan, only a DRAFT version',
+      });
+      await versionRepo.create({
+        test_case_id: draftCase.id,
+        version_number: 1,
+        status: 'DRAFT',
+        author_id: 'usr_qa_lead_01',
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch?all_or_nothing=false`,
+        payload: {
+          executions: [
+            {
+              case_identifier: { external_id: 'SHOP-BATCH-DRAFT-1' },
+              verdict: 'PASSED',
+            },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(207);
+      const data = JSON.parse(res.body);
+      expect(data.summary.successful).toBe(0);
+      expect(data.summary.failed).toBe(1);
+      expect(data.results[0].status).toBe(422);
+
+      const planCase = await db
+        .selectFrom('test_plan_cases')
+        .selectAll()
+        .where('test_case_id', '=', draftCase.id)
+        .executeTakeFirst();
+      expect(planCase).toBeUndefined();
     });
   });
 

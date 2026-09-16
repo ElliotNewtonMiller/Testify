@@ -22,7 +22,7 @@ export async function seedCoreLoopData(db: Kysely<Database>): Promise<{
       name: 'E-Commerce Core Platform',
       prefix: 'SHOP',
       description: 'Primary web & mobile store backend',
-      settings: JSON.stringify({ allow_draft_testing: false }),
+      settings: JSON.stringify({ allow_draft_plan_linking: false }),
       created_at: now,
       updated_at: now,
     })

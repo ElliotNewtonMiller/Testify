@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { sendPlanLockedError, sendBuildClosedError } from '../errors.js';
+import { resolveCaseLinkability } from './testPlanCases.js';
 import type {
   BatchExecutionRequest,
   BatchExecutionResponse,
@@ -151,15 +152,19 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             .executeTakeFirst();
 
           if (tcCandidate) {
-            // Find latest approved version
-            const latestVer = await db
-              .selectFrom('test_case_versions')
-              .selectAll()
-              .where('test_case_id', '=', tcCandidate.id)
-              .orderBy('version_number', 'desc')
-              .executeTakeFirst();
+            // Same Approved-only-unless-allow_draft_plan_linking rule the explicit
+            // Specification-mode toggle UI enforces (see routes/testPlanCases.ts) -- a case
+            // that can't be linked via the UI shouldn't be silently auto-linkable via batch
+            // execution ingestion either. If it's not linkable, resolvedPlanCase stays
+            // undefined and this item falls through to the existing "case not found" failure
+            // path below, same as any other unresolvable case identifier.
+            const { linkable, latestVersion: latestVer } = await resolveCaseLinkability(
+              db,
+              projectId,
+              tcCandidate.id
+            );
 
-            if (latestVer) {
+            if (latestVer && linkable) {
               const newPlanCaseId = uuidv4();
               await db
                 .insertInto('test_plan_cases')

@@ -57,3 +57,31 @@ export function sendCaseVersionLockedError(reply: FastifyReply, versionId: strin
     instance,
   });
 }
+
+export function sendCaseVersionNotApprovedError(reply: FastifyReply, testCaseId: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'CASE_VERSION_NOT_APPROVED',
+    detail: `Test Case (ID: ${testCaseId})'s latest version is not APPROVED. Only Approved versions can be linked to a Test Plan unless the project setting "allow_draft_plan_linking" is enabled.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'test_case_id',
+        reason: 'Latest version status is not APPROVED',
+      },
+    ],
+  });
+}
+
+export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'CASE_HAS_EXECUTIONS',
+    detail: `Test Case (ID: ${testCaseId}) has recorded executions in this Test Plan and cannot be unlinked. Executions retain their original version reference permanently.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'test_case_id',
+        reason: 'Existing executions reference this plan-case row',
+      },
+    ],
+  });
+}

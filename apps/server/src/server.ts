@@ -14,6 +14,8 @@ import { registerIngestionRoutes } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerTestPlanCaseRoutes } from './routes/testPlanCases.js';
+import { registerProjectRoutes } from './routes/projects.js';
 import { requirePermission } from './middleware/auth.js';
 import { sendCaseVersionLockedError } from './errors.js';
 import { UserRepository } from '@testify/db';
@@ -48,11 +50,13 @@ export async function createServer(connectionString?: string) {
   const userRepo = new UserRepository(db);
   await userRepo.seedInitialAdmin();
 
-  // Register Ingestion, Batch Execution, Auth, & Admin Routes
+  // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, & Project Routes
   await registerIngestionRoutes(app, db);
   await registerBatchExecutionRoutes(app, db);
   await registerAuthRoutes(app, db, jwtSecret);
   await registerAdminRoutes(app, db, jwtSecret);
+  await registerTestPlanCaseRoutes(app, db, jwtSecret);
+  await registerProjectRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {

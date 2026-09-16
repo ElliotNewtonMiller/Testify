@@ -34,6 +34,12 @@ export interface AddCaseToPlanInput {
   custom_fields_snapshot?: Record<string, any> | string;
 }
 
+export interface BulkAddCaseEntry {
+  test_case_id: string;
+  test_case_version_id: string;
+  position?: number;
+}
+
 export class TestPlanRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -127,6 +133,54 @@ export class TestPlanRepository {
 
     await this.db.insertInto('test_plan_cases').values(planCase).execute();
     return (await this.getPinnedCase(input.test_plan_id, input.test_case_id))!;
+  }
+
+  /**
+   * Insert many test_plan_cases rows in one call (e.g. a suite cascade toggle).
+   * Skips entries that are already pinned to this plan (idempotent, like addCase).
+   */
+  async addCasesBulk(testPlanId: string, entries: BulkAddCaseEntry[]): Promise<TestPlanCase[]> {
+    if (entries.length === 0) return [];
+
+    const existing = await this.getPinnedCases(testPlanId);
+    const existingCaseIds = new Set(existing.map((pc) => pc.test_case_id));
+    const toInsert = entries.filter((e) => !existingCaseIds.has(e.test_case_id));
+
+    if (toInsert.length > 0) {
+      const now = new Date().toISOString();
+      const rows: NewTestPlanCase[] = toInsert.map((e) => ({
+        id: uuidv7(),
+        test_plan_id: testPlanId,
+        test_case_id: e.test_case_id,
+        test_case_version_id: e.test_case_version_id,
+        assigned_user_id: null,
+        position: e.position ?? 0,
+        custom_fields_snapshot: '{}',
+        created_at: now,
+        updated_at: now,
+      }));
+
+      await this.db.insertInto('test_plan_cases').values(rows).execute();
+    }
+
+    const allCaseIds = new Set(entries.map((e) => e.test_case_id));
+    const updated = await this.getPinnedCases(testPlanId);
+    return updated.filter((pc) => allCaseIds.has(pc.test_case_id));
+  }
+
+  /**
+   * Delete many test_plan_cases rows (by test_case_id) in one call.
+   */
+  async removeCasesBulk(testPlanId: string, testCaseIds: string[]): Promise<number> {
+    if (testCaseIds.length === 0) return 0;
+
+    const result = await this.db
+      .deleteFrom('test_plan_cases')
+      .where('test_plan_id', '=', testPlanId)
+      .where('test_case_id', 'in', testCaseIds)
+      .executeTakeFirst();
+
+    return Number(result.numDeletedRows ?? 0n);
   }
 
   async removeCase(testPlanId: string, testCaseId: string): Promise<boolean> {

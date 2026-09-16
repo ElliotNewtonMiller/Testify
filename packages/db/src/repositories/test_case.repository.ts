@@ -23,6 +23,18 @@ export interface UpdateTestCaseInput {
   execution_type?: string;
 }
 
+export interface TestCaseLatestVersionSummary {
+  id: string;
+  version_number: number;
+  status: string;
+  summary: string | null;
+  preconditions: string | null;
+}
+
+export interface TestCaseWithLatestVersion extends TestCase {
+  latest_version: TestCaseLatestVersionSummary | null;
+}
+
 export class TestCaseRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -79,6 +91,57 @@ export class TestCaseRepository {
       .where('project_id', '=', projectId)
       .orderBy('external_id', 'asc')
       .execute();
+  }
+
+  async findBySuiteIds(testSuiteIds: string[]): Promise<TestCase[]> {
+    if (testSuiteIds.length === 0) return [];
+
+    return await this.db
+      .selectFrom('test_cases')
+      .selectAll()
+      .where('test_suite_id', 'in', testSuiteIds)
+      .orderBy('external_id', 'asc')
+      .execute();
+  }
+
+  /**
+   * All cases in a project, each paired with its latest version's summary status.
+   * Fetches versions for the whole project in one query (not per-case) to avoid N+1.
+   */
+  async findByProjectWithLatestVersion(projectId: string): Promise<TestCaseWithLatestVersion[]> {
+    const cases = await this.findByProject(projectId);
+    if (cases.length === 0) return [];
+
+    const caseIds = cases.map((c) => c.id);
+    const versions = await this.db
+      .selectFrom('test_case_versions')
+      .select(['id', 'test_case_id', 'version_number', 'status', 'summary', 'preconditions'])
+      .where('test_case_id', 'in', caseIds)
+      .orderBy('version_number', 'desc')
+      .execute();
+
+    const latestByCase = new Map<string, (typeof versions)[number]>();
+    for (const v of versions) {
+      if (!latestByCase.has(v.test_case_id)) {
+        latestByCase.set(v.test_case_id, v);
+      }
+    }
+
+    return cases.map((c) => {
+      const v = latestByCase.get(c.id);
+      return {
+        ...c,
+        latest_version: v
+          ? {
+              id: v.id,
+              version_number: v.version_number,
+              status: v.status,
+              summary: v.summary,
+              preconditions: v.preconditions,
+            }
+          : null,
+      };
+    });
   }
 
   async update(id: string, input: UpdateTestCaseInput): Promise<TestCase | undefined> {

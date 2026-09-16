@@ -53,12 +53,12 @@ describe('Repositories', () => {
       name: 'Auth Platform',
       prefix: 'AUTH',
       description: 'Authentication and Security Services',
-      settings: { allow_draft_testing: true },
+      settings: { allow_draft_plan_linking: true },
     });
     expect(project.id).toBeDefined();
     expect(project.name).toBe('Auth Platform');
     expect(project.prefix).toBe('AUTH');
-    expect(JSON.parse(project.settings)).toEqual({ allow_draft_testing: true });
+    expect(JSON.parse(project.settings)).toEqual({ allow_draft_plan_linking: true });
 
     // Find by ID & Prefix
     const foundById = await projectRepo.findById(project.id);
@@ -74,10 +74,10 @@ describe('Repositories', () => {
     // Update
     const updated = await projectRepo.update(project.id, {
       name: 'Auth Core Engine',
-      settings: { allow_draft_testing: false },
+      settings: { allow_draft_plan_linking: false },
     });
     expect(updated?.name).toBe('Auth Core Engine');
-    expect(JSON.parse(updated!.settings)).toEqual({ allow_draft_testing: false });
+    expect(JSON.parse(updated!.settings)).toEqual({ allow_draft_plan_linking: false });
 
     // Delete
     const deleted = await projectRepo.delete(project.id);
@@ -292,6 +292,121 @@ describe('Repositories', () => {
 
     const allExecsForBuild = await executionRepo.findByBuild(build.id);
     expect(allExecsForBuild).toHaveLength(3); // 1 manual + 2 batch
+  });
+
+  it('TestCaseRepository.findByProjectWithLatestVersion / findBySuiteIds', async () => {
+    const project = await projectRepo.create({ name: 'Spec Proj', prefix: 'SPEC' });
+    const suiteA = await suiteRepo.create({ project_id: project.id, name: 'Suite A' });
+    const suiteB = await suiteRepo.create({ project_id: project.id, name: 'Suite B' });
+
+    const caseApproved = await caseRepo.create({
+      project_id: project.id,
+      test_suite_id: suiteA.id,
+      external_id: 'SPEC-1',
+      title: 'Approved case',
+    });
+    await versionRepo.create({
+      test_case_id: caseApproved.id,
+      version_number: 1,
+      status: 'APPROVED',
+      author_id: 'user_01',
+    });
+
+    const caseDraft = await caseRepo.create({
+      project_id: project.id,
+      test_suite_id: suiteB.id,
+      external_id: 'SPEC-2',
+      title: 'Draft-only case',
+    });
+    await versionRepo.create({
+      test_case_id: caseDraft.id,
+      version_number: 1,
+      status: 'DRAFT',
+      author_id: 'user_01',
+    });
+    // A second, later version -- findByProjectWithLatestVersion must pick this one, not v1.
+    await versionRepo.create({
+      test_case_id: caseDraft.id,
+      version_number: 2,
+      status: 'IN_REVIEW',
+      author_id: 'user_01',
+    });
+
+    const withVersions = await caseRepo.findByProjectWithLatestVersion(project.id);
+    expect(withVersions).toHaveLength(2);
+    const approvedResult = withVersions.find((c) => c.id === caseApproved.id);
+    const draftResult = withVersions.find((c) => c.id === caseDraft.id);
+    expect(approvedResult?.latest_version?.status).toBe('APPROVED');
+    expect(approvedResult?.latest_version?.version_number).toBe(1);
+    expect(draftResult?.latest_version?.status).toBe('IN_REVIEW');
+    expect(draftResult?.latest_version?.version_number).toBe(2);
+
+    const casesInA = await caseRepo.findBySuiteIds([suiteA.id]);
+    expect(casesInA.map((c) => c.id)).toEqual([caseApproved.id]);
+
+    const casesInBoth = await caseRepo.findBySuiteIds([suiteA.id, suiteB.id]);
+    expect(casesInBoth).toHaveLength(2);
+
+    expect(await caseRepo.findBySuiteIds([])).toEqual([]);
+  });
+
+  it('TestPlanRepository.addCasesBulk / removeCasesBulk', async () => {
+    const project = await projectRepo.create({ name: 'Cascade Proj', prefix: 'CASC' });
+    const suite = await suiteRepo.create({ project_id: project.id, name: 'Cascade Suite' });
+    const plan = await planRepo.create({ project_id: project.id, name: 'Cascade Plan' });
+
+    const cases = [];
+    for (let i = 0; i < 3; i++) {
+      const c = await caseRepo.create({
+        project_id: project.id,
+        test_suite_id: suite.id,
+        external_id: `CASC-${i}`,
+        title: `Case ${i}`,
+      });
+      const v = await versionRepo.create({
+        test_case_id: c.id,
+        version_number: 1,
+        status: 'APPROVED',
+        author_id: 'user_01',
+      });
+      cases.push({ case: c, version: v });
+    }
+
+    // Bulk add all 3
+    const added = await planRepo.addCasesBulk(
+      plan.id,
+      cases.map((c) => ({ test_case_id: c.case.id, test_case_version_id: c.version.id }))
+    );
+    expect(added).toHaveLength(3);
+    expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(3);
+
+    // Idempotent: re-adding the same entries + one new one only inserts the new one
+    const fourthCase = await caseRepo.create({
+      project_id: project.id,
+      test_suite_id: suite.id,
+      external_id: 'CASC-3',
+      title: 'Case 3',
+    });
+    const fourthVersion = await versionRepo.create({
+      test_case_id: fourthCase.id,
+      version_number: 1,
+      status: 'APPROVED',
+      author_id: 'user_01',
+    });
+    await planRepo.addCasesBulk(plan.id, [
+      ...cases.map((c) => ({ test_case_id: c.case.id, test_case_version_id: c.version.id })),
+      { test_case_id: fourthCase.id, test_case_version_id: fourthVersion.id },
+    ]);
+    expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(4);
+
+    // Bulk remove 2 of the 4
+    const removedCount = await planRepo.removeCasesBulk(plan.id, [cases[0].case.id, cases[1].case.id]);
+    expect(removedCount).toBe(2);
+    expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(2);
+
+    // Empty-array calls are no-ops
+    expect(await planRepo.addCasesBulk(plan.id, [])).toEqual([]);
+    expect(await planRepo.removeCasesBulk(plan.id, [])).toBe(0);
   });
 
   it('AuditLogRepository append-only logging & query', async () => {

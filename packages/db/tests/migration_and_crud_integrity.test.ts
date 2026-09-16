@@ -51,7 +51,7 @@ describe('Migration & CRUD Integrity', () => {
         name: 'E2E Dual Parity Project',
         prefix: 'PARITY',
         description: 'Testing core CRUD + FK integrity',
-        settings: JSON.stringify({ allow_draft_testing: false }),
+        settings: JSON.stringify({ allow_draft_plan_linking: false }),
         created_at: now,
         updated_at: now,
       })
