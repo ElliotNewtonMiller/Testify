@@ -9,6 +9,7 @@ import {
   TestPlanRepository,
   ProjectRepository,
   ExecutionRepository,
+  BuildRepository,
   type TestSuiteNode,
   type TestCaseVersionWithSteps,
 } from '@testify/db';
@@ -102,6 +103,7 @@ export async function registerTestPlanCaseRoutes(
   const planRepo = new TestPlanRepository(db);
   const projectRepo = new ProjectRepository(db);
   const executionRepo = new ExecutionRepository(db);
+  const buildRepo = new BuildRepository(db);
 
   // GET /api/v1/projects/:projectId/spec-tree?plan_id=... -- drives Specification mode's
   // whole 3-pane view in one fetch: nested suite tree (with plan-inclusion counts) + a
@@ -198,17 +200,24 @@ export async function registerTestPlanCaseRoutes(
     return { test_case: testCase, version: latestVersion };
   });
 
-  // GET /api/v1/test-plans/:planId/cases -- Execution-mode listing, parameterized by plan
-  // instead of hardcoded to the seed plan (unlike GET /api/v1/workspace).
+  // GET /api/v1/test-plans/:planId/cases?build_id=... -- Execution-mode listing,
+  // parameterized by plan instead of hardcoded to the seed plan (unlike GET /api/v1/workspace).
+  // When build_id is given (or defaulted to the plan's most recent build), each case is
+  // annotated with its latest execution verdict for that build, same as the old endpoint did.
   app.get('/api/v1/test-plans/:planId/cases', async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
     const { planId } = request.params as { planId: string };
+    const { build_id: requestedBuildId } = request.query as { build_id?: string };
+
     const plan = await planRepo.findById(planId);
     if (!plan) {
       return reply.status(404).send({ error: 'Test plan not found' });
     }
+
+    const builds = await buildRepo.findByTestPlan(planId);
+    const buildId = requestedBuildId || builds[0]?.id;
 
     const rawCases = await db
       .selectFrom('test_plan_cases as tpc')
@@ -234,10 +243,28 @@ export async function registerTestPlanCaseRoutes(
       .execute();
 
     const cases = await Promise.all(
-      rawCases.map(async (c) => ({ ...c, steps: await versionRepo.getSteps(c.version_id) }))
+      rawCases.map(async (c) => {
+        const steps = await versionRepo.getSteps(c.version_id);
+        let latestVerdict = 'UNTESTED';
+        let latestExecutionId: string | null = null;
+
+        if (buildId) {
+          const latestExec = await db
+            .selectFrom('executions')
+            .selectAll()
+            .where('test_plan_case_id', '=', c.plan_case_id)
+            .where('build_id', '=', buildId)
+            .orderBy('created_at', 'desc')
+            .executeTakeFirst();
+          latestVerdict = latestExec?.verdict || 'UNTESTED';
+          latestExecutionId = latestExec?.id || null;
+        }
+
+        return { ...c, steps, latest_verdict: latestVerdict, latest_execution_id: latestExecutionId };
+      })
     );
 
-    return { plan, cases };
+    return { plan, builds, cases };
   });
 
   // POST /api/v1/test-plans/:planId/cases -- per-case plan-inclusion toggle, ON.
