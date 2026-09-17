@@ -255,18 +255,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
-  // 19. Direct User Permission Overrides
-  await db.schema
-    .createTable('user_permission_overrides')
-    .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
-    .addColumn('user_id', 'varchar(36)', (col) => col.notNull())
-    .addColumn('project_id', 'varchar(36)', (col) => col.references('projects.id').onDelete('cascade'))
-    .addColumn('permission_id', 'varchar(36)', (col) => col.notNull().references('permissions.id').onDelete('cascade'))
-    .addColumn('is_granted', 'integer', (col) => col.notNull())
-    .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
-    .execute();
-
-  // 20. Machine API Tokens
+  // 19. Machine API Tokens
   await db.schema
     .createTable('api_tokens')
     .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
@@ -282,7 +271,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
-  // 21. Users Table
+  // 20. Users Table
   await db.schema
     .createTable('users')
     .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
@@ -294,13 +283,30 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
-  // 22. User Global Roles Table
+  // 21. User Global Roles Table
   await db.schema
     .createTable('user_roles')
     .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
     .addColumn('user_id', 'varchar(36)', (col) => col.notNull().references('users.id').onDelete('cascade'))
     .addColumn('role', 'varchar(50)', (col) => col.notNull())
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
+    .execute();
+
+  // 22. Direct User Permission Overrides (created after `users` exists, so its FK is valid)
+  await db.schema
+    .createTable('user_permission_overrides')
+    .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
+    .addColumn('user_id', 'varchar(36)', (col) => col.notNull().references('users.id').onDelete('cascade'))
+    .addColumn('project_id', 'varchar(36)', (col) => col.references('projects.id').onDelete('cascade'))
+    .addColumn('permission_id', 'varchar(36)', (col) => col.notNull().references('permissions.id').onDelete('cascade'))
+    .addColumn('is_granted', 'integer', (col) => col.notNull())
+    .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
+    .execute();
+
+  await db.schema
+    .createIndex('idx_user_permission_overrides_user')
+    .on('user_permission_overrides')
+    .column('user_id')
     .execute();
 
   // 23. System Settings
@@ -339,10 +345,11 @@ export async function up(db: Kysely<any>): Promise<void> {
 
 export async function down(db: Kysely<any>): Promise<void> {
   await db.schema.dropTable('system_settings').ifExists().execute();
+  // user_permission_overrides FKs to users, so it must drop before users does.
+  await db.schema.dropTable('user_permission_overrides').ifExists().execute();
   await db.schema.dropTable('user_roles').ifExists().execute();
   await db.schema.dropTable('users').ifExists().execute();
   await db.schema.dropTable('api_tokens').ifExists().execute();
-  await db.schema.dropTable('user_permission_overrides').ifExists().execute();
   await db.schema.dropTable('user_project_roles').ifExists().execute();
   await db.schema.dropTable('role_permissions').ifExists().execute();
   await db.schema.dropTable('permissions').ifExists().execute();

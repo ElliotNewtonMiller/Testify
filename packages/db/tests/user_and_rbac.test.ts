@@ -5,6 +5,7 @@ import type { Database } from '../src/types.js';
 import * as initialSchema from '../src/migrations/001_initial_schema.js';
 import { UserRepository, RoleRepository, ProjectRepository } from '../src/repositories/index.js';
 import { validatePasswordPolicy } from '../../core/src/security/passwordPolicy.js';
+import { seedRbacRegistry } from '../src/seeds/seed_rbac_registry.js';
 
 
 
@@ -36,6 +37,9 @@ describe('User & Role Repositories', () => {
   beforeEach(async () => {
     db = createDbClient();
     await initialSchema.up(db);
+    // Roles/permissions are now DB-backed (see role.repository.ts) rather than a hardcoded
+    // in-memory map -- evaluatePermissions needs the built-in role templates seeded.
+    await seedRbacRegistry(db);
 
     userRepo = new UserRepository(db);
     roleRepo = new RoleRepository(db);

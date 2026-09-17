@@ -7,6 +7,7 @@ import {
   createDbClient,
   migration001,
   seedCoreLoopData,
+  seedRbacRegistry,
   type Database,
 } from '@testify/db';
 import type { Kysely } from 'kysely';
@@ -44,8 +45,10 @@ export async function createServer(connectionString?: string) {
     );
   }
 
-  // Run migrations & seed core loop data & initial omnipotent admin user
+  // Run migrations & seed the RBAC registry (roles/permissions/bundles) before any user or
+  // role row gets written, then seed core loop data & the initial omnipotent admin user.
   await migration001.up(db);
+  await seedRbacRegistry(db);
   const seed = await seedCoreLoopData(db);
   const userRepo = new UserRepository(db);
   await userRepo.seedInitialAdmin();
