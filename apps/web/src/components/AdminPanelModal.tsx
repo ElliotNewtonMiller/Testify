@@ -69,6 +69,19 @@ export function AdminPanelModal({
   const [permissionRegistry, setPermissionRegistry] = useState<PermissionDefinition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSavingPrivileges, setIsSavingPrivileges] = useState<boolean>(false);
+  const [isSavingOverrides, setIsSavingOverrides] = useState<boolean>(false);
+  const [isSavingTemplate, setIsSavingTemplate] = useState<boolean>(false);
+
+  // Briefly shows a confirmation banner (auto-clears), same pattern as App.tsx's toast --
+  // saves succeed silently otherwise, which reads as "did that even work?".
+  const flashSuccess = (msg: string) => {
+    setSuccessMessage(msg);
+    setTimeout(() => {
+      setSuccessMessage((prev) => (prev === msg ? null : prev));
+    }, 3000);
+  };
 
   // New user form state
   const [newUsername, setNewUsername] = useState<string>("");
@@ -290,6 +303,8 @@ export function AdminPanelModal({
   const handleSavePrivileges = async () => {
     if (!selectedUserId) return;
     setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSavingPrivileges(true);
 
     const project_roles = Object.entries(selectedProjectRoles).map(
       ([pId, r]) => ({
@@ -321,8 +336,11 @@ export function AdminPanelModal({
       if (selectedUserId === currentUser?.id) {
         onSelfPermissionsChanged?.();
       }
+      flashSuccess("✓ Privilege delegation saved.");
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to update user privileges");
+    } finally {
+      setIsSavingPrivileges(false);
     }
   };
 
@@ -344,6 +362,8 @@ export function AdminPanelModal({
   const handleSaveOverrides = async () => {
     if (!selectedUserId) return;
     setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSavingOverrides(true);
 
     const overrides: PermissionOverride[] = Object.entries(overrideMap).map(
       ([permission_key, is_granted]) => ({ permission_key, is_granted }),
@@ -366,8 +386,13 @@ export function AdminPanelModal({
       if (selectedUserId === currentUser?.id) {
         onSelfPermissionsChanged?.();
       }
+      flashSuccess(
+        `✓ Permission overrides saved (${overrideScope ? "this project" : "Global"}).`,
+      );
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to update permission overrides");
+    } finally {
+      setIsSavingOverrides(false);
     }
   };
 
@@ -402,11 +427,14 @@ export function AdminPanelModal({
 
   const handleSaveTemplate = async () => {
     setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSavingTemplate(true);
     const payload = {
       name: templateName,
       description: templateDescription || null,
       permission_keys: Array.from(templateKeys),
     };
+    const wasNewTemplate = isNewTemplate;
 
     try {
       const res = await fetch(
@@ -427,8 +455,11 @@ export function AdminPanelModal({
       fetchAuditLogs();
       setIsNewTemplate(false);
       setSelectedRoleId(data.role.id);
+      flashSuccess(wasNewTemplate ? "✓ Template created." : "✓ Template saved.");
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to save role template");
+    } finally {
+      setIsSavingTemplate(false);
     }
   };
 
@@ -612,6 +643,23 @@ export function AdminPanelModal({
             }}
           >
             ⚠️ {errorMessage}
+          </div>
+        )}
+
+        {successMessage && (
+          <div
+            style={{
+              backgroundColor: "#052e16",
+              border: "1px solid #16a34a",
+              color: "#86efac",
+              padding: "8px 12px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              marginBottom: "12px",
+              fontWeight: 600,
+            }}
+          >
+            {successMessage}
           </div>
         )}
 
@@ -1079,18 +1127,20 @@ export function AdminPanelModal({
 
                   <button
                     onClick={handleSavePrivileges}
+                    disabled={isSavingPrivileges}
                     style={{
                       padding: "8px 16px",
-                      backgroundColor: "#16a34a",
+                      backgroundColor: isSavingPrivileges ? "#166534" : "#16a34a",
                       border: "none",
                       borderRadius: "4px",
                       color: "#fff",
                       fontWeight: 600,
                       fontSize: "12px",
-                      cursor: "pointer",
+                      cursor: isSavingPrivileges ? "default" : "pointer",
+                      opacity: isSavingPrivileges ? 0.8 : 1,
                     }}
                   >
-                    Save Privilege Delegation
+                    {isSavingPrivileges ? "Saving..." : "Save Privilege Delegation"}
                   </button>
 
                   {/* Individual Permission Overrides -- global or per-project, layered on
@@ -1234,19 +1284,23 @@ export function AdminPanelModal({
 
                         <button
                           onClick={handleSaveOverrides}
+                          disabled={isSavingOverrides}
                           style={{
                             padding: "8px 16px",
-                            backgroundColor: "#d97706",
+                            backgroundColor: isSavingOverrides ? "#92400e" : "#d97706",
                             border: "none",
                             borderRadius: "4px",
                             color: "#fff",
                             fontWeight: 600,
                             fontSize: "12px",
-                            cursor: "pointer",
+                            cursor: isSavingOverrides ? "default" : "pointer",
+                            opacity: isSavingOverrides ? 0.8 : 1,
                             marginTop: "8px",
                           }}
                         >
-                          Save Overrides ({overrideScope ? "This Project" : "Global"})
+                          {isSavingOverrides
+                            ? "Saving..."
+                            : `Save Overrides (${overrideScope ? "This Project" : "Global"})`}
                         </button>
                       </>
                     )}
@@ -1500,18 +1554,24 @@ export function AdminPanelModal({
 
                   <button
                     onClick={handleSaveTemplate}
+                    disabled={isSavingTemplate}
                     style={{
                       padding: "8px 16px",
-                      backgroundColor: "#16a34a",
+                      backgroundColor: isSavingTemplate ? "#166534" : "#16a34a",
                       border: "none",
                       borderRadius: "4px",
                       color: "#fff",
                       fontWeight: 600,
                       fontSize: "12px",
-                      cursor: "pointer",
+                      cursor: isSavingTemplate ? "default" : "pointer",
+                      opacity: isSavingTemplate ? 0.8 : 1,
                     }}
                   >
-                    {isNewTemplate ? "Create Template" : "Save Template"}
+                    {isSavingTemplate
+                      ? "Saving..."
+                      : isNewTemplate
+                        ? "Create Template"
+                        : "Save Template"}
                   </button>
                 </div>
               ) : (
