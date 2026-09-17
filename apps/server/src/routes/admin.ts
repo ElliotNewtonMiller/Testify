@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
+import { sendRoleInUseError } from '../errors.js';
 
 export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
@@ -17,6 +18,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         const globalRole = await roleRepo.getUserGlobalRole(u.id);
         const projectRoles = await roleRepo.getUserProjectRoles(u.id);
         const permissions = await roleRepo.evaluatePermissions(u.id);
+        const overrides = await roleRepo.getUserOverrides(u.id, null);
 
         return {
           id: u.id,
@@ -26,6 +28,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           global_role: globalRole,
           project_roles: projectRoles,
           permissions,
+          overrides,
           created_at: u.created_at,
         };
       })
@@ -43,12 +46,17 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       return reply.status(400).send({ error: 'Username, email, and password are required' });
     }
 
+    const resolvedGlobalRole = (global_role as RoleName) || 'Tester';
+    if (!(await roleRepo.roleExists(resolvedGlobalRole))) {
+      return reply.status(400).send({ error: `UNKNOWN_ROLE: '${resolvedGlobalRole}' is not a valid role name` });
+    }
+
     try {
       const newUser = await userRepo.create({
         username,
         email,
         password,
-        global_role: (global_role as RoleName) || 'Tester',
+        global_role: resolvedGlobalRole,
       });
 
       // Assign explicit per-project roles if provided
@@ -95,7 +103,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         },
       });
     } catch (err: any) {
-      if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION')) {
+      if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION') || err.message?.startsWith('UNKNOWN_ROLE')) {
         return reply.status(400).send({ error: err.message });
       }
       return reply.status(500).send({ error: err.message || 'Failed to create user' });
@@ -113,20 +121,27 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    if (global_role) {
-      await roleRepo.assignGlobalRole(userId, global_role as RoleName);
-    }
+    try {
+      if (global_role) {
+        await roleRepo.assignGlobalRole(userId, global_role as RoleName);
+      }
 
-    if (project_roles && Array.isArray(project_roles)) {
-      for (const pr of project_roles) {
-        if (pr.project_id) {
-          if (pr.role) {
-            await roleRepo.assignProjectRole(userId, pr.project_id, pr.role as RoleName);
-          } else {
-            await roleRepo.revokeProjectRole(userId, pr.project_id);
+      if (project_roles && Array.isArray(project_roles)) {
+        for (const pr of project_roles) {
+          if (pr.project_id) {
+            if (pr.role) {
+              await roleRepo.assignProjectRole(userId, pr.project_id, pr.role as RoleName);
+            } else {
+              await roleRepo.revokeProjectRole(userId, pr.project_id);
+            }
           }
         }
       }
+    } catch (err: any) {
+      if (err.message?.startsWith('UNKNOWN_ROLE')) {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
     }
 
     // Audit Event
@@ -208,6 +223,10 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'API_TOKEN_GENERATED',
       'API_TOKEN_REVOKED',
       'PROJECT_CREATED',
+      'ROLE_CREATED',
+      'ROLE_UPDATED',
+      'ROLE_DELETED',
+      'PERMISSION_OVERRIDES_UPDATED',
     ];
 
     const logs = await db
@@ -220,4 +239,209 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
     return { audit_logs: logs };
   });
+
+  // GET /api/v1/admin/permissions - The permission-key registry, for rendering toggle
+  // grids grouped by module. Read-only, no audit entry.
+  app.get('/api/v1/admin/permissions', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+    return { permissions: roleRepo.listPermissionRegistry() };
+  });
+
+  // GET /api/v1/admin/roles - List all template roles (built-in + custom) with their bundles
+  app.get('/api/v1/admin/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+    return { roles: await roleRepo.listRoles() };
+  });
+
+  // POST /api/v1/admin/roles - Create a new template role
+  app.post('/api/v1/admin/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+    const activeUser = request.user!;
+    const { name, description, permission_keys } = (request.body as any) || {};
+
+    if (!name || typeof name !== 'string' || !Array.isArray(permission_keys)) {
+      return reply.status(400).send({ error: 'name (string) and permission_keys (array) are required' });
+    }
+
+    try {
+      const role = await roleRepo.createRole({ name, description: description ?? null, permission_keys });
+
+      const now = new Date().toISOString();
+      await db
+        .insertInto('audit_logs')
+        .values({
+          id: crypto.randomUUID(),
+          actor_id: activeUser.id,
+          actor_type: 'USER',
+          action: 'ROLE_CREATED',
+          resource_type: 'role',
+          resource_id: role.id,
+          diff: JSON.stringify({ name, description: description ?? null, permission_keys }),
+          ip_address: '127.0.0.1',
+          user_agent: 'TestifyAdminService',
+          created_at: now,
+        })
+        .execute();
+
+      return reply.status(201).send({ role });
+    } catch (err: any) {
+      if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
+        return reply.status(400).send({ error: err.message });
+      }
+      if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
+        return reply.status(409).send({ error: err.message });
+      }
+      return reply.status(500).send({ error: err.message || 'Failed to create role' });
+    }
+  });
+
+  // PUT /api/v1/admin/roles/:roleId - Edit a template role's name/description/permission bundle
+  app.put('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+    const activeUser = request.user!;
+    const { roleId } = request.params as { roleId: string };
+    const { name, description, permission_keys } = (request.body as any) || {};
+
+    try {
+      const role = await roleRepo.updateRole(roleId, {
+        name: typeof name === 'string' ? name : undefined,
+        description: description !== undefined ? description : undefined,
+        permission_keys: Array.isArray(permission_keys) ? permission_keys : undefined,
+      });
+
+      if (!role) {
+        return reply.status(404).send({ error: 'Role not found' });
+      }
+
+      const now = new Date().toISOString();
+      await db
+        .insertInto('audit_logs')
+        .values({
+          id: crypto.randomUUID(),
+          actor_id: activeUser.id,
+          actor_type: 'USER',
+          action: 'ROLE_UPDATED',
+          resource_type: 'role',
+          resource_id: roleId,
+          diff: JSON.stringify({ name, description, permission_keys }),
+          ip_address: '127.0.0.1',
+          user_agent: 'TestifyAdminService',
+          created_at: now,
+        })
+        .execute();
+
+      return reply.status(200).send({ role });
+    } catch (err: any) {
+      if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
+        return reply.status(400).send({ error: err.message });
+      }
+      if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
+        return reply.status(409).send({ error: err.message });
+      }
+      return reply.status(500).send({ error: err.message || 'Failed to update role' });
+    }
+  });
+
+  // DELETE /api/v1/admin/roles/:roleId - Delete a template role. Blocked (409) if any user
+  // is currently assigned to it, globally or per-project -- is_system_role is informational
+  // only and never protects a default role from deletion.
+  app.delete('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+    const activeUser = request.user!;
+    const { roleId } = request.params as { roleId: string };
+
+    const result = await roleRepo.deleteRole(roleId);
+    if (!result.deleted) {
+      if (result.blockedByUserCount === 0) {
+        return reply.status(404).send({ error: 'Role not found' });
+      }
+      return sendRoleInUseError(reply, roleId, result.blockedByUserCount, request.url);
+    }
+
+    const now = new Date().toISOString();
+    await db
+      .insertInto('audit_logs')
+      .values({
+        id: crypto.randomUUID(),
+        actor_id: activeUser.id,
+        actor_type: 'USER',
+        action: 'ROLE_DELETED',
+        resource_type: 'role',
+        resource_id: roleId,
+        diff: JSON.stringify({}),
+        ip_address: '127.0.0.1',
+        user_agent: 'TestifyAdminService',
+        created_at: now,
+      })
+      .execute();
+
+    return reply.status(204).send();
+  });
+
+  // GET /api/v1/admin/users/:userId/permission-overrides?project_id=... - A user's raw
+  // overrides at a given scope (global when project_id is omitted).
+  app.get(
+    '/api/v1/admin/users/:userId/permission-overrides',
+    { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
+    async (request, reply) => {
+      const { userId } = request.params as { userId: string };
+      const { project_id: projectId } = request.query as { project_id?: string };
+
+      const user = await userRepo.findById(userId);
+      if (!user) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
+
+      const overrides = await roleRepo.getUserOverrides(userId, projectId || null);
+      return { overrides };
+    }
+  );
+
+  // PUT /api/v1/admin/users/:userId/permission-overrides - Replace-all set of overrides at
+  // a given scope. Returns the recomputed effective permissions immediately.
+  app.put(
+    '/api/v1/admin/users/:userId/permission-overrides',
+    { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
+    async (request, reply) => {
+      const activeUser = request.user!;
+      const { userId } = request.params as { userId: string };
+      const { project_id: projectId, overrides } = (request.body as any) || {};
+
+      const user = await userRepo.findById(userId);
+      if (!user) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
+
+      if (!Array.isArray(overrides)) {
+        return reply.status(400).send({ error: 'overrides must be an array of {permission_key, is_granted}' });
+      }
+
+      try {
+        await roleRepo.setUserOverrides(userId, projectId || null, overrides);
+      } catch (err: any) {
+        if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
+          return reply.status(400).send({ error: err.message });
+        }
+        throw err;
+      }
+
+      const now = new Date().toISOString();
+      await db
+        .insertInto('audit_logs')
+        .values({
+          id: crypto.randomUUID(),
+          actor_id: activeUser.id,
+          actor_type: 'USER',
+          action: 'PERMISSION_OVERRIDES_UPDATED',
+          resource_type: 'user',
+          resource_id: userId,
+          project_id: projectId || null,
+          diff: JSON.stringify({ project_id: projectId || null, overrides }),
+          ip_address: '127.0.0.1',
+          user_agent: 'TestifyAdminService',
+          created_at: now,
+        })
+        .execute();
+
+      const updatedOverrides = await roleRepo.getUserOverrides(userId, projectId || null);
+      const permissions = await roleRepo.evaluatePermissions(userId, projectId || null);
+
+      return reply.status(200).send({ overrides: updatedOverrides, permissions });
+    }
+  );
 }

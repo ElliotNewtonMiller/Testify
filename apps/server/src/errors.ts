@@ -85,3 +85,24 @@ export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: stri
     ],
   });
 }
+
+export function sendRoleInUseError(
+  reply: FastifyReply,
+  roleId: string,
+  blockedByUserCount: number,
+  instance?: string
+) {
+  return sendProblemDetails(reply, {
+    code: 'ROLE_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Role (ID: ${roleId}) is currently assigned to ${blockedByUserCount} user${blockedByUserCount === 1 ? '' : 's'} and cannot be deleted. Reassign ${blockedByUserCount === 1 ? 'them' : 'them all'} first.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'role_id',
+        reason: `Assigned to ${blockedByUserCount} user${blockedByUserCount === 1 ? '' : 's'}`,
+      },
+    ],
+  });
+}
