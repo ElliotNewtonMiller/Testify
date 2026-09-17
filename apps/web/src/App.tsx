@@ -215,6 +215,15 @@ export default function App() {
   const notesInputRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
+  // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
+  // instead of always assuming FAILED.
+  const pendingVerdictRef = useRef<VerdictType>("FAILED");
+  // Whether the textarea has unsubmitted user edits. A plain ref (not state) so the
+  // Ctrl+Enter path can mark it false synchronously before its own .blur() call fires the
+  // textarea's onBlur handler, avoiding a duplicate submission from that same keypress.
+  const notesDirtyRef = useRef(false);
+
   // Guard against out-of-order fetch responses: selectedProjectId/selectedPlanId go through
   // a fake-seed -> real-id bootstrap sequence (see loadProjects/loadPlans), which can fire
   // several requests in quick succession. Without this, a slower, now-stale response (e.g.
@@ -887,13 +896,17 @@ export default function App() {
     onVerdict: (verdict) => {
       submitVerdict(verdict);
       if (verdict === "FAILED" || verdict === "BLOCKED") {
+        pendingVerdictRef.current = verdict;
         setTimeout(() => {
           if (notesInputRef.current) notesInputRef.current.focus();
         }, 50);
       }
     },
     onSubmitNotes: (notesText) => {
-      submitVerdict("FAILED", notesText);
+      // Submit with whatever verdict (FAILED or BLOCKED) the notes were opened for -- not
+      // hardcoded FAILED, so pressing 'b' then Ctrl+Enter stays BLOCKED.
+      submitVerdict(pendingVerdictRef.current, notesText);
+      notesDirtyRef.current = false;
       setFailureNotes("");
       if (workspace && selectedIndex < workspace.cases.length - 1) {
         setSelectedIndex((idx) => idx + 1);
@@ -909,6 +922,16 @@ export default function App() {
     onPermissionDeniedToast: (msg) => showToast(`🔒 ${msg}`),
     notesInputRef,
   });
+
+  // Moving to a different case should never carry over the previous case's notes text --
+  // any unsubmitted content was already saved by the textarea's onBlur handler above (which
+  // fires as focus leaves it, before selectedIndex actually changes); this is just the
+  // backstop that guarantees a clean slate for the newly active case either way.
+  useEffect(() => {
+    setFailureNotes("");
+    notesDirtyRef.current = false;
+    pendingVerdictRef.current = "FAILED";
+  }, [selectedIndex]);
 
   if (authChecking) {
     return (
@@ -1984,15 +2007,28 @@ export default function App() {
                       marginBottom: "6px",
                     }}
                   >
-                    Actual Result / Execution Failure Notes (Zone 4 - Typing
-                    Protection Mode)
+                    Notes
                   </label>
                   <textarea
                     ref={notesInputRef}
                     value={failureNotes}
-                    onChange={(e) => setFailureNotes(e.target.value)}
+                    onChange={(e) => {
+                      setFailureNotes(e.target.value);
+                      notesDirtyRef.current = true;
+                    }}
                     onFocus={() => fsm.setZone("TEXT_INPUT")}
-                    onBlur={() => fsm.setZone("EXECUTION_CONTAINER")}
+                    onBlur={() => {
+                      fsm.setZone("EXECUTION_CONTAINER");
+                      // Unfocusing (click away, Tab, Esc) saves any unsubmitted notes
+                      // instead of silently discarding them. notesDirtyRef (not the
+                      // failureNotes state, which can be stale here -- see Ctrl+Enter's
+                      // own .blur() call) is what prevents double-submitting.
+                      if (notesDirtyRef.current && failureNotes.trim()) {
+                        submitVerdict(pendingVerdictRef.current, failureNotes);
+                        notesDirtyRef.current = false;
+                        setFailureNotes("");
+                      }
+                    }}
                     placeholder="Type execution details or notes here... Single-key hotkeys auto-pause while typing. Press Ctrl+Enter to submit."
                     style={{
                       width: "100%",
@@ -2051,7 +2087,7 @@ export default function App() {
                         : "not-allowed",
                     }}
                   >
-                    [P] Pass
+                    Pass
                   </button>
                   <button
                     onClick={() => {
@@ -2060,6 +2096,7 @@ export default function App() {
                           "Permission Denied: EXECUTE_RUN required",
                         );
                       submitVerdict("FAILED");
+                      pendingVerdictRef.current = "FAILED";
                       if (notesInputRef.current) notesInputRef.current.focus();
                     }}
                     style={{
@@ -2077,7 +2114,7 @@ export default function App() {
                         : "not-allowed",
                     }}
                   >
-                    [F] Fail
+                    Fail
                   </button>
                   <button
                     onClick={() => {
@@ -2086,6 +2123,7 @@ export default function App() {
                           "Permission Denied: EXECUTE_RUN required",
                         );
                       submitVerdict("BLOCKED");
+                      pendingVerdictRef.current = "BLOCKED";
                       if (notesInputRef.current) notesInputRef.current.focus();
                     }}
                     style={{
@@ -2103,7 +2141,7 @@ export default function App() {
                         : "not-allowed",
                     }}
                   >
-                    [B] Block
+                    Block
                   </button>
                   <button
                     onClick={() => {
@@ -2130,7 +2168,7 @@ export default function App() {
                         : "not-allowed",
                     }}
                   >
-                    [S] Skip
+                    Skip
                   </button>
                 </div>
 
