@@ -35,7 +35,9 @@ export interface UpdateRoleInput {
   permission_keys?: string[];
 }
 
-export type DeleteRoleResult = { deleted: true } | { deleted: false; blockedByUserCount: number };
+export type DeleteRoleResult =
+  | { deleted: true }
+  | { deleted: false; blockedByUserCount: number; roleName?: string };
 
 export class RoleRepository {
   constructor(private db: Kysely<Database>) {}
@@ -404,7 +406,7 @@ export class RoleRepository {
     ]).size;
 
     if (blockedByUserCount > 0) {
-      return { deleted: false, blockedByUserCount };
+      return { deleted: false, blockedByUserCount, roleName: role.name };
     }
 
     await this.db.transaction().execute(async (trx) => {

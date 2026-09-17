@@ -90,13 +90,15 @@ export function sendRoleInUseError(
   reply: FastifyReply,
   roleId: string,
   blockedByUserCount: number,
-  instance?: string
+  instance?: string,
+  roleName?: string
 ) {
+  const roleLabel = roleName ? `'${roleName}'` : `(ID: ${roleId})`;
   return sendProblemDetails(reply, {
     code: 'ROLE_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Role (ID: ${roleId}) is currently assigned to ${blockedByUserCount} user${blockedByUserCount === 1 ? '' : 's'} and cannot be deleted. Reassign ${blockedByUserCount === 1 ? 'them' : 'them all'} first.`,
+    detail: `Role ${roleLabel} is currently assigned to ${blockedByUserCount} user${blockedByUserCount === 1 ? '' : 's'} and cannot be deleted. Reassign ${blockedByUserCount === 1 ? 'them' : 'them all'} first.`,
     instance,
     invalid_params: [
       {

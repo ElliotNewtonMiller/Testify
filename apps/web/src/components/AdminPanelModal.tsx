@@ -4,6 +4,7 @@ import { UserProfile } from "./AuthModal";
 interface UserItem extends UserProfile {
   status: "ACTIVE" | "DISABLED";
   project_roles: Array<{ project_id: string; role: string }>;
+  overrides: PermissionOverride[];
   created_at: string;
 }
 
@@ -20,7 +21,26 @@ interface AuditItem {
 interface ProjectItem {
   id: string;
   name: string;
-  prefix: string;
+  prefix?: string;
+}
+
+interface RoleTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  is_system_role: boolean;
+  permission_keys: string[];
+}
+
+interface PermissionDefinition {
+  key: string;
+  description: string;
+  module: string;
+}
+
+interface PermissionOverride {
+  permission_key: string;
+  is_granted: boolean;
 }
 
 interface AdminPanelModalProps {
@@ -28,6 +48,9 @@ interface AdminPanelModalProps {
   onClose: () => void;
   currentUser: UserProfile | null;
   projects: ProjectItem[];
+  /** Called after a save that changes the SIGNED-IN admin's own role/permissions, so the
+   * caller can re-hydrate currentUser/userPermissions -- nothing here does that itself. */
+  onSelfPermissionsChanged?: () => void;
 }
 
 export function AdminPanelModal({
@@ -35,12 +58,15 @@ export function AdminPanelModal({
   onClose,
   currentUser,
   projects,
+  onSelfPermissionsChanged,
 }: AdminPanelModalProps) {
-  const [activeTab, setActiveTab] = useState<"ROSTER" | "MATRIX" | "AUDIT">(
-    "ROSTER",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "ROSTER" | "MATRIX" | "TEMPLATES" | "AUDIT"
+  >("ROSTER");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
+  const [roles, setRoles] = useState<RoleTemplate[]>([]);
+  const [permissionRegistry, setPermissionRegistry] = useState<PermissionDefinition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -58,12 +84,45 @@ export function AdminPanelModal({
     Record<string, string>
   >({});
 
+  // Matrix: per-user permission-override state. `overrideScope` is null for Global,
+  // or a project id -- each scope's override set is independent (see role.repository.ts's
+  // getUserOverrides/setUserOverrides).
+  const [overrideScope, setOverrideScope] = useState<string | null>(null);
+  const [overrideMap, setOverrideMap] = useState<Record<string, boolean>>({});
+  const [isLoadingOverrides, setIsLoadingOverrides] = useState<boolean>(false);
+
+  // Templates tab state: the role template currently being viewed/edited on the right.
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState<string>("");
+  const [templateDescription, setTemplateDescription] = useState<string>("");
+  const [templateKeys, setTemplateKeys] = useState<Set<string>>(new Set());
+  const [isNewTemplate, setIsNewTemplate] = useState<boolean>(false);
+
+  // Shared, dynamically-fetched role option list -- replaces 3 previously-hardcoded
+  // <select> option lists (create-user form, Matrix global-role picker, Matrix per-project
+  // role picker), which had drifted from each other and were all missing "Automation
+  // Service".
+  const roleOptions = roles.map((r) => ({
+    value: r.name,
+    label: r.description ? `${r.name} (${r.description})` : r.name,
+  }));
+
   useEffect(() => {
     if (isOpen) {
       fetchUsers();
       fetchAuditLogs();
+      fetchRoles();
+      fetchPermissionRegistry();
     }
   }, [isOpen]);
+
+  // Reload the selected user's overrides whenever the selected user or scope changes.
+  useEffect(() => {
+    if (activeTab === "MATRIX" && selectedUserId) {
+      fetchOverrides(selectedUserId, overrideScope);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUserId, overrideScope, activeTab]);
 
   // Builds the Authorization header from the signed JWT in localStorage. The admin API
   // requires a real Bearer token on every request (see apps/server/src/middleware/auth.ts) --
@@ -111,6 +170,52 @@ export function AdminPanelModal({
       }
     } catch {
       // Ignore audit log error
+    }
+  };
+
+  const fetchRoles = async () => {
+    try {
+      const res = await fetch("/api/v1/admin/roles", { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (res.ok) {
+        setRoles(data.roles || []);
+      }
+    } catch {
+      // Ignore -- roleOptions just stays empty and selects show no choices
+    }
+  };
+
+  const fetchPermissionRegistry = async () => {
+    try {
+      const res = await fetch("/api/v1/admin/permissions", { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (res.ok) {
+        setPermissionRegistry(data.permissions || []);
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
+  const fetchOverrides = async (userId: string, projectId: string | null) => {
+    setIsLoadingOverrides(true);
+    try {
+      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+      const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides${qs}`, {
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const map: Record<string, boolean> = {};
+        (data.overrides || []).forEach((o: PermissionOverride) => {
+          map[o.permission_key] = o.is_granted;
+        });
+        setOverrideMap(map);
+      }
+    } catch {
+      setOverrideMap({});
+    } finally {
+      setIsLoadingOverrides(false);
     }
   };
 
@@ -170,6 +275,7 @@ export function AdminPanelModal({
 
   const handleUserSelectInMatrix = (uId: string) => {
     setSelectedUserId(uId);
+    setOverrideScope(null); // reset to Global scope when switching users
     const target = users.find((u) => u.id === uId);
     if (target) {
       setSelectedGlobalRole(target.global_role);
@@ -212,8 +318,145 @@ export function AdminPanelModal({
 
       fetchUsers();
       fetchAuditLogs();
+      if (selectedUserId === currentUser?.id) {
+        onSelfPermissionsChanged?.();
+      }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to update user privileges");
+    }
+  };
+
+  // Toggle a permission key's override for the currently selected user/scope. Clicking
+  // adds an override forcing the OPPOSITE of whatever the role currently grants; clicking
+  // an already-overridden key removes the override, reverting to the role's own value.
+  const toggleOverrideKey = (key: string, roleGrantsIt: boolean) => {
+    setOverrideMap((prev) => {
+      const next = { ...prev };
+      if (key in next) {
+        delete next[key];
+      } else {
+        next[key] = !roleGrantsIt;
+      }
+      return next;
+    });
+  };
+
+  const handleSaveOverrides = async () => {
+    if (!selectedUserId) return;
+    setErrorMessage(null);
+
+    const overrides: PermissionOverride[] = Object.entries(overrideMap).map(
+      ([permission_key, is_granted]) => ({ permission_key, is_granted }),
+    );
+
+    try {
+      const res = await fetch(`/api/v1/admin/users/${selectedUserId}/permission-overrides`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ project_id: overrideScope, overrides }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update permission overrides");
+      }
+
+      fetchUsers();
+      fetchAuditLogs();
+      if (selectedUserId === currentUser?.id) {
+        onSelfPermissionsChanged?.();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to update permission overrides");
+    }
+  };
+
+  // --- Templates tab handlers ---
+
+  const handleSelectRole = (roleId: string) => {
+    const role = roles.find((r) => r.id === roleId);
+    if (!role) return;
+    setSelectedRoleId(roleId);
+    setIsNewTemplate(false);
+    setTemplateName(role.name);
+    setTemplateDescription(role.description || "");
+    setTemplateKeys(new Set(role.permission_keys));
+  };
+
+  const handleNewTemplate = () => {
+    setSelectedRoleId(null);
+    setIsNewTemplate(true);
+    setTemplateName("");
+    setTemplateDescription("");
+    setTemplateKeys(new Set());
+  };
+
+  const toggleTemplateKey = (key: string) => {
+    setTemplateKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSaveTemplate = async () => {
+    setErrorMessage(null);
+    const payload = {
+      name: templateName,
+      description: templateDescription || null,
+      permission_keys: Array.from(templateKeys),
+    };
+
+    try {
+      const res = await fetch(
+        isNewTemplate ? "/api/v1/admin/roles" : `/api/v1/admin/roles/${selectedRoleId}`,
+        {
+          method: isNewTemplate ? "POST" : "PUT",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save role template");
+      }
+
+      await fetchRoles();
+      fetchAuditLogs();
+      setIsNewTemplate(false);
+      setSelectedRoleId(data.role.id);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to save role template");
+    }
+  };
+
+  const handleDeleteTemplate = async (roleId: string) => {
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/v1/admin/roles/${roleId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+
+      if (res.status === 409) {
+        const data = await res.json();
+        throw new Error(data.detail || "This role is still assigned to one or more users.");
+      }
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete role template");
+      }
+
+      if (selectedRoleId === roleId) {
+        setSelectedRoleId(null);
+        setIsNewTemplate(false);
+      }
+      fetchRoles();
+      fetchAuditLogs();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to delete role template");
     }
   };
 
@@ -268,8 +511,8 @@ export function AdminPanelModal({
               RBAC & User Administration Panel
             </h2>
             <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-              Add users, assign global/project privileges, and inspect
-              security audit logs.
+              Add users, assign global/project privileges, manage role
+              templates, and inspect security audit logs.
             </span>
           </div>
           <button
@@ -323,6 +566,21 @@ export function AdminPanelModal({
             }}
           >
             🔑 Privilege & Access Matrix
+          </button>
+          <button
+            onClick={() => setActiveTab("TEMPLATES")}
+            style={{
+              padding: "10px 16px",
+              backgroundColor: "transparent",
+              border: "none",
+              borderBottom:
+                activeTab === "TEMPLATES" ? "2px solid #38bdf8" : "none",
+              color: activeTab === "TEMPLATES" ? "#38bdf8" : "#94a3b8",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            🎭 Role Templates ({roles.length})
           </button>
           <button
             onClick={() => setActiveTab("AUDIT")}
@@ -498,12 +756,11 @@ export function AdminPanelModal({
                       fontSize: "12px",
                     }}
                   >
-                    <option value="Admin">Admin (Full Control)</option>
-                    <option value="Test Lead">
-                      Test Lead (Approve & Manage)
-                    </option>
-                    <option value="Tester">Tester (Execute & Draft)</option>
-                    <option value="Viewer">Viewer (Read-Only)</option>
+                    {roleOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <button
@@ -725,14 +982,11 @@ export function AdminPanelModal({
                         fontSize: "12px",
                       }}
                     >
-                      <option value="Admin">
-                        Admin (SYSTEM_ADMIN & USER_MANAGE)
-                      </option>
-                      <option value="Test Lead">
-                        Test Lead (Approve Specs & USER_MANAGE)
-                      </option>
-                      <option value="Tester">Tester (Execute & Draft)</option>
-                      <option value="Viewer">Viewer (Read-Only)</option>
+                      {roleOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -813,10 +1067,11 @@ export function AdminPanelModal({
                           }}
                         >
                           <option value="">(No Explicit Access)</option>
-                          <option value="Admin">Project Admin</option>
-                          <option value="Test Lead">Project Test Lead</option>
-                          <option value="Tester">Project Tester</option>
-                          <option value="Viewer">Project Viewer</option>
+                          {roleOptions.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              Project {o.value}
+                            </option>
+                          ))}
                         </select>
                       </div>
                     ))}
@@ -837,10 +1092,431 @@ export function AdminPanelModal({
                   >
                     Save Privilege Delegation
                   </button>
+
+                  {/* Individual Permission Overrides -- global or per-project, layered on
+                      top of whatever the role above already grants. */}
+                  <div
+                    style={{
+                      borderTop: "1px solid #334155",
+                      paddingTop: "12px",
+                      marginTop: "20px",
+                    }}
+                  >
+                    <h4
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        margin: "0 0 8px 0",
+                        color: "#e2e8f0",
+                      }}
+                    >
+                      Individual Permission Overrides
+                    </h4>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        color: "#94a3b8",
+                        display: "block",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      Force-grant or force-revoke specific permissions for this user, on top
+                      of whatever their role already gives them. A project-scoped override
+                      wins over a Global one for the same key.
+                    </span>
+
+                    <div style={{ marginBottom: "10px" }}>
+                      <label
+                        style={{
+                          fontSize: "11px",
+                          color: "#94a3b8",
+                          display: "block",
+                          marginBottom: "2px",
+                        }}
+                      >
+                        Scope
+                      </label>
+                      <select
+                        value={overrideScope ?? ""}
+                        onChange={(e) => setOverrideScope(e.target.value || null)}
+                        style={{
+                          padding: "4px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "11px",
+                        }}
+                      >
+                        <option value="">Global (all projects)</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {isLoadingOverrides ? (
+                      <div style={{ color: "#64748b", fontSize: "12px" }}>Loading...</div>
+                    ) : (
+                      <>
+                        {Array.from(new Set(permissionRegistry.map((p) => p.module))).map(
+                          (moduleName) => (
+                            <div key={moduleName} style={{ marginBottom: "10px" }}>
+                              <div
+                                style={{
+                                  fontSize: "10px",
+                                  color: "#64748b",
+                                  textTransform: "uppercase",
+                                  marginBottom: "4px",
+                                }}
+                              >
+                                {moduleName}
+                              </div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                                {permissionRegistry
+                                  .filter((p) => p.module === moduleName)
+                                  .map((p) => {
+                                    const scopedRoleName = overrideScope
+                                      ? selectedProjectRoles[overrideScope] || selectedGlobalRole
+                                      : selectedGlobalRole;
+                                    const role = roles.find((r) => r.name === scopedRoleName);
+                                    const roleGrantsIt = role
+                                      ? role.permission_keys.includes(p.key)
+                                      : false;
+                                    const isOverridden = p.key in overrideMap;
+                                    const effectiveGranted = isOverridden
+                                      ? overrideMap[p.key]
+                                      : roleGrantsIt;
+
+                                    let bg = "transparent";
+                                    let border = "#4b5563";
+                                    let color = "#9ca3af";
+                                    if (isOverridden) {
+                                      border = "#f59e0b";
+                                      color = "#fbbf24";
+                                      bg = "rgba(245, 158, 11, 0.15)";
+                                    } else if (roleGrantsIt) {
+                                      border = "#22c55e";
+                                      color = "#4ade80";
+                                      bg = "rgba(34, 197, 94, 0.12)";
+                                    }
+
+                                    return (
+                                      <button
+                                        key={p.key}
+                                        onClick={() => toggleOverrideKey(p.key, roleGrantsIt)}
+                                        title={
+                                          isOverridden
+                                            ? `Overridden: forced ${effectiveGranted ? "ON" : "OFF"}. Click to revert to the role default (${roleGrantsIt ? "ON" : "OFF"}).`
+                                            : `Role default: ${roleGrantsIt ? "ON" : "OFF"}. Click to force ${roleGrantsIt ? "OFF" : "ON"}.`
+                                        }
+                                        style={{
+                                          padding: "3px 8px",
+                                          borderRadius: "4px",
+                                          fontSize: "10px",
+                                          fontWeight: 700,
+                                          border: `1px solid ${border}`,
+                                          backgroundColor: bg,
+                                          color,
+                                          cursor: "pointer",
+                                        }}
+                                      >
+                                        {effectiveGranted ? "✓" : "—"} {p.key}
+                                      </button>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                          ),
+                        )}
+
+                        <button
+                          onClick={handleSaveOverrides}
+                          style={{
+                            padding: "8px 16px",
+                            backgroundColor: "#d97706",
+                            border: "none",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            fontWeight: 600,
+                            fontSize: "12px",
+                            cursor: "pointer",
+                            marginTop: "8px",
+                          }}
+                        >
+                          Save Overrides ({overrideScope ? "This Project" : "Global"})
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div style={{ color: "#64748b", fontSize: "13px" }}>
                   Select a user from the roster to edit privileges.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: ROLE TEMPLATES -- create/edit/delete named permission bundles. Deleting a
+            default (is_system_role) is allowed; only being currently assigned to a user
+            blocks it (see DELETE /api/v1/admin/roles/:roleId, 409 ROLE_IN_USE). */}
+        {activeTab === "TEMPLATES" && (
+          <div
+            style={{
+              display: "flex",
+              gap: "20px",
+              flex: 1,
+              overflow: "hidden",
+            }}
+          >
+            {/* Role List */}
+            <div
+              style={{
+                width: "240px",
+                backgroundColor: "#1e293b",
+                borderRadius: "6px",
+                border: "1px solid #334155",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  padding: "10px",
+                  fontSize: "11px",
+                  color: "#94a3b8",
+                  borderBottom: "1px solid #334155",
+                  fontWeight: 700,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>TEMPLATE ROLES</span>
+                <button
+                  onClick={handleNewTemplate}
+                  title="New Template"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#38bdf8",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  ➕
+                </button>
+              </div>
+              {roles.map((r) => (
+                <div
+                  key={r.id}
+                  onClick={() => handleSelectRole(r.id)}
+                  style={{
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    backgroundColor:
+                      selectedRoleId === r.id ? "#0284c7" : "transparent",
+                    color: selectedRoleId === r.id ? "#fff" : "#cbd5e1",
+                    borderBottom: "1px solid #0f172a",
+                    fontSize: "12px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ fontSize: "10px", opacity: 0.8 }}>
+                      {r.is_system_role ? "Default" : "Custom"} ·{" "}
+                      {r.permission_keys.length} permissions
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTemplate(r.id);
+                    }}
+                    title="Delete Template"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#f87171",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Template Detail Form */}
+            <div
+              style={{
+                flex: 1,
+                backgroundColor: "#1e293b",
+                padding: "16px",
+                borderRadius: "6px",
+                border: "1px solid #334155",
+                overflowY: "auto",
+              }}
+            >
+              {selectedRoleId || isNewTemplate ? (
+                <div>
+                  <h3
+                    style={{
+                      fontSize: "15px",
+                      fontWeight: 700,
+                      margin: "0 0 12px 0",
+                      color: "#38bdf8",
+                    }}
+                  >
+                    {isNewTemplate ? "New Role Template" : `Editing: ${templateName}`}
+                  </h3>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <label
+                      style={{
+                        fontSize: "11px",
+                        color: "#94a3b8",
+                        display: "block",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "6px 8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #475569",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: "14px" }}>
+                    <label
+                      style={{
+                        fontSize: "11px",
+                        color: "#94a3b8",
+                        display: "block",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      Description
+                    </label>
+                    <input
+                      type="text"
+                      value={templateDescription}
+                      onChange={(e) => setTemplateDescription(e.target.value)}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "6px 8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #475569",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      borderTop: "1px solid #334155",
+                      paddingTop: "12px",
+                      marginBottom: "16px",
+                    }}
+                  >
+                    <h4
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        margin: "0 0 8px 0",
+                        color: "#e2e8f0",
+                      }}
+                    >
+                      Permissions
+                    </h4>
+
+                    {Array.from(new Set(permissionRegistry.map((p) => p.module))).map(
+                      (moduleName) => (
+                        <div key={moduleName} style={{ marginBottom: "10px" }}>
+                          <div
+                            style={{
+                              fontSize: "10px",
+                              color: "#64748b",
+                              textTransform: "uppercase",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            {moduleName}
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                            {permissionRegistry
+                              .filter((p) => p.module === moduleName)
+                              .map((p) => {
+                                const isOn = templateKeys.has(p.key);
+                                return (
+                                  <button
+                                    key={p.key}
+                                    onClick={() => toggleTemplateKey(p.key)}
+                                    title={p.description}
+                                    style={{
+                                      padding: "3px 8px",
+                                      borderRadius: "4px",
+                                      fontSize: "10px",
+                                      fontWeight: 700,
+                                      border: isOn ? "1px solid #22c55e" : "1px solid #4b5563",
+                                      backgroundColor: isOn
+                                        ? "rgba(34, 197, 94, 0.15)"
+                                        : "transparent",
+                                      color: isOn ? "#4ade80" : "#9ca3af",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    {isOn ? "✓" : "—"} {p.key}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleSaveTemplate}
+                    style={{
+                      padding: "8px 16px",
+                      backgroundColor: "#16a34a",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {isNewTemplate ? "Create Template" : "Save Template"}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ color: "#64748b", fontSize: "13px" }}>
+                  Select a template from the list, or create a new one.
                 </div>
               )}
             </div>

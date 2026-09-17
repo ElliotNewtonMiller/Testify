@@ -350,7 +350,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       if (result.blockedByUserCount === 0) {
         return reply.status(404).send({ error: 'Role not found' });
       }
-      return sendRoleInUseError(reply, roleId, result.blockedByUserCount, request.url);
+      return sendRoleInUseError(reply, roleId, result.blockedByUserCount, request.url, result.roleName);
     }
 
     const now = new Date().toISOString();

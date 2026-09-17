@@ -83,7 +83,11 @@ describe('Role templates & permission overrides', () => {
     const automationRole = roles.find((r) => r.name === 'Automation Service')!;
 
     const blocked = await roleRepo.deleteRole(automationRole.id);
-    expect(blocked).toEqual({ deleted: false, blockedByUserCount: 1 });
+    expect(blocked).toEqual({
+      deleted: false,
+      blockedByUserCount: 1,
+      roleName: 'Automation Service',
+    });
 
     // Confirmed still present
     expect(await roleRepo.getRole(automationRole.id)).toBeDefined();

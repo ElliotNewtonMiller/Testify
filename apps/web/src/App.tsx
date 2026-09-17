@@ -1077,7 +1077,8 @@ export default function App() {
         isOpen={adminPanelOpen}
         onClose={() => setAdminPanelOpen(false)}
         currentUser={currentUser}
-        projects={[workspace.project]}
+        projects={projectsList}
+        onSelfPermissionsChanged={fetchCurrentUser}
       />
 
       <EntityManagementModal
