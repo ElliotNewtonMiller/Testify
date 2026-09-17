@@ -82,11 +82,12 @@ export function AuthModal({
     setIsLoading(true);
 
     try {
+      const storedToken = localStorage.getItem("auth_token");
       const res = await fetch("/api/v1/auth/credentials", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": currentUser?.id || "",
+          ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
         },
         body: JSON.stringify({
           newUsername:
