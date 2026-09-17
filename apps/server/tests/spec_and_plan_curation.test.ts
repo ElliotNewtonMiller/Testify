@@ -335,6 +335,44 @@ describe('Specification / Plan Curation Routes', () => {
     expect(JSON.parse(removeRes.payload).code).toBe('CASE_HAS_EXECUTIONS');
   });
 
+  it('GET /api/v1/test-plans/:planId/cases surfaces the latest execution notes, not just the verdict', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+
+    const beforeRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const beforeCase = JSON.parse(beforeRes.payload).cases.find(
+      (c: any) => c.case_id === seed.caseIds[0]
+    );
+    expect(beforeCase.latest_notes).toBeNull();
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/executions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        build_id: seed.buildId,
+        test_plan_case_id: beforeCase.plan_case_id,
+        verdict: 'FAILED',
+        notes: 'Timed out waiting for the auth callback',
+      },
+    });
+
+    const afterRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const afterCase = JSON.parse(afterRes.payload).cases.find(
+      (c: any) => c.case_id === seed.caseIds[0]
+    );
+    expect(afterCase.latest_verdict).toBe('FAILED');
+    expect(afterCase.latest_notes).toBe('Timed out waiting for the auth callback');
+  });
+
   it('GET /api/v1/projects and /api/v1/projects/:id/plans return the real seeded data', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);

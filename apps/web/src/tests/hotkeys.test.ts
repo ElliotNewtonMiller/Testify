@@ -190,6 +190,38 @@ describe('Keyboard Focus FSM & Hotkey Engine Tests', () => {
       expect(mockTextarea.blur).toHaveBeenCalled();
     });
 
+    it('Ctrl+Enter submits notes even without EXECUTE_OVERWRITE -- a Tester finishing their own verdict is not a re-score', () => {
+      const onSubmitNotes = vi.fn();
+      const onPermissionDeniedToast = vi.fn();
+      // A Tester: can execute, but lacks EXECUTE_OVERWRITE, and the case is already
+      // "completed" (this same interaction just set its verdict via p/f/b/s).
+      const fsm = createMockFSM({
+        currentZone: 'TEXT_INPUT',
+        hotkeyStatus: 'TYPING MODE',
+        canExecute: true,
+        canOverwrite: false,
+      });
+
+      const mockTextarea = { tagName: 'TEXTAREA', value: 'Blocked on staging outage', blur: vi.fn() };
+      activeElementMock = mockTextarea;
+
+      const handler = createHotkeyHandler({
+        fsm,
+        caseCount: 3,
+        selectedIndex: 0,
+        onSelectIndex: vi.fn(),
+        onVerdict: vi.fn(),
+        onSubmitNotes,
+        onPermissionDeniedToast,
+        notesInputRef: { current: mockTextarea as any },
+      });
+
+      handler({ key: 'Enter', ctrlKey: true, preventDefault: vi.fn() } as any);
+
+      expect(onSubmitNotes).toHaveBeenCalledWith('Blocked on staging outage');
+      expect(onPermissionDeniedToast).not.toHaveBeenCalled();
+    });
+
     it('RBAC Guard: blocks verdict hotkeys and emits permission warning when EXECUTE_RUN is missing', () => {
       const onVerdict = vi.fn();
       const onPermissionDeniedToast = vi.fn();

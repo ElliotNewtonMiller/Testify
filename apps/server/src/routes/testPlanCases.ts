@@ -247,6 +247,7 @@ export async function registerTestPlanCaseRoutes(
         const steps = await versionRepo.getSteps(c.version_id);
         let latestVerdict = 'UNTESTED';
         let latestExecutionId: string | null = null;
+        let latestNotes: string | null = null;
 
         if (buildId) {
           const latestExec = await db
@@ -258,9 +259,16 @@ export async function registerTestPlanCaseRoutes(
             .executeTakeFirst();
           latestVerdict = latestExec?.verdict || 'UNTESTED';
           latestExecutionId = latestExec?.id || null;
+          latestNotes = latestExec?.notes || null;
         }
 
-        return { ...c, steps, latest_verdict: latestVerdict, latest_execution_id: latestExecutionId };
+        return {
+          ...c,
+          steps,
+          latest_verdict: latestVerdict,
+          latest_execution_id: latestExecutionId,
+          latest_notes: latestNotes,
+        };
       })
     );
 

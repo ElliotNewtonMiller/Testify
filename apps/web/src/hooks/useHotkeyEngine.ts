@@ -64,10 +64,11 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
           onPermissionDeniedToast?.('Permission Denied: EXECUTE_RUN required to submit execution');
           return;
         }
-        if (!fsm.canOverwrite) {
-          onPermissionDeniedToast?.('Permission Denied: EXECUTE_OVERWRITE required for completed executions');
-          return;
-        }
+        // No canOverwrite check here: this submits notes for the verdict just set in this
+        // same interaction (via p/f/b/s or the Fail/Block buttons, both already gated on
+        // canExecute/canOverwrite themselves), not a re-score of separately-completed
+        // history -- requiring EXECUTE_OVERWRITE again here blocked Testers (who have
+        // EXECUTE_RUN but not EXECUTE_OVERWRITE) from ever finishing their own notes.
         if (onSubmitNotes && notesInputRef?.current) {
           onSubmitNotes(notesInputRef.current.value);
         } else {

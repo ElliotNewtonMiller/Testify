@@ -38,6 +38,7 @@ interface TestCase extends TestCaseGridItem {
   preconditions: string;
   steps: Step[];
   latest_execution_id: string | null;
+  latest_notes?: string | null;
   test_suite_id?: string;
 }
 
@@ -537,6 +538,7 @@ export default function App() {
             steps: c.steps,
             latest_verdict: c.latest_verdict || "UNTESTED",
             latest_execution_id: c.latest_execution_id || null,
+            latest_notes: c.latest_notes || null,
           })),
         });
 
@@ -803,12 +805,18 @@ export default function App() {
       const targetCase = targetCaseOverride || activeCase;
       if (!targetCase || !workspace) return;
 
-      // 1. OPTIMISTIC UI UPDATE (<10ms)
+      const resolvedNotes =
+        notes ||
+        (verdict === "FAILED" || verdict === "BLOCKED" ? failureNotes : null);
+
+      // 1. OPTIMISTIC UI UPDATE (<10ms) -- also updates latest_notes, not just
+      // latest_verdict, so returning to this case (without a full refetch) shows the note
+      // that was just submitted instead of whatever was cached from before.
       setWorkspace((prev) => {
         if (!prev) return prev;
         const updatedCases = prev.cases.map((c) =>
           c.plan_case_id === targetCase.plan_case_id
-            ? { ...c, latest_verdict: verdict }
+            ? { ...c, latest_verdict: verdict, latest_notes: resolvedNotes }
             : c,
         );
         return { ...prev, cases: updatedCases };
@@ -830,11 +838,7 @@ export default function App() {
             test_plan_case_id: targetCase.plan_case_id,
             verdict,
             status: "COMPLETED",
-            notes:
-              notes ||
-              (verdict === "FAILED" || verdict === "BLOCKED"
-                ? failureNotes
-                : null),
+            notes: resolvedNotes,
             execution_duration_ms: Math.floor(Math.random() * 800) + 200,
           }),
         });
@@ -904,10 +908,12 @@ export default function App() {
     },
     onSubmitNotes: (notesText) => {
       // Submit with whatever verdict (FAILED or BLOCKED) the notes were opened for -- not
-      // hardcoded FAILED, so pressing 'b' then Ctrl+Enter stays BLOCKED.
+      // hardcoded FAILED, so pressing 'b' then Ctrl+Enter stays BLOCKED. No need to clear
+      // failureNotes here -- the case-load effect below re-syncs it from the (about to
+      // change) active case either way, whether that's this case's now-saved note or the
+      // next case's own note after advancing.
       submitVerdict(pendingVerdictRef.current, notesText);
       notesDirtyRef.current = false;
-      setFailureNotes("");
       if (workspace && selectedIndex < workspace.cases.length - 1) {
         setSelectedIndex((idx) => idx + 1);
       }
@@ -919,19 +925,22 @@ export default function App() {
     onFocusSearch: () => {
       if (searchInputRef.current) searchInputRef.current.focus();
     },
-    onPermissionDeniedToast: (msg) => showToast(`🔒 ${msg}`),
+    onPermissionDeniedToast: (msg) => showToast(msg),
     notesInputRef,
   });
 
-  // Moving to a different case should never carry over the previous case's notes text --
-  // any unsubmitted content was already saved by the textarea's onBlur handler above (which
-  // fires as focus leaves it, before selectedIndex actually changes); this is just the
-  // backstop that guarantees a clean slate for the newly active case either way.
+  // Moving to a different case should show THAT case's own saved notes (if it already has
+  // any from a prior execution), not the previous case's leftover draft text -- any
+  // unsubmitted draft was already saved by the textarea's onBlur handler above (which fires
+  // as focus leaves it, before selectedIndex actually changes). Loading an existing note
+  // here is not a user edit, so notesDirtyRef stays false (nothing to resubmit on blur
+  // unless the user actually changes it).
   useEffect(() => {
-    setFailureNotes("");
+    setFailureNotes(activeCase?.latest_notes || "");
     notesDirtyRef.current = false;
-    pendingVerdictRef.current = "FAILED";
-  }, [selectedIndex]);
+    pendingVerdictRef.current =
+      activeCase?.latest_verdict === "BLOCKED" ? "BLOCKED" : "FAILED";
+  }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
 
   if (authChecking) {
     return (
@@ -2022,11 +2031,12 @@ export default function App() {
                       // Unfocusing (click away, Tab, Esc) saves any unsubmitted notes
                       // instead of silently discarding them. notesDirtyRef (not the
                       // failureNotes state, which can be stale here -- see Ctrl+Enter's
-                      // own .blur() call) is what prevents double-submitting.
+                      // own .blur() call) is what prevents double-submitting. No need to
+                      // clear failureNotes after submitting -- it's now this case's saved
+                      // note, and should keep showing exactly that.
                       if (notesDirtyRef.current && failureNotes.trim()) {
                         submitVerdict(pendingVerdictRef.current, failureNotes);
                         notesDirtyRef.current = false;
-                        setFailureNotes("");
                       }
                     }}
                     placeholder="Type execution details or notes here... Single-key hotkeys auto-pause while typing. Press Ctrl+Enter to submit."
