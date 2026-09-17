@@ -8,6 +8,7 @@ import {
   migration001,
   seedCoreLoopData,
   seedRbacRegistry,
+  seedDevFixtures,
   type Database,
 } from '@testify/db';
 import type { Kysely } from 'kysely';
@@ -52,6 +53,16 @@ export async function createServer(connectionString?: string) {
   const seed = await seedCoreLoopData(db);
   const userRepo = new UserRepository(db);
   await userRepo.seedInitialAdmin();
+
+  // Extra local-dev-only fixtures (a couple more projects + users covering every role,
+  // a per-project role override, and a permission override) -- gives you something to
+  // immediately test against instead of an empty admin panel. Never runs in tests
+  // (vitest sets NODE_ENV=test) or against a real DATABASE_URL (a real/shared database
+  // shouldn't get fake test users seeded into it); set SEED_DEV_FIXTURES=false to opt out
+  // locally too.
+  if (!connectionString && process.env.NODE_ENV !== 'test' && process.env.SEED_DEV_FIXTURES !== 'false') {
+    await seedDevFixtures(db);
+  }
 
   // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, & Project Routes
   await registerIngestionRoutes(app, db);
