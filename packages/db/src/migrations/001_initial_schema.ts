@@ -191,6 +191,17 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
+  // Postgres treats NULL as distinct-per-row for a normal UNIQUE constraint, so a plain
+  // column-level unique on (project_id, entity_type, name) would not actually stop two
+  // global (project_id IS NULL) fields from sharing a name. A partial index scoped to the
+  // global case is what enforces global-scope name uniqueness, while leaving ingestion.ts's
+  // project-scoped custom field definitions (non-null project_id) completely unaffected.
+  await sql`
+    CREATE UNIQUE INDEX uq_custom_field_def_global_scope
+    ON custom_field_definitions (entity_type, name)
+    WHERE project_id IS NULL
+  `.execute(db);
+
   // 13. Custom Field Options
   await db.schema
     .createTable('custom_field_options')

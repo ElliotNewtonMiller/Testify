@@ -19,6 +19,7 @@ export const PERMISSION_REGISTRY: PermissionDefinition[] = [
   { key: 'SYSTEM_ADMIN', description: 'Unconditional access to every permission and every project.', module: 'Administration' },
   { key: 'USER_MANAGE', description: 'Create users, assign roles, and view the security audit log.', module: 'Administration' },
   { key: 'API_TOKEN_MANAGE', description: 'Create and revoke machine API tokens.', module: 'Administration' },
+  { key: 'CUSTOM_FIELD_MANAGE', description: 'Create, edit, and delete global custom field definitions for test cases and suites.', module: 'Administration' },
   { key: 'PROJECT_CREATE', description: 'Create new projects.', module: 'Projects' },
   { key: 'PROJECT_DELETE', description: 'Delete existing projects.', module: 'Projects' },
   { key: 'SPEC_VIEW', description: 'View test suites, test cases, and their steps.', module: 'Specifications' },
@@ -60,6 +61,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'IMPORT_DATA',
     'EXPORT_DATA',
     'API_TOKEN_MANAGE',
+    'CUSTOM_FIELD_MANAGE',
   ],
   'Test Lead': [
     'SPEC_VIEW',

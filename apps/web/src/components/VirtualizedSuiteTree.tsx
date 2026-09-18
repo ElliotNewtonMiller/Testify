@@ -28,6 +28,10 @@ export interface VirtualizedSuiteTreeProps {
   canManagePlan?: boolean;
   /** Fired when a suite's inclusion indicator is clicked in Specification mode. */
   onToggleSuiteInclusion?: (suiteId: string, action: 'ADD' | 'REMOVE') => void;
+  /** Fired when a suite's "Fields" affordance is clicked in Specification mode, to open
+   * that suite's custom-fields panel. Purely additive -- doesn't change the existing
+   * click-to-filter row selection behavior. */
+  onOpenSuiteFields?: (suiteId: string) => void;
 }
 
 const TREE_ROW_HEIGHT = 28; // Explicit 28px tree node standard (RFC 02 §3.1)
@@ -47,6 +51,7 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   mode = 'EXECUTION',
   canManagePlan = false,
   onToggleSuiteInclusion,
+  onOpenSuiteFields,
 }) => {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
 
@@ -214,25 +219,54 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
               </span>
             </div>
 
-            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator (Specification mode) */}
-            {mode === 'SPECIFICATION'
-              ? renderInclusionIndicator(node)
-              : total > 0 && (
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
-                      backgroundColor: 'rgba(31, 41, 55, 0.8)',
-                      padding: '1px 6px',
-                      borderRadius: '9999px',
-                      flexShrink: 0,
-                      marginLeft: '8px',
-                    }}
-                  >
-                    {passed}/{total} P
-                  </span>
-                )}
+            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator + Fields
+                affordance (Specification mode) */}
+            {mode === 'SPECIFICATION' ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                {renderInclusionIndicator(node)}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSuiteFields?.(node.id);
+                  }}
+                  title="Custom fields for this suite"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '16px',
+                    height: '16px',
+                    marginLeft: '6px',
+                    borderRadius: '3px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid #4b5563',
+                    color: '#9ca3af',
+                    fontSize: '10px',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  ✎
+                </button>
+              </span>
+            ) : (
+              total > 0 && (
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
+                    backgroundColor: 'rgba(31, 41, 55, 0.8)',
+                    padding: '1px 6px',
+                    borderRadius: '9999px',
+                    flexShrink: 0,
+                    marginLeft: '8px',
+                  }}
+                >
+                  {passed}/{total} P
+                </span>
+              )
+            )}
           </div>
         );
       })}

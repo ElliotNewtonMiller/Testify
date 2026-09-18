@@ -8,10 +8,10 @@ import {
 } from '../src/index.js';
 
 describe('RBAC permission registry', () => {
-  it('has exactly 16 entries, all with unique keys', () => {
-    expect(PERMISSION_REGISTRY).toHaveLength(16);
-    expect(PERMISSION_KEYS).toHaveLength(16);
-    expect(new Set(PERMISSION_KEYS).size).toBe(16);
+  it('has exactly 17 entries, all with unique keys', () => {
+    expect(PERMISSION_REGISTRY).toHaveLength(17);
+    expect(PERMISSION_KEYS).toHaveLength(17);
+    expect(new Set(PERMISSION_KEYS).size).toBe(17);
   });
 
   it('every entry has a non-empty key, description, and module', () => {
@@ -45,6 +45,14 @@ describe('RBAC permission registry', () => {
       }
     }
     expect(DEFAULT_ROLE_PERMISSIONS.Admin).toContain('SYSTEM_ADMIN');
+  });
+
+  it('CUSTOM_FIELD_MANAGE is granted only to Admin, not the other 4 built-in roles', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.Admin).toContain('CUSTOM_FIELD_MANAGE');
+    for (const roleName of DEFAULT_ROLE_NAMES) {
+      if (roleName === 'Admin') continue;
+      expect(DEFAULT_ROLE_PERMISSIONS[roleName]).not.toContain('CUSTOM_FIELD_MANAGE');
+    }
   });
 });
 

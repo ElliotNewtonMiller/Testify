@@ -86,6 +86,30 @@ export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: stri
   });
 }
 
+export function sendCustomFieldInUseError(
+  reply: FastifyReply,
+  fieldId: string,
+  blockedByValueCount: number,
+  instance?: string,
+  fieldLabel?: string
+) {
+  const fieldRef = fieldLabel ? `'${fieldLabel}'` : `(ID: ${fieldId})`;
+  const entityWord = blockedByValueCount === 1 ? 'case/suite' : 'cases/suites';
+  return sendProblemDetails(reply, {
+    code: 'CUSTOM_FIELD_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Custom field ${fieldRef} has recorded values on ${blockedByValueCount} ${entityWord}. Pass force=true to delete it anyway and permanently discard that data.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'field_id',
+        reason: `Has values on ${blockedByValueCount} entities`,
+      },
+    ],
+  });
+}
+
 export function sendRoleInUseError(
   reply: FastifyReply,
   roleId: string,

@@ -17,6 +17,8 @@ import {
 import { AuthModal, UserProfile } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
 import { LoginPage } from "./components/LoginPage";
+import { CustomFieldEditor } from "./components/CustomFieldEditor";
+import { SuiteCustomFieldsPanel } from "./components/SuiteCustomFieldsPanel";
 import {
   EntityManagementModal,
   EntityItem,
@@ -79,6 +81,25 @@ interface SpecCaseDetail {
     preconditions: string | null;
     steps: Step[];
   };
+}
+
+export type CustomFieldType = "TEXT" | "NUMBER" | "CHECKBOX" | "DATE" | "SINGLE_SELECT" | "MULTI_SELECT";
+
+export interface CustomFieldDefinition {
+  id: string;
+  entity_type: "TestCase" | "TestSuite";
+  name: string;
+  field_label: string;
+  field_type: CustomFieldType;
+  is_required: boolean;
+  default_value: string | null;
+  validation_regex: string | null;
+  options: Array<{ option_label: string; option_value: string }>;
+}
+
+export interface CustomFieldValueEntry {
+  definition: CustomFieldDefinition;
+  value: unknown;
 }
 
 function authHeaders(): Record<string, string> {
@@ -175,6 +196,14 @@ export default function App() {
     null,
   );
   const [pendingToggleId, setPendingToggleId] = useState<string | null>(null);
+  const [specCaseCustomFieldValues, setSpecCaseCustomFieldValues] = useState<
+    CustomFieldValueEntry[] | null
+  >(null);
+  const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null);
+  const [customFieldErrorById, setCustomFieldErrorById] = useState<Record<string, string>>({});
+  // Suite-level custom fields: which suite (if any) has its fields panel open in
+  // Specification mode -- purely additive to the existing click-to-filter suite selection.
+  const [suiteFieldsPanelSuiteId, setSuiteFieldsPanelSuiteId] = useState<string | null>(null);
 
   // Authentication & RBAC User State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -795,6 +824,72 @@ export default function App() {
     };
   }, [workspaceMode, specSelectedCaseId]);
 
+  // Global admin-defined custom field values for whichever case is selected in
+  // Specification mode -- fetched alongside specCaseDetail above, same lazy-per-case pattern.
+  useEffect(() => {
+    if (workspaceMode !== "SPECIFICATION" || !specSelectedCaseId) {
+      setSpecCaseCustomFieldValues(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/test-cases/${specSelectedCaseId}/custom-field-values`, {
+          headers: authHeaders(),
+        });
+        if (!cancelled) setSpecCaseCustomFieldValues(res.ok ? (await res.json()).values : null);
+      } catch {
+        if (!cancelled) setSpecCaseCustomFieldValues(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceMode, specSelectedCaseId]);
+
+  // Commits one custom field value edit via PUT, then optimistically patches local state
+  // so the field reflects the save without waiting on a full spec-tree/detail refetch.
+  const handleCustomFieldValueChange = useCallback(
+    async (definitionId: string, value: unknown) => {
+      if (!specSelectedCaseId) return;
+      setSavingCustomFieldId(definitionId);
+      setCustomFieldErrorById((prev) => {
+        const next = { ...prev };
+        delete next[definitionId];
+        return next;
+      });
+      try {
+        const res = await fetch(
+          `/api/v1/test-cases/${specSelectedCaseId}/custom-field-values/${definitionId}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ value }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || data.error || "Failed to save custom field value");
+        }
+        setSpecCaseCustomFieldValues((prev) =>
+          prev
+            ? prev.map((entry) =>
+                entry.definition.id === definitionId ? { ...entry, value: data.value } : entry,
+              )
+            : prev,
+        );
+      } catch (err: any) {
+        setCustomFieldErrorById((prev) => ({
+          ...prev,
+          [definitionId]: err.message || "Failed to save",
+        }));
+      } finally {
+        setSavingCustomFieldId(null);
+      }
+    },
+    [specSelectedCaseId],
+  );
+
   // Execute verdict submission (Optimistic UI + Background API)
   const submitVerdict = useCallback(
     async (
@@ -1033,6 +1128,17 @@ export default function App() {
     });
 
   const suiteNodes: SuiteTreeNode[] = specData ? buildSuiteNodes(specData.suites) : [];
+
+  function findSuiteName(nodes: SpecSuiteNode[], suiteId: string): string | null {
+    for (const node of nodes) {
+      if (node.id === suiteId) return node.name;
+      const found = findSuiteName(node.children, suiteId);
+      if (found) return found;
+    }
+    return null;
+  }
+  const suiteFieldsPanelSuiteName =
+    (suiteFieldsPanelSuiteId && specData && findSuiteName(specData.suites, suiteFieldsPanelSuiteId)) || "";
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
   const hasUserManagePermission =
@@ -1512,6 +1618,9 @@ export default function App() {
             mode={workspaceMode}
             canManagePlan={hasPlanManagePermission}
             onToggleSuiteInclusion={handleToggleSuiteInclusion}
+            onOpenSuiteFields={(suiteId) =>
+              setSuiteFieldsPanelSuiteId((prev) => (prev === suiteId ? null : suiteId))
+            }
           />
 
           {/* DB STATS LOG */}
@@ -1578,6 +1687,15 @@ export default function App() {
               </span>
             )}
           </div>
+
+          {workspaceMode === "SPECIFICATION" && suiteFieldsPanelSuiteId && (
+            <SuiteCustomFieldsPanel
+              suiteId={suiteFieldsPanelSuiteId}
+              suiteName={suiteFieldsPanelSuiteName}
+              canManagePlan={hasPlanManagePermission}
+              onClose={() => setSuiteFieldsPanelSuiteId(null)}
+            />
+          )}
 
           {workspaceMode === "SPECIFICATION" ? (
             <SpecCaseListGrid
@@ -1705,7 +1823,9 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* CASE DETAILS (READ-ONLY -- CURATION ONLY, NO EDITING IN THIS VIEW) */}
+                {/* CASE DETAILS -- built-in fields (title/steps/preconditions/summary) stay
+                    read-only curation-view display; admin-defined custom field values below
+                    are editable here (the first real edit affordance in this view). */}
                 <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
                   <div
                     style={{
@@ -1756,6 +1876,22 @@ export default function App() {
                       <div style={{ fontSize: "12px", color: "#d1d5db" }}>
                         {specVersionDetail.summary}
                       </div>
+                    </div>
+                  )}
+
+                  {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
+                    <div style={{ marginBottom: "16px" }}>
+                      {specCaseCustomFieldValues.map((entry) => (
+                        <CustomFieldEditor
+                          key={entry.definition.id}
+                          entry={entry}
+                          onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
+                          disabled={!hasPlanManagePermission}
+                          disabledTitle="Requires plan management permission"
+                          errorMessage={customFieldErrorById[entry.definition.id] ?? null}
+                          isSaving={savingCustomFieldId === entry.definition.id}
+                        />
+                      ))}
                     </div>
                   )}
 

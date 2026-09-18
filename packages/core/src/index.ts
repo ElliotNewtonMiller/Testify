@@ -3,3 +3,4 @@ export * from './security/passwordPolicy.js';
 export * from './security/jwt.js';
 export * from './rbac/registry.js';
 export * from './rbac/evaluate.js';
+export * from './custom-fields/index.js';

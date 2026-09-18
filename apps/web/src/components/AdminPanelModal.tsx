@@ -43,6 +43,35 @@ interface PermissionOverride {
   is_granted: boolean;
 }
 
+type CustomFieldType = "TEXT" | "NUMBER" | "CHECKBOX" | "DATE" | "SINGLE_SELECT" | "MULTI_SELECT";
+type CustomFieldEntityType = "TestCase" | "TestSuite";
+
+const CUSTOM_FIELD_TYPE_OPTIONS: Array<{ value: CustomFieldType; label: string }> = [
+  { value: "TEXT", label: "Text" },
+  { value: "NUMBER", label: "Number" },
+  { value: "CHECKBOX", label: "Checkbox" },
+  { value: "DATE", label: "Date" },
+  { value: "SINGLE_SELECT", label: "Single-select" },
+  { value: "MULTI_SELECT", label: "Multi-select" },
+];
+
+interface CustomFieldOption {
+  option_label: string;
+  option_value: string;
+}
+
+interface CustomFieldDefinition {
+  id: string;
+  entity_type: CustomFieldEntityType;
+  name: string;
+  field_label: string;
+  field_type: CustomFieldType;
+  is_required: boolean;
+  default_value: string | null;
+  validation_regex: string | null;
+  options: CustomFieldOption[];
+}
+
 interface AdminPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -61,7 +90,7 @@ export function AdminPanelModal({
   onSelfPermissionsChanged,
 }: AdminPanelModalProps) {
   const [activeTab, setActiveTab] = useState<
-    "ROSTER" | "MATRIX" | "TEMPLATES" | "AUDIT"
+    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "AUDIT"
   >("ROSTER");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
@@ -73,6 +102,7 @@ export function AdminPanelModal({
   const [isSavingPrivileges, setIsSavingPrivileges] = useState<boolean>(false);
   const [isSavingOverrides, setIsSavingOverrides] = useState<boolean>(false);
   const [isSavingTemplate, setIsSavingTemplate] = useState<boolean>(false);
+  const [isSavingField, setIsSavingField] = useState<boolean>(false);
 
   // Briefly shows a confirmation banner (auto-clears), same pattern as App.tsx's toast --
   // saves succeed silently otherwise, which reads as "did that even work?".
@@ -111,6 +141,29 @@ export function AdminPanelModal({
   const [templateKeys, setTemplateKeys] = useState<Set<string>>(new Set());
   const [isNewTemplate, setIsNewTemplate] = useState<boolean>(false);
 
+  // Custom Fields tab state: the field definition currently being viewed/edited on the
+  // right. entity_type and field_type are immutable once created -- changing either would
+  // orphan the meaning of any existing values, so they're locked in the form after creation.
+  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [isNewField, setIsNewField] = useState<boolean>(false);
+  const [fieldEntityType, setFieldEntityType] = useState<CustomFieldEntityType>("TestCase");
+  const [fieldName, setFieldName] = useState<string>("");
+  const [fieldLabel, setFieldLabel] = useState<string>("");
+  const [fieldType, setFieldType] = useState<CustomFieldType>("TEXT");
+  const [fieldIsRequired, setFieldIsRequired] = useState<boolean>(false);
+  const [fieldDefaultValue, setFieldDefaultValue] = useState<string>("");
+  const [fieldValidationRegex, setFieldValidationRegex] = useState<string>("");
+  const [fieldOptions, setFieldOptions] = useState<CustomFieldOption[]>([]);
+  // Delete-with-confirmation: the first DELETE (no force) doubles as a pre-check -- a 409
+  // populates this instead of erroring, and nothing is deleted until "Delete Anyway" fires
+  // the second DELETE with force=true. Cancel just clears this, no request sent.
+  const [deleteFieldPrompt, setDeleteFieldPrompt] = useState<{
+    id: string;
+    label: string;
+    detail: string;
+  } | null>(null);
+
   // Shared, dynamically-fetched role option list -- replaces 3 previously-hardcoded
   // <select> option lists (create-user form, Matrix global-role picker, Matrix per-project
   // role picker), which had drifted from each other and were all missing "Automation
@@ -126,6 +179,7 @@ export function AdminPanelModal({
       fetchAuditLogs();
       fetchRoles();
       fetchPermissionRegistry();
+      fetchCustomFields();
     }
   }, [isOpen]);
 
@@ -207,6 +261,18 @@ export function AdminPanelModal({
       }
     } catch {
       // Ignore
+    }
+  };
+
+  const fetchCustomFields = async () => {
+    try {
+      const res = await fetch("/api/v1/admin/custom-fields", { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (res.ok) {
+        setCustomFields(data.definitions || []);
+      }
+    } catch {
+      // Ignore -- the tab just shows an empty list
     }
   };
 
@@ -491,6 +557,156 @@ export function AdminPanelModal({
     }
   };
 
+  // --- Custom Fields tab handlers ---
+
+  const handleSelectField = (fieldId: string) => {
+    const field = customFields.find((f) => f.id === fieldId);
+    if (!field) return;
+    setSelectedFieldId(fieldId);
+    setIsNewField(false);
+    setDeleteFieldPrompt(null);
+    setFieldEntityType(field.entity_type);
+    setFieldName(field.name);
+    setFieldLabel(field.field_label);
+    setFieldType(field.field_type);
+    setFieldIsRequired(field.is_required);
+    setFieldDefaultValue(field.default_value ?? "");
+    setFieldValidationRegex(field.validation_regex ?? "");
+    setFieldOptions(field.options.map((o) => ({ ...o })));
+  };
+
+  const handleNewField = () => {
+    setSelectedFieldId(null);
+    setIsNewField(true);
+    setDeleteFieldPrompt(null);
+    setFieldEntityType("TestCase");
+    setFieldName("");
+    setFieldLabel("");
+    setFieldType("TEXT");
+    setFieldIsRequired(false);
+    setFieldDefaultValue("");
+    setFieldValidationRegex("");
+    setFieldOptions([]);
+  };
+
+  const isOptionType = fieldType === "SINGLE_SELECT" || fieldType === "MULTI_SELECT";
+
+  const addFieldOption = () => {
+    setFieldOptions((prev) => [...prev, { option_label: "", option_value: "" }]);
+  };
+
+  const updateFieldOption = (index: number, patch: Partial<CustomFieldOption>) => {
+    setFieldOptions((prev) => prev.map((o, i) => (i === index ? { ...o, ...patch } : o)));
+  };
+
+  const removeFieldOption = (index: number) => {
+    setFieldOptions((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveField = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSavingField(true);
+    const wasNewField = isNewField;
+
+    const basePayload = {
+      field_label: fieldLabel,
+      is_required: fieldIsRequired,
+      default_value: fieldDefaultValue || null,
+      validation_regex: fieldType === "TEXT" ? fieldValidationRegex || null : null,
+      options: isOptionType ? fieldOptions : undefined,
+    };
+
+    try {
+      const res = await fetch(
+        isNewField ? "/api/v1/admin/custom-fields" : `/api/v1/admin/custom-fields/${selectedFieldId}`,
+        {
+          method: isNewField ? "POST" : "PUT",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(
+            isNewField ? { entity_type: fieldEntityType, name: fieldName, field_type: fieldType, ...basePayload } : basePayload,
+          ),
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save custom field");
+      }
+
+      await fetchCustomFields();
+      setIsNewField(false);
+      setSelectedFieldId(data.definition.id);
+      flashSuccess(wasNewField ? "✓ Custom field created." : "✓ Custom field saved.");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to save custom field");
+    } finally {
+      setIsSavingField(false);
+    }
+  };
+
+  // Two-step delete: the first DELETE (no force) doubles as a pre-check. A 409 means the
+  // field has recorded values -- nothing is deleted yet, so populate the warning prompt
+  // instead of erroring. A 204 means it was unused and is already gone.
+  const handleDeleteFieldClick = async (field: CustomFieldDefinition) => {
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/v1/admin/custom-fields/${field.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+
+      if (res.status === 409) {
+        const data = await res.json();
+        setDeleteFieldPrompt({
+          id: field.id,
+          label: field.field_label,
+          detail: data.detail || `"${field.field_label}" has recorded values and cannot be deleted without confirmation.`,
+        });
+        return;
+      }
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete custom field");
+      }
+
+      if (selectedFieldId === field.id) {
+        setSelectedFieldId(null);
+        setIsNewField(false);
+      }
+      fetchCustomFields();
+      flashSuccess(`✓ Field "${field.field_label}" deleted.`);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to delete custom field");
+    }
+  };
+
+  const handleConfirmDeleteField = async () => {
+    if (!deleteFieldPrompt) return;
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/v1/admin/custom-fields/${deleteFieldPrompt.id}?force=true`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete custom field");
+      }
+
+      if (selectedFieldId === deleteFieldPrompt.id) {
+        setSelectedFieldId(null);
+        setIsNewField(false);
+      }
+      const label = deleteFieldPrompt.label;
+      setDeleteFieldPrompt(null);
+      fetchCustomFields();
+      flashSuccess(`✓ Field "${label}" and its recorded data have been deleted.`);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to delete custom field");
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -612,6 +828,21 @@ export function AdminPanelModal({
             }}
           >
             🎭 Role Templates ({roles.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("CUSTOM_FIELDS")}
+            style={{
+              padding: "10px 16px",
+              backgroundColor: "transparent",
+              border: "none",
+              borderBottom:
+                activeTab === "CUSTOM_FIELDS" ? "2px solid #38bdf8" : "none",
+              color: activeTab === "CUSTOM_FIELDS" ? "#38bdf8" : "#94a3b8",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            🏷️ Custom Fields ({customFields.length})
           </button>
           <button
             onClick={() => setActiveTab("AUDIT")}
@@ -1577,6 +1808,404 @@ export function AdminPanelModal({
               ) : (
                 <div style={{ color: "#64748b", fontSize: "13px" }}>
                   Select a template from the list, or create a new one.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: CUSTOM FIELDS -- global (not per-project) admin-defined fields on Test Cases
+            and Test Suites, edited by testers in Specification mode's case/suite detail. */}
+        {activeTab === "CUSTOM_FIELDS" && (
+          <div style={{ display: "flex", gap: "20px", flex: 1, overflow: "hidden" }}>
+            {/* Field List, grouped by entity type */}
+            <div
+              style={{
+                width: "240px",
+                backgroundColor: "#1e293b",
+                borderRadius: "6px",
+                border: "1px solid #334155",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  padding: "10px",
+                  fontSize: "11px",
+                  color: "#94a3b8",
+                  borderBottom: "1px solid #334155",
+                  fontWeight: 700,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>CUSTOM FIELDS</span>
+                <button
+                  onClick={handleNewField}
+                  title="New Custom Field"
+                  style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: "14px" }}
+                >
+                  ➕
+                </button>
+              </div>
+              {(["TestCase", "TestSuite"] as const).map((entityType) => (
+                <div key={entityType}>
+                  <div
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: "10px",
+                      color: "#64748b",
+                      textTransform: "uppercase",
+                      backgroundColor: "#0f172a",
+                    }}
+                  >
+                    {entityType === "TestCase" ? "Test Case Fields" : "Test Suite Fields"}
+                  </div>
+                  {customFields
+                    .filter((f) => f.entity_type === entityType)
+                    .map((f) => (
+                      <div
+                        key={f.id}
+                        onClick={() => handleSelectField(f.id)}
+                        style={{
+                          padding: "10px 12px",
+                          cursor: "pointer",
+                          backgroundColor: selectedFieldId === f.id ? "#0284c7" : "transparent",
+                          color: selectedFieldId === f.id ? "#fff" : "#cbd5e1",
+                          borderBottom: "1px solid #0f172a",
+                          fontSize: "12px",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{f.field_label}</div>
+                          <div style={{ fontSize: "10px", opacity: 0.8 }}>
+                            {CUSTOM_FIELD_TYPE_OPTIONS.find((t) => t.value === f.field_type)?.label}
+                            {f.is_required ? " · required" : ""}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteFieldClick(f);
+                          }}
+                          title="Delete Field"
+                          style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: "12px" }}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    ))}
+                  {customFields.filter((f) => f.entity_type === entityType).length === 0 && (
+                    <div style={{ padding: "10px 12px", fontSize: "11px", color: "#64748b" }}>None defined yet.</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Field Detail Form */}
+            <div
+              style={{
+                flex: 1,
+                backgroundColor: "#1e293b",
+                padding: "16px",
+                borderRadius: "6px",
+                border: "1px solid #334155",
+                overflowY: "auto",
+              }}
+            >
+              {deleteFieldPrompt ? (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 12px 0", color: "#fbbf24" }}>
+                    ⚠️ Confirm Deletion
+                  </h3>
+                  <p style={{ fontSize: "12px", color: "#cbd5e1", lineHeight: 1.5 }}>{deleteFieldPrompt.detail}</p>
+                  <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+                    <button
+                      onClick={() => setDeleteFieldPrompt(null)}
+                      style={{
+                        padding: "8px 16px",
+                        backgroundColor: "#334155",
+                        border: "none",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontWeight: 600,
+                        fontSize: "12px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleConfirmDeleteField}
+                      style={{
+                        padding: "8px 16px",
+                        backgroundColor: "#dc2626",
+                        border: "none",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontWeight: 600,
+                        fontSize: "12px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Delete Anyway
+                    </button>
+                  </div>
+                </div>
+              ) : selectedFieldId || isNewField ? (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 12px 0", color: "#38bdf8" }}>
+                    {isNewField ? "New Custom Field" : `Editing: ${fieldLabel}`}
+                  </h3>
+
+                  <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                        Applies To
+                      </label>
+                      <select
+                        value={fieldEntityType}
+                        onChange={(e) => setFieldEntityType(e.target.value as CustomFieldEntityType)}
+                        disabled={!isNewField}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "6px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "12px",
+                          opacity: isNewField ? 1 : 0.6,
+                        }}
+                      >
+                        <option value="TestCase">Test Case</option>
+                        <option value="TestSuite">Test Suite</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                        Field Type
+                      </label>
+                      <select
+                        value={fieldType}
+                        onChange={(e) => setFieldType(e.target.value as CustomFieldType)}
+                        disabled={!isNewField}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "6px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "12px",
+                          opacity: isNewField ? 1 : 0.6,
+                        }}
+                      >
+                        {CUSTOM_FIELD_TYPE_OPTIONS.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                      Name (internal key)
+                    </label>
+                    <input
+                      type="text"
+                      value={fieldName}
+                      onChange={(e) => setFieldName(e.target.value)}
+                      disabled={!isNewField}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "6px 8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #475569",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontSize: "12px",
+                        opacity: isNewField ? 1 : 0.6,
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                      Label (shown to testers)
+                    </label>
+                    <input
+                      type="text"
+                      value={fieldLabel}
+                      onChange={(e) => setFieldLabel(e.target.value)}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "6px 8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #475569",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <button
+                      onClick={() => setFieldIsRequired((prev) => !prev)}
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: "4px",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        border: fieldIsRequired ? "1px solid #22c55e" : "1px solid #4b5563",
+                        backgroundColor: fieldIsRequired ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                        color: fieldIsRequired ? "#4ade80" : "#9ca3af",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {fieldIsRequired ? "✓" : "—"} Required
+                    </button>
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                      Default Value
+                    </label>
+                    <input
+                      type="text"
+                      value={fieldDefaultValue}
+                      onChange={(e) => setFieldDefaultValue(e.target.value)}
+                      style={{
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "6px 8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #475569",
+                        borderRadius: "4px",
+                        color: "#fff",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </div>
+
+                  {fieldType === "TEXT" && (
+                    <div style={{ marginBottom: "10px" }}>
+                      <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                        Validation Regex (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={fieldValidationRegex}
+                        onChange={(e) => setFieldValidationRegex(e.target.value)}
+                        placeholder="e.g. ^[A-Z]+-\d+$"
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "6px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {isOptionType && (
+                    <div style={{ marginBottom: "14px" }}>
+                      <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "6px" }}>
+                        Options
+                      </label>
+                      {fieldOptions.map((opt, i) => (
+                        <div key={i} style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+                          <input
+                            type="text"
+                            placeholder="Label"
+                            value={opt.option_label}
+                            onChange={(e) => updateFieldOption(i, { option_label: e.target.value })}
+                            style={{
+                              flex: 1,
+                              padding: "5px 8px",
+                              backgroundColor: "#0f172a",
+                              border: "1px solid #475569",
+                              borderRadius: "4px",
+                              color: "#fff",
+                              fontSize: "11px",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Value"
+                            value={opt.option_value}
+                            onChange={(e) => updateFieldOption(i, { option_value: e.target.value })}
+                            style={{
+                              flex: 1,
+                              padding: "5px 8px",
+                              backgroundColor: "#0f172a",
+                              border: "1px solid #475569",
+                              borderRadius: "4px",
+                              color: "#fff",
+                              fontSize: "11px",
+                            }}
+                          />
+                          <button
+                            onClick={() => removeFieldOption(i)}
+                            style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: "12px" }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={addFieldOption}
+                        style={{
+                          padding: "4px 10px",
+                          backgroundColor: "transparent",
+                          border: "1px dashed #475569",
+                          borderRadius: "4px",
+                          color: "#94a3b8",
+                          fontSize: "11px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        + Add Option
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleSaveField}
+                    disabled={isSavingField}
+                    style={{
+                      padding: "8px 16px",
+                      backgroundColor: isSavingField ? "#166534" : "#16a34a",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                      cursor: isSavingField ? "default" : "pointer",
+                      opacity: isSavingField ? 0.8 : 1,
+                    }}
+                  >
+                    {isSavingField ? "Saving..." : isNewField ? "Create Field" : "Save Field"}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ color: "#64748b", fontSize: "13px" }}>
+                  Select a custom field from the list, or create a new one.
                 </div>
               )}
             </div>
