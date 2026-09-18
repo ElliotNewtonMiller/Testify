@@ -32,6 +32,17 @@ export interface VirtualizedSuiteTreeProps {
    * that suite's custom-fields panel. Purely additive -- doesn't change the existing
    * click-to-filter row selection behavior. */
   onOpenSuiteFields?: (suiteId: string) => void;
+  /** Whether the current user holds SPEC_CREATE/SPEC_EDIT/SPEC_DELETE -- gates the new
+   * create-child/rename/delete icon buttons in Specification mode. */
+  canCreateSuites?: boolean;
+  canEditSuites?: boolean;
+  canDeleteSuites?: boolean;
+  /** Fired when a suite's "+" (create child suite) affordance is clicked. */
+  onCreateChildSuite?: (parentSuiteId: string) => void;
+  /** Fired when a suite's rename affordance is clicked. */
+  onRenameSuite?: (suiteId: string, currentName: string, currentParentId: string | null) => void;
+  /** Fired when a suite's delete affordance is clicked. */
+  onDeleteSuite?: (suiteId: string) => void;
 }
 
 const TREE_ROW_HEIGHT = 28; // Explicit 28px tree node standard (RFC 02 §3.1)
@@ -52,6 +63,12 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   canManagePlan = false,
   onToggleSuiteInclusion,
   onOpenSuiteFields,
+  canCreateSuites = false,
+  canEditSuites = false,
+  canDeleteSuites = false,
+  onCreateChildSuite,
+  onRenameSuite,
+  onDeleteSuite,
 }) => {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
 
@@ -248,6 +265,84 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
                 >
                   ✎
                 </button>
+                {canCreateSuites && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCreateChildSuite?.(node.id);
+                    }}
+                    title="Create child suite"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                      marginLeft: '4px',
+                      borderRadius: '3px',
+                      backgroundColor: 'transparent',
+                      border: '1px solid #4b5563',
+                      color: '#9ca3af',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    +
+                  </button>
+                )}
+                {canEditSuites && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRenameSuite?.(node.id, node.name, node.parentId ?? null);
+                    }}
+                    title="Rename / move suite"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                      marginLeft: '4px',
+                      borderRadius: '3px',
+                      backgroundColor: 'transparent',
+                      border: '1px solid #4b5563',
+                      color: '#9ca3af',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    ✏️
+                  </button>
+                )}
+                {canDeleteSuites && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteSuite?.(node.id);
+                    }}
+                    title="Delete suite"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                      marginLeft: '4px',
+                      borderRadius: '3px',
+                      backgroundColor: 'transparent',
+                      border: '1px solid #4b5563',
+                      color: '#f87171',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    🗑️
+                  </button>
+                )}
               </span>
             ) : (
               total > 0 && (

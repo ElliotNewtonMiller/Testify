@@ -19,8 +19,8 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerTestPlanCaseRoutes } from './routes/testPlanCases.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerCustomFieldRoutes } from './routes/customFields.js';
+import { registerSpecEditingRoutes } from './routes/specEditing.js';
 import { requirePermission } from './middleware/auth.js';
-import { sendCaseVersionLockedError } from './errors.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
@@ -65,7 +65,7 @@ export async function createServer(connectionString?: string) {
     await seedDevFixtures(db);
   }
 
-  // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, Project, & Custom Field Routes
+  // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, Project, Custom Field, & Spec-Editing Routes
   await registerIngestionRoutes(app, db);
   await registerBatchExecutionRoutes(app, db);
   await registerAuthRoutes(app, db, jwtSecret);
@@ -73,6 +73,7 @@ export async function createServer(connectionString?: string) {
   await registerTestPlanCaseRoutes(app, db, jwtSecret);
   await registerProjectRoutes(app, db, jwtSecret);
   await registerCustomFieldRoutes(app, db, jwtSecret);
+  await registerSpecEditingRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {
@@ -270,38 +271,6 @@ export async function createServer(connectionString?: string) {
       status: body.status || 'COMPLETED',
       created_at: now,
     });
-  });
-
-  // PUT /api/v1/test-case-versions/:versionId - Edit Test Case Version (Enforces CASE_VERSION_LOCKED)
-  app.put('/api/v1/test-case-versions/:versionId', async (request, reply) => {
-    const { versionId } = request.params as { versionId: string };
-    const version = await db
-      .selectFrom('test_case_versions')
-      .selectAll()
-      .where('id', '=', versionId)
-      .executeTakeFirst();
-
-    if (!version) {
-      return reply.status(404).send({ error: 'Test case version not found' });
-    }
-
-    if (version.status === 'APPROVED') {
-      return sendCaseVersionLockedError(reply, versionId, request.url);
-    }
-
-    const body = (request.body as any) || {};
-    const now = new Date().toISOString();
-    await db
-      .updateTable('test_case_versions')
-      .set({
-        summary: body.summary ?? version.summary,
-        preconditions: body.preconditions ?? version.preconditions,
-        updated_at: now,
-      })
-      .where('id', '=', versionId)
-      .execute();
-
-    return reply.status(200).send({ id: versionId, status: version.status, updated_at: now });
   });
 
   // GET /api/v1/executions/verify - Verification endpoint for database assertions

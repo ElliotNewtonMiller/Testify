@@ -205,6 +205,40 @@ export default function App() {
   // Specification mode -- purely additive to the existing click-to-filter suite selection.
   const [suiteFieldsPanelSuiteId, setSuiteFieldsPanelSuiteId] = useState<string | null>(null);
 
+  // Suite create/rename form (inline, not a modal) -- mirrors suiteFieldsPanelSuiteId's
+  // "one panel open at a time, purely additive" shape.
+  const [suiteFormState, setSuiteFormState] = useState<{
+    mode: "CREATE" | "RENAME";
+    targetId: string | null; // the suite being renamed (RENAME) or the parent to create under (CREATE, may be null for top-level)
+    name: string;
+    description: string;
+    parentSuiteId: string | null;
+  } | null>(null);
+  const [isSavingSuiteForm, setIsSavingSuiteForm] = useState(false);
+
+  // Two-step delete confirmation for suites -- mirrors AdminPanelModal's deleteFieldPrompt.
+  const [deleteSuitePrompt, setDeleteSuitePrompt] = useState<{ id: string; detail: string } | null>(null);
+
+  // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
+  const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
+  const [newCaseTitle, setNewCaseTitle] = useState("");
+  const [newCasePriority, setNewCasePriority] = useState("HIGH");
+  const [newCaseExecutionType, setNewCaseExecutionType] = useState("MANUAL");
+  const [isCreatingCase, setIsCreatingCase] = useState(false);
+  const [deleteCasePrompt, setDeleteCasePrompt] = useState<{ id: string; detail: string } | null>(null);
+
+  // Inline title/priority/execution_type editing on the case detail header -- always
+  // editable regardless of version status, since these live on test_cases directly.
+  const [savingCaseFieldError, setSavingCaseFieldError] = useState<string | null>(null);
+
+  // Draft-versioning: steps are edited as a local buffer while the latest version is
+  // DRAFT, re-synced whenever the selected case or its version identity changes.
+  const [stepsDraft, setStepsDraft] = useState<Step[]>([]);
+  const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const [isApprovingVersion, setIsApprovingVersion] = useState(false);
+  const [isSavingSteps, setIsSavingSteps] = useState(false);
+  const [specEditError, setSpecEditError] = useState<string | null>(null);
+
   // Authentication & RBAC User State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
@@ -824,6 +858,18 @@ export default function App() {
     };
   }, [workspaceMode, specSelectedCaseId]);
 
+  // Re-syncs the local steps-edit buffer whenever the selected case's latest version
+  // changes identity (a new case selected, a new draft created, or an approve just
+  // happened) -- only meaningful while that version is DRAFT; otherwise cleared.
+  useEffect(() => {
+    if (specCaseDetail?.version?.status === "DRAFT") {
+      setStepsDraft(specCaseDetail.version.steps.map((s) => ({ ...s })));
+    } else {
+      setStepsDraft([]);
+    }
+    setSpecEditError(null);
+  }, [specCaseDetail?.version?.id, specCaseDetail?.version?.status]);
+
   // Global admin-defined custom field values for whichever case is selected in
   // Specification mode -- fetched alongside specCaseDetail above, same lazy-per-case pattern.
   useEffect(() => {
@@ -889,6 +935,301 @@ export default function App() {
     },
     [specSelectedCaseId],
   );
+
+  // ---- Suite/case create/edit/delete (Specification mode) ----
+
+  const handleUpdateCaseField = useCallback(
+    async (field: "title" | "priority" | "execution_type", value: string) => {
+      if (!specSelectedCaseId || !selectedProjectId) return;
+      setSavingCaseFieldError(null);
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases/${specSelectedCaseId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ [field]: value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.detail || "Failed to save");
+        await refreshSpecTree();
+      } catch (err: any) {
+        setSavingCaseFieldError(err.message || "Failed to save");
+      }
+    },
+    [specSelectedCaseId, selectedProjectId, refreshSpecTree],
+  );
+
+  const handleCreateDraft = useCallback(async () => {
+    if (!specSelectedCaseId || !selectedProjectId) return;
+    setIsCreatingDraft(true);
+    setSpecEditError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/test-cases/${specSelectedCaseId}/versions/draft`,
+        { method: "POST", headers: authHeaders() },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || "Failed to create draft");
+      setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+      await refreshSpecTree();
+    } catch (err: any) {
+      setSpecEditError(err.message || "Failed to create draft");
+    } finally {
+      setIsCreatingDraft(false);
+    }
+  }, [specSelectedCaseId, selectedProjectId, refreshSpecTree]);
+
+  const handleApproveVersion = useCallback(async () => {
+    if (!selectedProjectId || !specCaseDetail?.version) return;
+    setIsApprovingVersion(true);
+    setSpecEditError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}/approve`,
+        { method: "POST", headers: authHeaders() },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || "Failed to approve");
+      setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+      await refreshSpecTree();
+    } catch (err: any) {
+      setSpecEditError(err.message || "Failed to approve");
+    } finally {
+      setIsApprovingVersion(false);
+    }
+  }, [selectedProjectId, specCaseDetail, refreshSpecTree]);
+
+  const handleSaveVersionContent = useCallback(
+    async (field: "summary" | "preconditions", value: string) => {
+      if (!selectedProjectId || !specCaseDetail?.version) return;
+      setSpecEditError(null);
+      try {
+        const res = await fetch(
+          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ [field]: value || null }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.detail || "Failed to save");
+        setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+      } catch (err: any) {
+        setSpecEditError(err.message || "Failed to save");
+      }
+    },
+    [selectedProjectId, specCaseDetail],
+  );
+
+  const handleSaveSteps = useCallback(async () => {
+    if (!selectedProjectId || !specCaseDetail?.version) return;
+    setIsSavingSteps(true);
+    setSpecEditError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            steps: stepsDraft.map((s, i) => ({
+              step_number: i + 1,
+              action: s.action,
+              expected_result: s.expected_result,
+            })),
+          }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || "Failed to save steps");
+      setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+    } catch (err: any) {
+      setSpecEditError(err.message || "Failed to save steps");
+    } finally {
+      setIsSavingSteps(false);
+    }
+  }, [selectedProjectId, specCaseDetail, stepsDraft]);
+
+  const moveStep = (index: number, direction: -1 | 1) => {
+    setStepsDraft((prev) => {
+      const next = [...prev];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+  const updateStepField = (index: number, patch: Partial<Step>) => {
+    setStepsDraft((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  };
+  const removeStep = (index: number) => {
+    setStepsDraft((prev) => prev.filter((_, i) => i !== index));
+  };
+  const addStep = () => {
+    setStepsDraft((prev) => [
+      ...prev,
+      { id: `new-${Date.now()}`, step_number: prev.length + 1, action: "", expected_result: "" },
+    ]);
+  };
+
+  // Suite create/rename form
+  const openCreateSuiteForm = (parentSuiteId: string | null) => {
+    setSuiteFormState({ mode: "CREATE", targetId: parentSuiteId, name: "", description: "", parentSuiteId });
+  };
+  const openRenameSuiteForm = (suiteId: string, currentName: string, currentParentId: string | null) => {
+    setSuiteFormState({ mode: "RENAME", targetId: suiteId, name: currentName, description: "", parentSuiteId: currentParentId });
+  };
+  const handleSaveSuiteForm = useCallback(async () => {
+    if (!suiteFormState || !selectedProjectId) return;
+    setIsSavingSuiteForm(true);
+    try {
+      const isCreate = suiteFormState.mode === "CREATE";
+      const url = isCreate
+        ? `/api/v1/projects/${selectedProjectId}/test-suites`
+        : `/api/v1/projects/${selectedProjectId}/test-suites/${suiteFormState.targetId}`;
+      const res = await fetch(url, {
+        method: isCreate ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          name: suiteFormState.name,
+          description: suiteFormState.description || null,
+          parent_suite_id: isCreate ? suiteFormState.parentSuiteId : suiteFormState.parentSuiteId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || "Failed to save suite");
+      setSuiteFormState(null);
+      showToast(isCreate ? "Suite created" : "Suite updated");
+      await refreshSpecTree();
+    } catch (err: any) {
+      showToast(err.message || "Failed to save suite");
+    } finally {
+      setIsSavingSuiteForm(false);
+    }
+  }, [suiteFormState, selectedProjectId, refreshSpecTree, showToast]);
+
+  // Suite delete (two-step confirmation)
+  const handleDeleteSuiteClick = useCallback(
+    async (suiteId: string) => {
+      if (!selectedProjectId) return;
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-suites/${suiteId}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        if (res.status === 409) {
+          const data = await res.json();
+          setDeleteSuitePrompt({ id: suiteId, detail: data.detail || "This suite still contains content." });
+          return;
+        }
+        if (!res.ok && res.status !== 204) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to delete suite");
+        }
+        if (selectedSuiteId === suiteId) setSelectedSuiteId(null);
+        showToast("Suite deleted");
+        await refreshSpecTree();
+      } catch (err: any) {
+        showToast(err.message || "Failed to delete suite");
+      }
+    },
+    [selectedProjectId, selectedSuiteId, refreshSpecTree, showToast],
+  );
+  const handleConfirmDeleteSuite = useCallback(async () => {
+    if (!deleteSuitePrompt || !selectedProjectId) return;
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/test-suites/${deleteSuitePrompt.id}?force=true`,
+        { method: "DELETE", headers: authHeaders() },
+      );
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete suite");
+      }
+      if (selectedSuiteId === deleteSuitePrompt.id) setSelectedSuiteId(null);
+      setDeleteSuitePrompt(null);
+      showToast("Suite and its contents deleted");
+      await refreshSpecTree();
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete suite");
+    }
+  }, [deleteSuitePrompt, selectedProjectId, selectedSuiteId, refreshSpecTree, showToast]);
+
+  // Case create
+  const handleCreateCase = useCallback(async () => {
+    if (!selectedProjectId || !selectedSuiteId || !newCaseTitle.trim()) return;
+    setIsCreatingCase(true);
+    try {
+      const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          test_suite_id: selectedSuiteId,
+          title: newCaseTitle,
+          priority: newCasePriority,
+          execution_type: newCaseExecutionType,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || "Failed to create case");
+      setNewCaseTitle("");
+      setIsCaseCreateFormOpen(false);
+      await refreshSpecTree();
+      setSpecSelectedCaseId(data.test_case.id);
+      showToast("Case created");
+    } catch (err: any) {
+      showToast(err.message || "Failed to create case");
+    } finally {
+      setIsCreatingCase(false);
+    }
+  }, [selectedProjectId, selectedSuiteId, newCaseTitle, newCasePriority, newCaseExecutionType, refreshSpecTree, showToast]);
+
+  // Case delete (two-step confirmation)
+  const handleDeleteCaseClick = useCallback(
+    async (caseId: string) => {
+      if (!selectedProjectId) return;
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases/${caseId}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        if (res.status === 409) {
+          const data = await res.json();
+          setDeleteCasePrompt({ id: caseId, detail: data.detail || "This case has recorded plan links or executions." });
+          return;
+        }
+        if (!res.ok && res.status !== 204) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to delete case");
+        }
+        if (specSelectedCaseId === caseId) setSpecSelectedCaseId(null);
+        showToast("Case deleted");
+        await refreshSpecTree();
+      } catch (err: any) {
+        showToast(err.message || "Failed to delete case");
+      }
+    },
+    [selectedProjectId, specSelectedCaseId, refreshSpecTree, showToast],
+  );
+  const handleConfirmDeleteCase = useCallback(async () => {
+    if (!deleteCasePrompt || !selectedProjectId) return;
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/test-cases/${deleteCasePrompt.id}?force=true`,
+        { method: "DELETE", headers: authHeaders() },
+      );
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete case");
+      }
+      if (specSelectedCaseId === deleteCasePrompt.id) setSpecSelectedCaseId(null);
+      setDeleteCasePrompt(null);
+      showToast("Case and its history deleted");
+      await refreshSpecTree();
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete case");
+    }
+  }, [deleteCasePrompt, selectedProjectId, specSelectedCaseId, refreshSpecTree, showToast]);
 
   // Execute verdict submission (Optimistic UI + Background API)
   const submitVerdict = useCallback(
@@ -1140,6 +1481,21 @@ export default function App() {
   const suiteFieldsPanelSuiteName =
     (suiteFieldsPanelSuiteId && specData && findSuiteName(specData.suites, suiteFieldsPanelSuiteId)) || "";
 
+  // Flat, indented "Parent Suite" <select> option list for the suite create/rename form.
+  function flattenSuiteOptions(
+    nodes: SuiteTreeNode[],
+    depth = 0,
+  ): Array<{ id: string; label: string }> {
+    let result: Array<{ id: string; label: string }> = [];
+    for (const node of nodes) {
+      result.push({ id: node.id, label: `${"—".repeat(depth)} ${node.name}` });
+      if (node.children && node.children.length > 0) {
+        result = result.concat(flattenSuiteOptions(node.children, depth + 1));
+      }
+    }
+    return result;
+  }
+
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
   const hasUserManagePermission =
     userPermissions.includes("USER_MANAGE") ||
@@ -1147,6 +1503,14 @@ export default function App() {
   const hasPlanManagePermission =
     userPermissions.includes("PLAN_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
+  const hasSpecCreatePermission =
+    userPermissions.includes("SPEC_CREATE") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasSpecEditPermission =
+    userPermissions.includes("SPEC_EDIT") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasSpecApprovePermission =
+    userPermissions.includes("SPEC_APPROVE") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasSpecDeletePermission =
+    userPermissions.includes("SPEC_DELETE") || userPermissions.includes("SYSTEM_ADMIN");
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
@@ -1577,36 +1941,197 @@ export default function App() {
             >
               SUITE TREE
             </span>
-            {/* SPECIFICATION / EXECUTION MODE TOGGLE -- visible to any authenticated user
-                (per-case/suite plan-inclusion buttons are the part gated by PLAN_MANAGE,
-                not this toggle itself). */}
-            <div
-              style={{
-                display: "flex",
-                border: "1px solid #334155",
-                borderRadius: "4px",
-                overflow: "hidden",
-              }}
-            >
-              {(["EXECUTION", "SPECIFICATION"] as const).map((m) => (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              {workspaceMode === "SPECIFICATION" && hasSpecCreatePermission && (
                 <button
-                  key={m}
-                  onClick={() => setWorkspaceMode(m)}
+                  onClick={() => openCreateSuiteForm(null)}
+                  title="Create a new top-level suite"
                   style={{
-                    border: "none",
-                    padding: "3px 8px",
-                    fontSize: "10px",
+                    border: "1px solid #334155",
+                    borderRadius: "4px",
+                    padding: "2px 8px",
+                    fontSize: "11px",
                     fontWeight: 700,
                     cursor: "pointer",
-                    backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
-                    color: workspaceMode === m ? "#ffffff" : "#9ca3af",
+                    backgroundColor: "transparent",
+                    color: "#60a5fa",
                   }}
                 >
-                  {m === "EXECUTION" ? "Execute" : "Spec"}
+                  + Suite
                 </button>
-              ))}
+              )}
+              {/* SPECIFICATION / EXECUTION MODE TOGGLE -- visible to any authenticated user
+                  (per-case/suite plan-inclusion buttons are the part gated by PLAN_MANAGE,
+                  not this toggle itself). */}
+              <div
+                style={{
+                  display: "flex",
+                  border: "1px solid #334155",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                }}
+              >
+                {(["EXECUTION", "SPECIFICATION"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setWorkspaceMode(m)}
+                    style={{
+                      border: "none",
+                      padding: "3px 8px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
+                      color: workspaceMode === m ? "#ffffff" : "#9ca3af",
+                    }}
+                  >
+                    {m === "EXECUTION" ? "Execute" : "Spec"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+
+          {workspaceMode === "SPECIFICATION" && suiteFormState && (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderBottom: "1px solid #1f2937",
+                backgroundColor: "#111827",
+              }}
+            >
+              <div style={{ fontSize: "11px", fontWeight: 600, color: "#e5e7eb", marginBottom: "6px" }}>
+                {suiteFormState.mode === "CREATE" ? "New Suite" : "Rename / Move Suite"}
+              </div>
+              <input
+                type="text"
+                placeholder="Suite name"
+                value={suiteFormState.name}
+                onChange={(e) => setSuiteFormState((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "5px 8px",
+                  marginBottom: "6px",
+                  backgroundColor: "#0d111c",
+                  border: "1px solid #1f2937",
+                  borderRadius: "4px",
+                  color: "#f8fafc",
+                  fontSize: "12px",
+                }}
+              />
+              <select
+                value={suiteFormState.parentSuiteId ?? ""}
+                onChange={(e) =>
+                  setSuiteFormState((prev) => (prev ? { ...prev, parentSuiteId: e.target.value || null } : prev))
+                }
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "5px 8px",
+                  marginBottom: "6px",
+                  backgroundColor: "#0d111c",
+                  border: "1px solid #1f2937",
+                  borderRadius: "4px",
+                  color: "#f8fafc",
+                  fontSize: "12px",
+                }}
+              >
+                <option value="">(Top-level, no parent)</option>
+                {flattenSuiteOptions(suiteNodes).map((o) => (
+                  <option key={o.id} value={o.id} disabled={o.id === suiteFormState.targetId}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  onClick={() => setSuiteFormState(null)}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: "#334155",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSuiteForm}
+                  disabled={isSavingSuiteForm || !suiteFormState.name.trim()}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: isSavingSuiteForm ? "#166534" : "#16a34a",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: isSavingSuiteForm ? "default" : "pointer",
+                  }}
+                >
+                  {isSavingSuiteForm ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {workspaceMode === "SPECIFICATION" && deleteSuitePrompt && (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderBottom: "1px solid #1f2937",
+                backgroundColor: "#111827",
+              }}
+            >
+              <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
+                ⚠️ Confirm Deletion
+              </div>
+              <div style={{ fontSize: "11px", color: "#cbd5e1", marginBottom: "8px", lineHeight: 1.4 }}>
+                {deleteSuitePrompt.detail}
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  onClick={() => setDeleteSuitePrompt(null)}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: "#334155",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmDeleteSuite}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: "#dc2626",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Delete Anyway
+                </button>
+              </div>
+            </div>
+          )}
 
           <VirtualizedSuiteTree
             suites={suiteNodes}
@@ -1621,6 +2146,12 @@ export default function App() {
             onOpenSuiteFields={(suiteId) =>
               setSuiteFieldsPanelSuiteId((prev) => (prev === suiteId ? null : suiteId))
             }
+            canCreateSuites={hasSpecCreatePermission}
+            canEditSuites={hasSpecEditPermission}
+            canDeleteSuites={hasSpecDeletePermission}
+            onCreateChildSuite={(parentId) => openCreateSuiteForm(parentId)}
+            onRenameSuite={(suiteId, name, parentId) => openRenameSuiteForm(suiteId, name, parentId)}
+            onDeleteSuite={(suiteId) => handleDeleteSuiteClick(suiteId)}
           />
 
           {/* DB STATS LOG */}
@@ -1677,8 +2208,29 @@ export default function App() {
               {workspaceMode === "SPECIFICATION" ? "SPECIFICATION" : "QUEUE GRID"}
             </span>
             {workspaceMode === "SPECIFICATION" ? (
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>
-                {specCasesForSuite.filter((c) => c.in_plan).length}/{specCasesForSuite.length} in plan
+              <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                  {specCasesForSuite.filter((c) => c.in_plan).length}/{specCasesForSuite.length} in plan
+                </span>
+                {hasSpecCreatePermission && (
+                  <button
+                    onClick={() => setIsCaseCreateFormOpen((prev) => !prev)}
+                    disabled={!selectedSuiteId}
+                    title={selectedSuiteId ? "Create a new case in the selected suite" : "Select a suite first"}
+                    style={{
+                      border: "1px solid #334155",
+                      borderRadius: "4px",
+                      padding: "2px 8px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      cursor: selectedSuiteId ? "pointer" : "not-allowed",
+                      backgroundColor: "transparent",
+                      color: selectedSuiteId ? "#60a5fa" : "#4b5563",
+                    }}
+                  >
+                    + Case
+                  </button>
+                )}
               </span>
             ) : (
               <span style={{ fontSize: "11px", color: "#9ca3af" }}>
@@ -1687,6 +2239,103 @@ export default function App() {
               </span>
             )}
           </div>
+
+          {workspaceMode === "SPECIFICATION" && isCaseCreateFormOpen && selectedSuiteId && (
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #1f2937", backgroundColor: "#0d111c" }}>
+              <input
+                type="text"
+                placeholder="New case title"
+                value={newCaseTitle}
+                onChange={(e) => setNewCaseTitle(e.target.value)}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "5px 8px",
+                  marginBottom: "6px",
+                  backgroundColor: "#111827",
+                  border: "1px solid #1f2937",
+                  borderRadius: "4px",
+                  color: "#f8fafc",
+                  fontSize: "12px",
+                }}
+              />
+              <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+                <select
+                  value={newCasePriority}
+                  onChange={(e) => setNewCasePriority(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "5px 8px",
+                    backgroundColor: "#111827",
+                    border: "1px solid #1f2937",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                  }}
+                >
+                  {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={newCaseExecutionType}
+                  onChange={(e) => setNewCaseExecutionType(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "5px 8px",
+                    backgroundColor: "#111827",
+                    border: "1px solid #1f2937",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                  }}
+                >
+                  {["MANUAL", "AUTOMATED"].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  onClick={() => setIsCaseCreateFormOpen(false)}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: "#334155",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateCase}
+                  disabled={isCreatingCase || !newCaseTitle.trim()}
+                  style={{
+                    flex: 1,
+                    padding: "5px",
+                    backgroundColor: isCreatingCase ? "#166534" : "#16a34a",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: isCreatingCase ? "default" : "pointer",
+                  }}
+                >
+                  {isCreatingCase ? "Creating..." : "Create Case"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {workspaceMode === "SPECIFICATION" && suiteFieldsPanelSuiteId && (
             <SuiteCustomFieldsPanel
@@ -1745,14 +2394,74 @@ export default function App() {
                       alignItems: "center",
                       gap: "10px",
                       marginBottom: "8px",
+                      flexWrap: "wrap",
                     }}
                   >
                     <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb" }}>
                       {specActiveCase.external_id}
                     </span>
-                    <span style={{ fontSize: "14px", color: "#9ca3af" }}>
-                      {specActiveCase.title}
-                    </span>
+                    <input
+                      key={specActiveCase.id}
+                      type="text"
+                      defaultValue={specActiveCase.title}
+                      onBlur={(e) => {
+                        if (e.target.value !== specActiveCase.title) {
+                          handleUpdateCaseField("title", e.target.value);
+                        }
+                      }}
+                      disabled={!hasSpecEditPermission}
+                      title={hasSpecEditPermission ? "Case title" : "Requires SPEC_EDIT permission"}
+                      style={{
+                        fontSize: "14px",
+                        color: "#f8fafc",
+                        backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
+                        border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
+                        borderRadius: "4px",
+                        padding: hasSpecEditPermission ? "3px 8px" : "0",
+                        minWidth: "200px",
+                        opacity: hasSpecEditPermission ? 1 : 0.85,
+                      }}
+                    />
+                    <select
+                      value={specActiveCase.priority}
+                      onChange={(e) => handleUpdateCaseField("priority", e.target.value)}
+                      disabled={!hasSpecEditPermission}
+                      style={{
+                        fontSize: "11px",
+                        backgroundColor: "#111827",
+                        border: "1px solid #1f2937",
+                        borderRadius: "4px",
+                        color: "#f8fafc",
+                        padding: "3px 6px",
+                        opacity: hasSpecEditPermission ? 1 : 0.6,
+                      }}
+                    >
+                      {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={specActiveCase.execution_type ?? "MANUAL"}
+                      onChange={(e) => handleUpdateCaseField("execution_type", e.target.value)}
+                      disabled={!hasSpecEditPermission}
+                      style={{
+                        fontSize: "11px",
+                        backgroundColor: "#111827",
+                        border: "1px solid #1f2937",
+                        borderRadius: "4px",
+                        color: "#f8fafc",
+                        padding: "3px 6px",
+                        opacity: hasSpecEditPermission ? 1 : 0.6,
+                      }}
+                    >
+                      {["MANUAL", "AUTOMATED"].map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
                     {specActiveCase.latest_version && (
                       <span
                         style={{
@@ -1774,175 +2483,431 @@ export default function App() {
                         {specActiveCase.latest_version.status}
                       </span>
                     )}
+                    {specActiveCase.latest_version?.status === "APPROVED" && hasSpecEditPermission && (
+                      <button
+                        onClick={handleCreateDraft}
+                        disabled={isCreatingDraft}
+                        style={{
+                          fontSize: "11px",
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          border: "1px solid #f59e0b",
+                          backgroundColor: "rgba(245, 158, 11, 0.12)",
+                          color: "#fbbf24",
+                          fontWeight: 700,
+                          cursor: isCreatingDraft ? "default" : "pointer",
+                        }}
+                      >
+                        {isCreatingDraft ? "Creating…" : "Create New Draft"}
+                      </button>
+                    )}
+                    {specActiveCase.latest_version?.status === "DRAFT" && hasSpecApprovePermission && (
+                      <button
+                        onClick={handleApproveVersion}
+                        disabled={isApprovingVersion}
+                        style={{
+                          fontSize: "11px",
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          border: "1px solid #22c55e",
+                          backgroundColor: "rgba(34, 197, 94, 0.12)",
+                          color: "#4ade80",
+                          fontWeight: 700,
+                          cursor: isApprovingVersion ? "default" : "pointer",
+                        }}
+                      >
+                        {isApprovingVersion ? "Approving…" : "✓ Approve"}
+                      </button>
+                    )}
                   </div>
 
-                  <button
-                    onClick={() =>
-                      handleToggleCaseInclusion(specActiveCase.id, !specActiveCase.in_plan)
-                    }
-                    disabled={
-                      pendingToggleId === specActiveCase.id ||
-                      !hasPlanManagePermission ||
-                      (!specActiveCase.in_plan && !specActiveCase.linkable)
-                    }
-                    title={
-                      !hasPlanManagePermission
-                        ? "Requires plan management permission"
-                        : !specActiveCase.in_plan && !specActiveCase.linkable
-                          ? "Latest version is not Approved -- this project does not allow linking draft versions to a plan"
-                          : specActiveCase.in_plan
-                            ? "Remove from plan"
-                            : "Add to plan"
-                    }
-                    style={{
-                      flexShrink: 0,
-                      padding: "6px 14px",
-                      borderRadius: "4px",
-                      fontSize: "12px",
-                      fontWeight: 700,
-                      border: specActiveCase.in_plan
-                        ? "1px solid #22c55e"
-                        : "1px solid #334155",
-                      backgroundColor: specActiveCase.in_plan
-                        ? "rgba(34, 197, 94, 0.15)"
-                        : "transparent",
-                      color: specActiveCase.in_plan ? "#4ade80" : "#9ca3af",
-                      cursor:
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                    <button
+                      onClick={() =>
+                        handleToggleCaseInclusion(specActiveCase.id, !specActiveCase.in_plan)
+                      }
+                      disabled={
                         pendingToggleId === specActiveCase.id ||
                         !hasPlanManagePermission ||
                         (!specActiveCase.in_plan && !specActiveCase.linkable)
-                          ? "not-allowed"
-                          : "pointer",
-                    }}
-                  >
-                    {pendingToggleId === specActiveCase.id
-                      ? "…"
-                      : specActiveCase.in_plan
-                        ? "✓ In Plan"
-                        : "+ Add to Plan"}
-                  </button>
+                      }
+                      title={
+                        !hasPlanManagePermission
+                          ? "Requires plan management permission"
+                          : !specActiveCase.in_plan && !specActiveCase.linkable
+                            ? "Latest version is not Approved -- this project does not allow linking draft versions to a plan"
+                            : specActiveCase.in_plan
+                              ? "Remove from plan"
+                              : "Add to plan"
+                      }
+                      style={{
+                        flexShrink: 0,
+                        padding: "6px 14px",
+                        borderRadius: "4px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        border: specActiveCase.in_plan
+                          ? "1px solid #22c55e"
+                          : "1px solid #334155",
+                        backgroundColor: specActiveCase.in_plan
+                          ? "rgba(34, 197, 94, 0.15)"
+                          : "transparent",
+                        color: specActiveCase.in_plan ? "#4ade80" : "#9ca3af",
+                        cursor:
+                          pendingToggleId === specActiveCase.id ||
+                          !hasPlanManagePermission ||
+                          (!specActiveCase.in_plan && !specActiveCase.linkable)
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {pendingToggleId === specActiveCase.id
+                        ? "…"
+                        : specActiveCase.in_plan
+                          ? "✓ In Plan"
+                          : "+ Add to Plan"}
+                    </button>
+                    {hasSpecDeletePermission && (
+                      <button
+                        onClick={() => handleDeleteCaseClick(specActiveCase.id)}
+                        title="Delete case"
+                        style={{
+                          flexShrink: 0,
+                          padding: "6px 10px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          border: "1px solid #4b5563",
+                          backgroundColor: "transparent",
+                          color: "#f87171",
+                          cursor: "pointer",
+                        }}
+                      >
+                        🗑️
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* CASE DETAILS -- built-in fields (title/steps/preconditions/summary) stay
-                    read-only curation-view display; admin-defined custom field values below
-                    are editable here (the first real edit affordance in this view). */}
+                {deleteCasePrompt && deleteCasePrompt.id === specActiveCase.id && (
+                  <div style={{ padding: "12px 20px", borderBottom: "1px solid #1f2937", backgroundColor: "#111827" }}>
+                    <div style={{ fontSize: "12px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
+                      ⚠️ Confirm Deletion
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#cbd5e1", marginBottom: "10px", lineHeight: 1.4 }}>
+                      {deleteCasePrompt.detail}
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        onClick={() => setDeleteCasePrompt(null)}
+                        style={{ padding: "6px 14px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleConfirmDeleteCase}
+                        style={{ padding: "6px 14px", backgroundColor: "#dc2626", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                      >
+                        Delete Anyway
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {specEditError && (
+                  <div style={{ padding: "8px 20px", fontSize: "12px", color: "#f87171", backgroundColor: "#111827", borderBottom: "1px solid #1f2937" }}>
+                    ⚠️ {specEditError}
+                  </div>
+                )}
+
+                {/* CASE DETAILS -- title/priority/execution_type (above) are always
+                    editable; preconditions/summary/steps below are editable only while
+                    the latest version is DRAFT ("Create New Draft" above unlocks this for
+                    an APPROVED case). Admin-defined custom fields are always editable. */}
                 <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
-                  <div
-                    style={{
-                      marginBottom: "16px",
-                      backgroundColor: "#111827",
-                      padding: "12px",
-                      borderRadius: "6px",
-                      border: "1px solid #1f2937",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        color: "#6b7280",
-                        textTransform: "uppercase",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      Preconditions
-                    </div>
-                    <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                      {specVersionDetail?.preconditions || "—"}
-                    </div>
-                  </div>
-
-                  {specVersionDetail?.summary && (
-                    <div
-                      style={{
-                        marginBottom: "16px",
-                        backgroundColor: "#111827",
-                        padding: "12px",
-                        borderRadius: "6px",
-                        border: "1px solid #1f2937",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 600,
-                          color: "#6b7280",
-                          textTransform: "uppercase",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Summary
-                      </div>
-                      <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                        {specVersionDetail.summary}
-                      </div>
-                    </div>
-                  )}
-
-                  {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
-                    <div style={{ marginBottom: "16px" }}>
-                      {specCaseCustomFieldValues.map((entry) => (
-                        <CustomFieldEditor
-                          key={entry.definition.id}
-                          entry={entry}
-                          onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
-                          disabled={!hasPlanManagePermission}
-                          disabledTitle="Requires plan management permission"
-                          errorMessage={customFieldErrorById[entry.definition.id] ?? null}
-                          isSaving={savingCustomFieldId === entry.definition.id}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  <div
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      color: "#6b7280",
-                      textTransform: "uppercase",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Ordered Step Specification (read-only)
-                  </div>
-
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                    <thead>
-                      <tr
-                        style={{
-                          borderBottom: "1px solid #1f2937",
-                          color: "#9ca3af",
-                          textAlign: "left",
-                        }}
-                      >
-                        <th style={{ padding: "6px", width: "50px" }}>#</th>
-                        <th style={{ padding: "6px" }}>Action</th>
-                        <th style={{ padding: "6px" }}>Expected Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(specVersionDetail?.steps || []).map((step) => (
-                        <tr
-                          key={step.id}
-                          style={{ borderBottom: "1px solid #1f2937", color: "#d1d5db" }}
+                  {(() => {
+                    const isDraft = specVersionDetail?.status === "DRAFT";
+                    return (
+                      <>
+                        <div
+                          style={{
+                            marginBottom: "16px",
+                            backgroundColor: "#111827",
+                            padding: "12px",
+                            borderRadius: "6px",
+                            border: "1px solid #1f2937",
+                          }}
                         >
-                          <td style={{ padding: "8px 6px", fontWeight: 600 }}>
-                            {step.step_number}
-                          </td>
-                          <td style={{ padding: "8px 6px" }}>{step.action}</td>
-                          <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
-                            {step.expected_result}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!specVersionDetail && (
-                    <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
-                      Loading step detail…
-                    </div>
-                  )}
+                          <div
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              color: "#6b7280",
+                              textTransform: "uppercase",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            Preconditions
+                          </div>
+                          {isDraft && hasSpecEditPermission ? (
+                            <textarea
+                              key={`pre-${specVersionDetail?.id}`}
+                              defaultValue={specVersionDetail?.preconditions ?? ""}
+                              onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
+                              rows={2}
+                              style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                fontSize: "12px",
+                                color: "#f8fafc",
+                                backgroundColor: "#0d111c",
+                                border: "1px solid #1f2937",
+                                borderRadius: "4px",
+                                padding: "6px 8px",
+                                resize: "vertical",
+                              }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                              {specVersionDetail?.preconditions || "—"}
+                            </div>
+                          )}
+                        </div>
+
+                        {(isDraft || specVersionDetail?.summary) && (
+                          <div
+                            style={{
+                              marginBottom: "16px",
+                              backgroundColor: "#111827",
+                              padding: "12px",
+                              borderRadius: "6px",
+                              border: "1px solid #1f2937",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                color: "#6b7280",
+                                textTransform: "uppercase",
+                                marginBottom: "4px",
+                              }}
+                            >
+                              Summary
+                            </div>
+                            {isDraft && hasSpecEditPermission ? (
+                              <textarea
+                                key={`sum-${specVersionDetail?.id}`}
+                                defaultValue={specVersionDetail?.summary ?? ""}
+                                onBlur={(e) => handleSaveVersionContent("summary", e.target.value)}
+                                rows={2}
+                                style={{
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                  fontSize: "12px",
+                                  color: "#f8fafc",
+                                  backgroundColor: "#0d111c",
+                                  border: "1px solid #1f2937",
+                                  borderRadius: "4px",
+                                  padding: "6px 8px",
+                                  resize: "vertical",
+                                }}
+                              />
+                            ) : (
+                              <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                                {specVersionDetail?.summary}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
+                          <div style={{ marginBottom: "16px" }}>
+                            {specCaseCustomFieldValues.map((entry) => (
+                              <CustomFieldEditor
+                                key={entry.definition.id}
+                                entry={entry}
+                                onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
+                                disabled={!hasPlanManagePermission}
+                                disabledTitle="Requires plan management permission"
+                                errorMessage={customFieldErrorById[entry.definition.id] ?? null}
+                                isSaving={savingCustomFieldId === entry.definition.id}
+                              />
+                            ))}
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "8px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              color: "#6b7280",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Ordered Step Specification {isDraft ? "" : "(read-only)"}
+                          </div>
+                          {isDraft && hasSpecEditPermission && (
+                            <button
+                              onClick={handleSaveSteps}
+                              disabled={isSavingSteps}
+                              style={{
+                                fontSize: "11px",
+                                padding: "3px 10px",
+                                borderRadius: "4px",
+                                border: "none",
+                                backgroundColor: isSavingSteps ? "#166534" : "#16a34a",
+                                color: "#fff",
+                                fontWeight: 700,
+                                cursor: isSavingSteps ? "default" : "pointer",
+                              }}
+                            >
+                              {isSavingSteps ? "Saving…" : "Save Steps"}
+                            </button>
+                          )}
+                        </div>
+
+                        {isDraft && hasSpecEditPermission ? (
+                          <div>
+                            {stepsDraft.map((step, i) => (
+                              <div
+                                key={step.id}
+                                style={{
+                                  display: "flex",
+                                  gap: "6px",
+                                  alignItems: "flex-start",
+                                  marginBottom: "6px",
+                                  backgroundColor: "#0d111c",
+                                  border: "1px solid #1f2937",
+                                  borderRadius: "4px",
+                                  padding: "6px",
+                                }}
+                              >
+                                <span style={{ fontSize: "11px", color: "#6b7280", padding: "6px 2px" }}>
+                                  {i + 1}
+                                </span>
+                                <textarea
+                                  placeholder="Action"
+                                  value={step.action}
+                                  onChange={(e) => updateStepField(i, { action: e.target.value })}
+                                  rows={1}
+                                  style={{
+                                    flex: 1,
+                                    fontSize: "12px",
+                                    color: "#f8fafc",
+                                    backgroundColor: "#111827",
+                                    border: "1px solid #1f2937",
+                                    borderRadius: "4px",
+                                    padding: "5px 8px",
+                                    resize: "vertical",
+                                  }}
+                                />
+                                <textarea
+                                  placeholder="Expected Result"
+                                  value={step.expected_result}
+                                  onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
+                                  rows={1}
+                                  style={{
+                                    flex: 1,
+                                    fontSize: "12px",
+                                    color: "#a7f3d0",
+                                    backgroundColor: "#111827",
+                                    border: "1px solid #1f2937",
+                                    borderRadius: "4px",
+                                    padding: "5px 8px",
+                                    resize: "vertical",
+                                  }}
+                                />
+                                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                  <button
+                                    onClick={() => moveStep(i, -1)}
+                                    disabled={i === 0}
+                                    title="Move up"
+                                    style={{ background: "none", border: "none", color: i === 0 ? "#4b5563" : "#9ca3af", cursor: i === 0 ? "not-allowed" : "pointer", fontSize: "10px" }}
+                                  >
+                                    ▲
+                                  </button>
+                                  <button
+                                    onClick={() => moveStep(i, 1)}
+                                    disabled={i === stepsDraft.length - 1}
+                                    title="Move down"
+                                    style={{ background: "none", border: "none", color: i === stepsDraft.length - 1 ? "#4b5563" : "#9ca3af", cursor: i === stepsDraft.length - 1 ? "not-allowed" : "pointer", fontSize: "10px" }}
+                                  >
+                                    ▼
+                                  </button>
+                                </div>
+                                <button
+                                  onClick={() => removeStep(i)}
+                                  title="Remove step"
+                                  style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: "12px", padding: "6px 2px" }}
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              onClick={addStep}
+                              style={{
+                                padding: "4px 10px",
+                                backgroundColor: "transparent",
+                                border: "1px dashed #475569",
+                                borderRadius: "4px",
+                                color: "#94a3b8",
+                                fontSize: "11px",
+                                cursor: "pointer",
+                              }}
+                            >
+                              + Add Step
+                            </button>
+                          </div>
+                        ) : (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                            <thead>
+                              <tr
+                                style={{
+                                  borderBottom: "1px solid #1f2937",
+                                  color: "#9ca3af",
+                                  textAlign: "left",
+                                }}
+                              >
+                                <th style={{ padding: "6px", width: "50px" }}>#</th>
+                                <th style={{ padding: "6px" }}>Action</th>
+                                <th style={{ padding: "6px" }}>Expected Result</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(specVersionDetail?.steps || []).map((step) => (
+                                <tr
+                                  key={step.id}
+                                  style={{ borderBottom: "1px solid #1f2937", color: "#d1d5db" }}
+                                >
+                                  <td style={{ padding: "8px 6px", fontWeight: 600 }}>
+                                    {step.step_number}
+                                  </td>
+                                  <td style={{ padding: "8px 6px" }}>{step.action}</td>
+                                  <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
+                                    {step.expected_result}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {!specVersionDetail && (
+                          <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
+                            Loading step detail…
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </>
             ) : (

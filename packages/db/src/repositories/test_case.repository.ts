@@ -35,6 +35,10 @@ export interface TestCaseWithLatestVersion extends TestCase {
   latest_version: TestCaseLatestVersionSummary | null;
 }
 
+export type DeleteTestCaseResult =
+  | { deleted: true }
+  | { deleted: false; blockedPlanLinkCount: number; blockedExecutionCount: number };
+
 export class TestCaseRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -171,5 +175,82 @@ export class TestCaseRepository {
       .executeTakeFirst();
 
     return (result.numDeletedRows ?? 0n) > 0n;
+  }
+
+  /** Next sequential `<prefix>-<n>` external_id for a project -- 1-indexed, based on the
+   * highest existing numeric suffix among that project's cases already using this prefix.
+   * Non-numeric-suffix ids (e.g. from legacy imports) are simply ignored rather than
+   * breaking the scan. */
+  async getNextExternalId(projectId: string, prefix: string): Promise<string> {
+    const rows = await this.db
+      .selectFrom('test_cases')
+      .select('external_id')
+      .where('project_id', '=', projectId)
+      .where('external_id', 'like', `${prefix}-%`)
+      .execute();
+
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escapedPrefix}-(\\d+)$`);
+    let max = 0;
+    for (const row of rows) {
+      const match = row.external_id.match(pattern);
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (n > max) max = n;
+      }
+    }
+
+    return `${prefix}-${max + 1}`;
+  }
+
+  /**
+   * Deletes a case. Unlike the plain `delete()` above (which relies purely on the DB's
+   * ON DELETE RESTRICT FKs on test_plan_cases/executions and would surface a raw
+   * constraint-violation error), this checks usage first and, without `force`, leaves
+   * everything untouched and reports the blocking counts -- the same warn-then-confirm
+   * shape as CustomFieldRepository.deleteDefinition. With `force` (or no usage at all),
+   * it cascades: delete every execution referencing this case's plan-links (their
+   * execution_steps cascade away automatically), then the plan-links themselves, then
+   * the case -- whose own versions/steps then cascade cleanly. Executions must be deleted
+   * before the case's version/step cascade runs, since execution_steps.test_step_id is
+   * ON DELETE RESTRICT and would otherwise block it.
+   */
+  async deleteWithForce(id: string, opts: { force?: boolean } = {}): Promise<DeleteTestCaseResult> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      return { deleted: false, blockedPlanLinkCount: 0, blockedExecutionCount: 0 };
+    }
+
+    const planCases = await this.db
+      .selectFrom('test_plan_cases')
+      .select('id')
+      .where('test_case_id', '=', id)
+      .execute();
+    const planCaseIds = planCases.map((pc) => pc.id);
+
+    let blockedExecutionCount = 0;
+    if (planCaseIds.length > 0) {
+      const execRows = await this.db
+        .selectFrom('executions')
+        .select('id')
+        .where('test_plan_case_id', 'in', planCaseIds)
+        .execute();
+      blockedExecutionCount = execRows.length;
+    }
+    const blockedPlanLinkCount = planCaseIds.length;
+
+    if ((blockedPlanLinkCount > 0 || blockedExecutionCount > 0) && !opts.force) {
+      return { deleted: false, blockedPlanLinkCount, blockedExecutionCount };
+    }
+
+    await this.db.transaction().execute(async (trx) => {
+      if (planCaseIds.length > 0) {
+        await trx.deleteFrom('executions').where('test_plan_case_id', 'in', planCaseIds).execute();
+        await trx.deleteFrom('test_plan_cases').where('id', 'in', planCaseIds).execute();
+      }
+      await trx.deleteFrom('test_cases').where('id', '=', id).execute();
+    });
+
+    return { deleted: true };
   }
 }

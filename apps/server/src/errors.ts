@@ -86,6 +86,48 @@ export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: stri
   });
 }
 
+export function sendSuiteInUseError(
+  reply: FastifyReply,
+  suiteId: string,
+  counts: { subSuites: number; cases: number; planLinks: number; executions: number },
+  instance?: string
+) {
+  const parts: string[] = [];
+  if (counts.subSuites > 0) parts.push(`${counts.subSuites} sub-suite${counts.subSuites === 1 ? '' : 's'}`);
+  if (counts.cases > 0) parts.push(`${counts.cases} case${counts.cases === 1 ? '' : 's'}`);
+  if (counts.planLinks > 0) parts.push(`${counts.planLinks} plan link${counts.planLinks === 1 ? '' : 's'}`);
+  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+
+  return sendProblemDetails(reply, {
+    code: 'SUITE_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Suite (ID: ${suiteId}) still contains ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard all of it.`,
+    instance,
+    invalid_params: [{ name: 'suite_id', reason: `Contains ${parts.join(', ')}` }],
+  });
+}
+
+export function sendCaseInUseError(
+  reply: FastifyReply,
+  caseId: string,
+  counts: { planLinks: number; executions: number },
+  instance?: string
+) {
+  const parts: string[] = [];
+  if (counts.planLinks > 0) parts.push(`${counts.planLinks} plan link${counts.planLinks === 1 ? '' : 's'}`);
+  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+
+  return sendProblemDetails(reply, {
+    code: 'CASE_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Test Case (ID: ${caseId}) has ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard that history.`,
+    instance,
+    invalid_params: [{ name: 'case_id', reason: `Has ${parts.join(', ')}` }],
+  });
+}
+
 export function sendCustomFieldInUseError(
   reply: FastifyReply,
   fieldId: string,

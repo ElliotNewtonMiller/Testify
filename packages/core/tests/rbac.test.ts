@@ -54,6 +54,29 @@ describe('RBAC permission registry', () => {
       expect(DEFAULT_ROLE_PERMISSIONS[roleName]).not.toContain('CUSTOM_FIELD_MANAGE');
     }
   });
+
+  it('SPEC_CREATE/SPEC_EDIT/SPEC_APPROVE/SPEC_DELETE are registered and granted per role as intended -- a regression guard now that they are finally load-bearing (Spec-mode suite/case CRUD)', () => {
+    for (const key of ['SPEC_CREATE', 'SPEC_EDIT', 'SPEC_APPROVE', 'SPEC_DELETE']) {
+      expect(PERMISSION_KEYS).toContain(key);
+    }
+    // Admin and Test Lead hold all 4.
+    for (const roleName of ['Admin', 'Test Lead']) {
+      for (const key of ['SPEC_CREATE', 'SPEC_EDIT', 'SPEC_APPROVE', 'SPEC_DELETE']) {
+        expect(DEFAULT_ROLE_PERMISSIONS[roleName]).toContain(key);
+      }
+    }
+    // Tester holds create/edit but not approve/delete.
+    expect(DEFAULT_ROLE_PERMISSIONS.Tester).toContain('SPEC_CREATE');
+    expect(DEFAULT_ROLE_PERMISSIONS.Tester).toContain('SPEC_EDIT');
+    expect(DEFAULT_ROLE_PERMISSIONS.Tester).not.toContain('SPEC_APPROVE');
+    expect(DEFAULT_ROLE_PERMISSIONS.Tester).not.toContain('SPEC_DELETE');
+    // Viewer and Automation Service hold none of the 4.
+    for (const roleName of ['Viewer', 'Automation Service']) {
+      for (const key of ['SPEC_CREATE', 'SPEC_EDIT', 'SPEC_APPROVE', 'SPEC_DELETE']) {
+        expect(DEFAULT_ROLE_PERMISSIONS[roleName]).not.toContain(key);
+      }
+    }
+  });
 });
 
 describe('applyPermissionOverrides', () => {

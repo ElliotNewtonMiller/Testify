@@ -1,6 +1,7 @@
 import type { Kysely, Selectable, Insertable, Updateable } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database, TestSuitesTable } from '../types.js';
+import type { TestCaseRepository } from './test_case.repository.js';
 
 export type TestSuite = Selectable<TestSuitesTable>;
 export type NewTestSuite = Insertable<TestSuitesTable>;
@@ -24,6 +25,16 @@ export interface UpdateTestSuiteInput {
 export interface TestSuiteNode extends TestSuite {
   children: TestSuiteNode[];
 }
+
+export type DeleteTestSuiteResult =
+  | { deleted: true }
+  | {
+      deleted: false;
+      blockedSubSuiteCount: number;
+      blockedCaseCount: number;
+      blockedPlanLinkCount: number;
+      blockedExecutionCount: number;
+    };
 
 export class TestSuiteRepository {
   constructor(private db: Kysely<Database>) {}
@@ -253,5 +264,81 @@ export class TestSuiteRepository {
       .executeTakeFirst();
 
     return (result.numDeletedRows ?? 0n) > 0n;
+  }
+
+  /**
+   * Deletes a suite and its whole subtree. Unlike the plain `delete()` above (which
+   * relies purely on the DB's ON DELETE RESTRICT FKs on test_suites.parent_suite_id and
+   * test_cases.test_suite_id), this checks usage first and, without `force`, leaves
+   * everything untouched and reports the blocking counts across the entire subtree --
+   * the same warn-then-confirm shape as CustomFieldRepository.deleteDefinition. With
+   * `force` (or an already-empty subtree), it force-deletes every case in every
+   * descendant suite (via caseRepo.deleteWithForce, which itself handles that case's own
+   * plan-link/execution cascade), then deletes descendant suites leaf-to-root (deepest
+   * path first, so a child suite is always gone before its parent is deleted), then this
+   * suite itself. `caseRepo` is accepted as a parameter rather than imported and
+   * instantiated internally, matching how repositories in this codebase are always
+   * composed by their callers rather than by each other.
+   */
+  async deleteWithForce(
+    id: string,
+    opts: { force?: boolean } = {},
+    caseRepo: TestCaseRepository
+  ): Promise<DeleteTestSuiteResult> {
+    const suite = await this.findById(id);
+    if (!suite) {
+      return { deleted: false, blockedSubSuiteCount: 0, blockedCaseCount: 0, blockedPlanLinkCount: 0, blockedExecutionCount: 0 };
+    }
+
+    const descendants = await this.findDescendants(id);
+    const suiteIds = [id, ...descendants.map((d) => d.id)];
+    const cases = await caseRepo.findBySuiteIds(suiteIds);
+
+    let blockedPlanLinkCount = 0;
+    let blockedExecutionCount = 0;
+    for (const c of cases) {
+      const planCases = await this.db
+        .selectFrom('test_plan_cases')
+        .select('id')
+        .where('test_case_id', '=', c.id)
+        .execute();
+      blockedPlanLinkCount += planCases.length;
+      if (planCases.length > 0) {
+        const planCaseIds = planCases.map((pc) => pc.id);
+        const execRows = await this.db
+          .selectFrom('executions')
+          .select('id')
+          .where('test_plan_case_id', 'in', planCaseIds)
+          .execute();
+        blockedExecutionCount += execRows.length;
+      }
+    }
+
+    const blockedSubSuiteCount = descendants.length;
+    const blockedCaseCount = cases.length;
+    const hasContent = blockedSubSuiteCount > 0 || blockedCaseCount > 0;
+
+    if (hasContent && !opts.force) {
+      return { deleted: false, blockedSubSuiteCount, blockedCaseCount, blockedPlanLinkCount, blockedExecutionCount };
+    }
+
+    for (const c of cases) {
+      await caseRepo.deleteWithForce(c.id, { force: true });
+    }
+
+    // Deepest path first, so every child suite is gone before its parent is deleted --
+    // parent_suite_id is ON DELETE RESTRICT, so a shallower-first order would fail.
+    const descendantsDeepestFirst = [...descendants].sort(
+      (a, b) => b.path.split('/').length - a.path.split('/').length
+    );
+
+    await this.db.transaction().execute(async (trx) => {
+      for (const desc of descendantsDeepestFirst) {
+        await trx.deleteFrom('test_suites').where('id', '=', desc.id).execute();
+      }
+      await trx.deleteFrom('test_suites').where('id', '=', id).execute();
+    });
+
+    return { deleted: true };
   }
 }

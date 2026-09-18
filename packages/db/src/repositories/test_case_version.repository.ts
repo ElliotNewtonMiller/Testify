@@ -82,6 +82,51 @@ export class TestCaseVersionRepository {
     return (await this.findById(versionId))!;
   }
 
+  /** Creates a new DRAFT version copying the latest version's summary/preconditions and
+   * steps 1:1 (new step ids, same step_number/action/expected_result) -- the only way to
+   * make an APPROVED case's content editable again, since editing in place is blocked
+   * once a version is APPROVED. Throws if the case has no versions at all. */
+  async createDraftFromLatest(testCaseId: string, authorId: string): Promise<TestCaseVersionWithSteps> {
+    const latest = await this.findLatestVersion(testCaseId);
+    if (!latest) {
+      throw new Error(`NO_EXISTING_VERSION: test case '${testCaseId}' has no versions to draft from`);
+    }
+
+    return this.create({
+      test_case_id: testCaseId,
+      version_number: latest.version_number + 1,
+      status: 'DRAFT',
+      summary: latest.summary,
+      preconditions: latest.preconditions,
+      author_id: authorId,
+      steps: latest.steps.map((s) => ({
+        step_number: s.step_number,
+        action: s.action,
+        expected_result: s.expected_result,
+        execution_type: s.execution_type,
+      })),
+    });
+  }
+
+  /** Updates a DRAFT version's summary/preconditions in place. Kept separate from
+   * updateStatus (which only ever touches status/reviewer_id) so the approve
+   * transition's validation stays isolated from plain content edits -- callers are
+   * responsible for checking status === 'DRAFT' before calling this (see
+   * sendCaseVersionLockedError's usage in the route layer). */
+  async updateContent(
+    id: string,
+    input: { summary?: string | null; preconditions?: string | null }
+  ): Promise<TestCaseVersionWithSteps | undefined> {
+    const now = new Date().toISOString();
+    const updateData: TestCaseVersionUpdate = { updated_at: now };
+    if (input.summary !== undefined) updateData.summary = input.summary;
+    if (input.preconditions !== undefined) updateData.preconditions = input.preconditions;
+
+    await this.db.updateTable('test_case_versions').set(updateData).where('id', '=', id).execute();
+
+    return this.findById(id);
+  }
+
   async findById(id: string): Promise<TestCaseVersionWithSteps | undefined> {
     const version = await this.db
       .selectFrom('test_case_versions')

@@ -443,7 +443,14 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
     });
 
     it('returns HTTP 422 CASE_VERSION_LOCKED when editing an approved case version', async () => {
-      const { app, db } = serverInstance;
+      const { app, db, seed } = serverInstance;
+
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { username: 'admin', password: 'password' },
+      });
+      const token = JSON.parse(loginRes.payload).token as string;
 
       // Find an approved version
       const ver = await db.selectFrom('test_case_versions').selectAll().where('status', '=', 'APPROVED').executeTakeFirst();
@@ -451,7 +458,8 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
 
       const res = await app.inject({
         method: 'PUT',
-        url: `/api/v1/test-case-versions/${ver!.id}`,
+        url: `/api/v1/projects/${seed.projectId}/test-case-versions/${ver!.id}`,
+        headers: { authorization: `Bearer ${token}` },
         payload: { summary: 'Attempting to edit approved version' },
       });
 
