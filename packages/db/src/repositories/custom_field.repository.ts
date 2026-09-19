@@ -19,6 +19,7 @@ export interface CustomFieldOption {
 
 export interface CustomFieldDefinition {
   id: string;
+  project_id: string | null;
   entity_type: CustomFieldEntityType;
   name: string;
   field_label: string;
@@ -33,6 +34,9 @@ export interface CustomFieldDefinition {
 
 export interface CreateCustomFieldDefinitionInput {
   id?: string;
+  // Omitted/null (default): a global field, exactly today's only behavior. A string scopes
+  // the field to that one project -- used by the import wizard's AUTO_CREATE path.
+  project_id?: string | null;
   entity_type: CustomFieldEntityType;
   name: string;
   field_label: string;
@@ -66,6 +70,19 @@ export interface CustomFieldValueEntry {
 export class CustomFieldRepository {
   constructor(private db: Kysely<Database>) {}
 
+  /** Kysely doesn't support nesting `.transaction()` calls on an already-open Transaction
+   * (e.g. when this repository is constructed with a `trx` handed down from a caller's own
+   * `db.transaction().execute(...)`, as apps/server/src/routes/ingestion.ts's execute
+   * handler does) -- runs `fn` directly against `this.db` in that case instead of opening a
+   * redundant nested transaction, matching this codebase's established fix for the same
+   * class of bug (see TestCaseVersionRepository's history). */
+  private async runInTransaction<T>(fn: (trx: Kysely<Database>) => Promise<T>): Promise<T> {
+    if ((this.db as any).isTransaction) {
+      return fn(this.db);
+    }
+    return this.db.transaction().execute(fn);
+  }
+
   private async attachOptions(definitions: Array<Omit<CustomFieldDefinition, 'options'>>): Promise<CustomFieldDefinition[]> {
     if (definitions.length === 0) return [];
 
@@ -89,6 +106,7 @@ export class CustomFieldRepository {
   private toDefinition(row: CustomFieldDefinitionsTable & { id: string }): Omit<CustomFieldDefinition, 'options'> {
     return {
       id: row.id,
+      project_id: row.project_id,
       entity_type: row.entity_type as CustomFieldEntityType,
       name: row.name,
       field_label: row.field_label,
@@ -101,12 +119,13 @@ export class CustomFieldRepository {
     };
   }
 
-  /** Always scoped to project_id IS NULL -- this repository never accepts a caller-supplied
-   * project_id anywhere, which is the sole enforcement point for "global only" custom fields.
-   * Rows created by apps/server/src/routes/ingestion.ts (entity_type 'TestCaseVersion',
-   * non-null project_id) are deliberately invisible here -- a separate, parallel system. */
-  async listDefinitions(entityType?: CustomFieldEntityType): Promise<CustomFieldDefinition[]> {
-    let query = this.db.selectFrom('custom_field_definitions').selectAll().where('project_id', 'is', null);
+  /** `projectId` omitted/undefined: today's exact behavior, global-only (project_id IS
+   * NULL). A string: that project's OWN definitions only, NOT merged with global -- callers
+   * wanting "global ∪ project" use listVisibleToProject() below instead. No existing caller
+   * passes a second argument, so this is fully backward compatible. */
+  async listDefinitions(entityType?: CustomFieldEntityType, projectId?: string | null): Promise<CustomFieldDefinition[]> {
+    let query = this.db.selectFrom('custom_field_definitions').selectAll();
+    query = projectId === undefined ? query.where('project_id', 'is', null) : query.where('project_id', '=', projectId);
     if (entityType) {
       query = query.where('entity_type', '=', entityType);
     }
@@ -114,29 +133,60 @@ export class CustomFieldRepository {
     return this.attachOptions(rows.map((r) => this.toDefinition(r)));
   }
 
-  async getDefinition(id: string): Promise<CustomFieldDefinition | undefined> {
-    const row = await this.db
+  /** Returns the union of a project's own custom field definitions and every global
+   * (project_id IS NULL) definition, for the given entity type -- the merge-list lookup the
+   * import wizard's "map to existing field" dropdown and the ingestion routes' "is this
+   * name already known" checks both need. Global definitions are listed first, then
+   * project-scoped ones, both alphabetized. A project-scoped field is allowed to share a
+   * name with a global field (they're validated against two separate uniqueness scopes),
+   * so "name" is not a safe de-dupe key across this merged list. */
+  async listVisibleToProject(projectId: string, entityType?: CustomFieldEntityType): Promise<CustomFieldDefinition[]> {
+    let query = this.db
       .selectFrom('custom_field_definitions')
       .selectAll()
-      .where('id', '=', id)
-      .where('project_id', 'is', null)
-      .executeTakeFirst();
+      .where((eb) => eb.or([eb('project_id', 'is', null), eb('project_id', '=', projectId)]));
+    if (entityType) {
+      query = query.where('entity_type', '=', entityType);
+    }
+    const rows = await query.execute();
+    const sorted = rows
+      .map((r) => this.toDefinition(r))
+      .sort((a, b) => {
+        if ((a.project_id === null) !== (b.project_id === null)) return a.project_id === null ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    return this.attachOptions(sorted);
+  }
+
+  /** `projectId` omitted/undefined: today's exact behavior, global-only lookup by id. A
+   * string widens the lookup to also match that project's own definitions -- needed so
+   * setValue() (below) can resolve a project-scoped definition id. */
+  async getDefinition(id: string, projectId?: string | null): Promise<CustomFieldDefinition | undefined> {
+    let query = this.db.selectFrom('custom_field_definitions').selectAll().where('id', '=', id);
+    // null and undefined both mean "global-only, today's exact behavior" -- only an actual
+    // project id string widens the lookup to also match that project's own definitions.
+    query =
+      projectId == null
+        ? query.where('project_id', 'is', null)
+        : query.where((eb) => eb.or([eb('project_id', 'is', null), eb('project_id', '=', projectId)]));
+    const row = await query.executeTakeFirst();
     if (!row) return undefined;
     const [definition] = await this.attachOptions([this.toDefinition(row)]);
     return definition;
   }
 
-  /** Global-scope (project_id IS NULL) name uniqueness pre-check, mirroring
-   * role.repository.ts's roleExists/ROLE_NAME_TAKEN convention. The migration's partial
-   * unique index (WHERE project_id IS NULL) backs this at the DB level too, as a
-   * race-condition safety net -- this check is what produces the friendly error message. */
-  private async nameTaken(entityType: CustomFieldEntityType, name: string, excludeId?: string): Promise<boolean> {
+  /** Name uniqueness pre-check, scoped by `projectId` (null = global scope, a string = that
+   * project's own scope), mirroring role.repository.ts's roleExists/ROLE_NAME_TAKEN
+   * convention. The migration's two partial unique indexes back this at the DB level too,
+   * as a race-condition safety net -- this check is what produces the friendly error
+   * message. */
+  private async nameTaken(entityType: CustomFieldEntityType, name: string, projectId: string | null, excludeId?: string): Promise<boolean> {
     let query = this.db
       .selectFrom('custom_field_definitions')
       .select('id')
-      .where('project_id', 'is', null)
       .where('entity_type', '=', entityType)
       .where('name', '=', name);
+    query = projectId === null ? query.where('project_id', 'is', null) : query.where('project_id', '=', projectId);
     if (excludeId) {
       query = query.where('id', '!=', excludeId);
     }
@@ -151,19 +201,21 @@ export class CustomFieldRepository {
     if (!CUSTOM_FIELD_TYPES.includes(input.field_type)) {
       throw new Error(`UNKNOWN_FIELD_TYPE: '${input.field_type}' is not a registered custom field type`);
     }
-    if (await this.nameTaken(input.entity_type, input.name)) {
-      throw new Error(`FIELD_NAME_TAKEN: a global '${input.entity_type}' field named '${input.name}' already exists`);
+    const scopedProjectId = input.project_id ?? null;
+    if (await this.nameTaken(input.entity_type, input.name, scopedProjectId)) {
+      const scope = scopedProjectId === null ? 'global' : `project-scoped (project ${scopedProjectId})`;
+      throw new Error(`FIELD_NAME_TAKEN: a ${scope} '${input.entity_type}' field named '${input.name}' already exists`);
     }
 
     const now = new Date().toISOString();
     const id = input.id || uuidv7();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx
         .insertInto('custom_field_definitions')
         .values({
           id,
-          project_id: null,
+          project_id: scopedProjectId,
           entity_type: input.entity_type,
           name: input.name,
           field_label: input.field_label,
@@ -192,20 +244,25 @@ export class CustomFieldRepository {
       }
     });
 
-    return (await this.getDefinition(id))!;
+    return (await this.getDefinition(id, scopedProjectId))!;
   }
 
   async updateDefinition(id: string, input: UpdateCustomFieldDefinitionInput): Promise<CustomFieldDefinition | undefined> {
-    const existing = await this.getDefinition(id);
+    const existing = await this.getDefinitionAnyScope(id);
     if (!existing) return undefined;
 
-    if (input.name !== undefined && input.name !== existing.name && (await this.nameTaken(existing.entity_type, input.name, id))) {
-      throw new Error(`FIELD_NAME_TAKEN: a global '${existing.entity_type}' field named '${input.name}' already exists`);
+    if (
+      input.name !== undefined &&
+      input.name !== existing.name &&
+      (await this.nameTaken(existing.entity_type, input.name, existing.project_id, id))
+    ) {
+      const scope = existing.project_id === null ? 'global' : `project-scoped (project ${existing.project_id})`;
+      throw new Error(`FIELD_NAME_TAKEN: a ${scope} '${existing.entity_type}' field named '${input.name}' already exists`);
     }
 
     const now = new Date().toISOString();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       const updateData: Updateable<CustomFieldDefinitionsTable> = { updated_at: now };
       if (input.name !== undefined) updateData.name = input.name;
       if (input.field_label !== undefined) updateData.field_label = input.field_label;
@@ -234,7 +291,18 @@ export class CustomFieldRepository {
       }
     });
 
-    return this.getDefinition(id);
+    return this.getDefinitionAnyScope(id);
+  }
+
+  /** Fetches a definition by id regardless of scope (global or any project) -- a PK lookup
+   * is already maximally specific, so no project_id filter is needed or protective here.
+   * Used internally by updateDefinition/deleteDefinition, which must be able to find and
+   * act on a project-scoped definition, not just a global one. */
+  private async getDefinitionAnyScope(id: string): Promise<CustomFieldDefinition | undefined> {
+    const row = await this.db.selectFrom('custom_field_definitions').selectAll().where('id', '=', id).executeTakeFirst();
+    if (!row) return undefined;
+    const [definition] = await this.attachOptions([this.toDefinition(row)]);
+    return definition;
   }
 
   /**
@@ -248,7 +316,6 @@ export class CustomFieldRepository {
       .selectFrom('custom_field_definitions')
       .selectAll()
       .where('id', '=', id)
-      .where('project_id', 'is', null)
       .executeTakeFirst();
     if (!definition) {
       return { deleted: false, blockedByValueCount: 0, affectedEntityIds: [] };
@@ -266,7 +333,7 @@ export class CustomFieldRepository {
       return { deleted: false, blockedByValueCount: affectedEntityIds.length, affectedEntityIds, fieldLabel: definition.field_label };
     }
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.deleteFrom('custom_field_values').where('custom_field_definition_id', '=', id).execute();
       await trx.deleteFrom('custom_field_options').where('custom_field_definition_id', '=', id).execute();
       await trx.deleteFrom('custom_field_definitions').where('id', '=', id).execute();
@@ -275,10 +342,13 @@ export class CustomFieldRepository {
     return { deleted: true };
   }
 
-  /** All global custom field values for one case/suite, joined with their definitions, in
-   * one round-trip -- for hydrating a case/suite detail pane. */
-  async getValuesForEntity(entityType: CustomFieldEntityType, entityId: string): Promise<CustomFieldValueEntry[]> {
-    const definitions = await this.listDefinitions(entityType);
+  /** All custom field values for one case/suite, joined with their definitions, in one
+   * round-trip -- for hydrating a case/suite detail pane. `projectId` omitted: global
+   * fields only (today's exact behavior). Pass the entity's own project id to also include
+   * that project's own definitions (e.g. ones created by the import wizard's AUTO_CREATE
+   * path) -- this is what makes an imported field's value actually show up here. */
+  async getValuesForEntity(entityType: CustomFieldEntityType, entityId: string, projectId?: string): Promise<CustomFieldValueEntry[]> {
+    const definitions = projectId ? await this.listVisibleToProject(projectId, entityType) : await this.listDefinitions(entityType);
     if (definitions.length === 0) return [];
 
     const valueRows = await this.db
@@ -308,9 +378,12 @@ export class CustomFieldRepository {
   /** Validates `rawValue` against the definition's field_type/options/validation_regex via
    * @testify/core's parseCustomFieldValue (throwing INVALID_FIELD_VALUE/REQUIRED_FIELD_MISSING
    * on failure), then updates the existing value row for this (definition, entity) pair or
-   * inserts a new one -- never accumulating duplicates on repeated edits. */
-  async setValue(definitionId: string, entityType: CustomFieldEntityType, entityId: string, rawValue: unknown): Promise<unknown> {
-    const definition = await this.getDefinition(definitionId);
+   * inserts a new one -- never accumulating duplicates on repeated edits. `projectId`
+   * (optional) widens the internal definition lookup to also match that project's own
+   * definitions, not just global ones -- required for writing a value against a
+   * project-scoped field (e.g. one created by the import wizard). */
+  async setValue(definitionId: string, entityType: CustomFieldEntityType, entityId: string, rawValue: unknown, projectId?: string): Promise<unknown> {
+    const definition = await this.getDefinition(definitionId, projectId);
     if (!definition) {
       throw new Error(`UNKNOWN_FIELD: no custom field definition with id '${definitionId}'`);
     }
@@ -330,7 +403,7 @@ export class CustomFieldRepository {
       .where('entity_id', '=', entityId)
       .executeTakeFirst();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       if (existing) {
         await trx
           .updateTable('custom_field_values')

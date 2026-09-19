@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream';
+import type { CustomFieldType } from '../custom-fields/customFieldValidator.js';
 
 export interface ParsedStep {
   step_number: number;
@@ -15,7 +16,15 @@ export interface ParsedCase {
   importance: 'HIGH' | 'MEDIUM' | 'LOW';
   execution_type: 'MANUAL' | 'AUTOMATED';
   steps: ParsedStep[];
+  // Always a flat string map, even for numeric/boolean-ish data (e.g. JUnit's
+  // junit_duration_seconds) -- real typing happens downstream via inferFieldType()/
+  // parseCustomFieldValue() once a mapping decision is made, not at parse time.
   custom_fields: Record<string, string>;
+  // Parser-level warning codes for this specific case (e.g. TestRailCsvParser's
+  // STEP_EXPECTED_MISALIGNED/UNSUPPORTED_TESTRAIL_COLUMN_FORMAT) -- surfaced by the
+  // dry-run route as ordinary DryRunWarning entries. Deliberately separate from
+  // custom_fields so a parser-level warning can never masquerade as a mappable column.
+  parser_warnings?: string[];
 }
 
 export interface ParsedSuite {
@@ -32,7 +41,7 @@ export interface ParseOptions {
 }
 
 export interface IFileParser {
-  formatId: 'TESTLINK_XML' | 'NATIVE_JSON' | 'STANDARD_CSV';
+  formatId: 'TESTLINK_XML' | 'NATIVE_JSON' | 'STANDARD_CSV' | 'JUNIT_XML' | 'TESTRAIL_CSV';
   canHandle(fileHeader: Buffer, filename: string): boolean;
   parseStream(
     inputStream: Readable | ReadableStream | AsyncIterable<Buffer | string>,
@@ -45,7 +54,7 @@ export interface CustomFieldMappingConfig {
   action: 'DROP' | 'AUTO_CREATE' | 'ROUTE_TO_EXISTING';
   target_field_id?: string;
   field_name?: string;
-  field_type?: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'DATE' | 'SINGLE_SELECT' | 'MULTI_SELECT' | 'MARKDOWN_TEXT';
+  field_type?: CustomFieldType;
 }
 
 export type DuplicateAction = 'CREATE_NEW' | 'OVERWRITE' | 'VERSION_UP' | 'SKIP';
@@ -75,6 +84,10 @@ export interface DryRunSummary {
   cases_skipped: number;
   unmapped_custom_fields_count: number;
   validation_warnings_count: number;
+  // Informational only -- always equal to unmapped_custom_fields_count today, since every
+  // unmapped field now gets a real inferred type (see inferFieldType()) rather than the
+  // previous hardcoded 'STRING' placeholder.
+  auto_inferred_field_types_count?: number;
 }
 
 export interface DryRunWarning {
@@ -86,7 +99,11 @@ export interface DryRunWarning {
 export interface UnmappedCustomField {
   incoming_key: string;
   sample_value: string;
-  detected_type: string;
+  // Up to 5 distinct, non-empty samples observed during the dry-run walk -- what
+  // inferFieldType() bases detected_type on, and shown to the user so they can judge the
+  // inference themselves before accepting/overriding it.
+  sample_values?: string[];
+  detected_type: CustomFieldType;
 }
 
 export interface HierarchyPreviewNode {
@@ -103,6 +120,12 @@ export interface DryRunResult {
   hierarchy_preview: HierarchyPreviewNode[];
 }
 
+export interface SkippedCustomFieldValueWarning {
+  case_external_id_or_title: string;
+  incoming_key: string;
+  reason: string;
+}
+
 export interface ImportExecuteResult {
   object: 'import_execute_result';
   summary: {
@@ -112,8 +135,13 @@ export interface ImportExecuteResult {
     overwritten_cases_count: number;
     skipped_cases_count: number;
     auto_created_custom_fields_count: number;
+    // Count of per-value validation failures (e.g. a value that doesn't match a
+    // SINGLE_SELECT field's configured options) caught and skipped rather than aborting
+    // the whole import -- see apps/server/src/routes/ingestion.ts's execute handler.
+    skipped_custom_field_values_count: number;
     duration_ms: number;
   };
+  skipped_custom_field_value_warnings?: SkippedCustomFieldValueWarning[];
 }
 
 export interface CaseIdentifier {

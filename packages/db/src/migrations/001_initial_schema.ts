@@ -202,6 +202,18 @@ export async function up(db: Kysely<any>): Promise<void> {
     WHERE project_id IS NULL
   `.execute(db);
 
+  // Companion to uq_custom_field_def_global_scope above: enforces per-project name
+  // uniqueness for project-scoped custom field definitions (created by the import wizard's
+  // AUTO_CREATE path -- see routes/ingestion.ts and CustomFieldRepository.listVisibleToProject),
+  // without constraining global (project_id IS NULL) fields, which the other index already
+  // covers. A project-scoped field is free to share a name with a global field or with a
+  // same-named field in a *different* project; only same-project collisions are blocked.
+  await sql`
+    CREATE UNIQUE INDEX uq_custom_field_def_project_scope
+    ON custom_field_definitions (project_id, entity_type, name)
+    WHERE project_id IS NOT NULL
+  `.execute(db);
+
   // 13. Custom Field Options
   await db.schema
     .createTable('custom_field_options')

@@ -2,11 +2,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { Readable } from 'node:stream';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
-import type { Database } from '@testify/db';
+import { CustomFieldRepository, type Database } from '@testify/db';
 import {
   SaxXmlParser,
   JsonSchemaParser,
   CsvParser,
+  JUnitXmlParser,
+  TestRailCsvParser,
+  inferFieldType,
   type IFileParser,
   type ParsedSuite,
   type ParsedCase,
@@ -15,6 +18,7 @@ import {
   type UnmappedCustomField,
   type DryRunWarning,
   type HierarchyPreviewNode,
+  type SkippedCustomFieldValueWarning,
 } from '@testify/core';
 import { authenticateRequest, type AuthenticatedUser } from '../middleware/auth.js';
 import { sendTokenProjectMismatchError } from '../errors.js';
@@ -47,6 +51,13 @@ function resolveImportProjectId(
   }
   return bodyProjectId;
 }
+
+const PARSER_WARNING_MESSAGES: Record<string, string> = {
+  UNSUPPORTED_TESTRAIL_COLUMN_FORMAT:
+    "This file uses TestRail's indexed step-column export format (e.g. 'Steps (Step 1)'), which is not yet supported -- only the combined Steps/Expected Result column format is.",
+  STEP_EXPECTED_MISALIGNED:
+    'The Steps and Expected Result columns have a different number of lines for this case; step/expected pairing may be inaccurate.',
+};
 
 export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   // Helper to extract file buffer and configuration from request
@@ -100,8 +111,18 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     // decision depends on the caller's authenticated identity (human vs. machine token),
     // not just on what the request body happened to contain.
 
-    // Select parser
-    const parsers: IFileParser[] = [new SaxXmlParser(), new JsonSchemaParser(), new CsvParser()];
+    // Select parser. JUnitXmlParser must be checked before SaxXmlParser for auto-sniffing --
+    // SaxXmlParser's broad <testsuite>/<testsuites> match would otherwise greedily claim
+    // JUnit XML files too (explicit `format=` requests are unaffected by array order).
+    // TestRailCsvParser.canHandle() always returns false, so it's only ever reachable via
+    // an explicit `format` value.
+    const parsers: IFileParser[] = [
+      new JUnitXmlParser(),
+      new SaxXmlParser(),
+      new JsonSchemaParser(),
+      new CsvParser(),
+      new TestRailCsvParser(),
+    ];
     let selectedParser: IFileParser | undefined;
 
     if (format) {
@@ -141,13 +162,12 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
         return reply.status(404).send({ error: `Project ID ${targetProjectId} not found` });
       }
 
-      // Fetch existing project custom field definitions
-      const existingCfs = await db
-        .selectFrom('custom_field_definitions')
-        .selectAll()
-        .where((eb) => eb.or([eb('project_id', '=', targetProjectId), eb('project_id', 'is', null)]))
-        .execute();
-
+      // Fetch existing project + global custom field definitions, through the same
+      // validated CustomFieldRepository the Admin Panel / Spec-mode already use -- this is
+      // what makes an already-mapped field ("this column matches an existing field") mean
+      // the same thing here as it does everywhere else in the app.
+      const customFieldRepo = new CustomFieldRepository(db);
+      const existingCfs = await customFieldRepo.listVisibleToProject(targetProjectId, 'TestCase');
       const existingCfNames = new Set(existingCfs.map((cf) => cf.name.toLowerCase()));
 
       // Fetch existing project test cases and suites
@@ -210,17 +230,27 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
               message: 'Test case contains no execution steps.',
             });
           }
+          for (const code of tc.parser_warnings || []) {
+            warnings.push({
+              line_or_node: `testcase[title='${tc.title}']`,
+              code,
+              message: PARSER_WARNING_MESSAGES[code] || code,
+            });
+          }
 
-          // Check unmapped custom fields
+          // Check unmapped custom fields -- collect up to 5 distinct samples per key so
+          // inferFieldType() has something real to work with (a final pass below runs it
+          // once the whole tree has been walked).
           for (const [cfKey, cfVal] of Object.entries(tc.custom_fields || {})) {
             const lowerKey = cfKey.toLowerCase();
             if (!existingCfNames.has(lowerKey) && !mappedIncomingKeys.has(lowerKey)) {
               if (!unmappedCfsMap.has(lowerKey)) {
-                unmappedCfsMap.set(lowerKey, {
-                  incoming_key: cfKey,
-                  sample_value: String(cfVal || ''),
-                  detected_type: 'STRING',
-                });
+                unmappedCfsMap.set(lowerKey, { incoming_key: cfKey, sample_value: String(cfVal || ''), sample_values: [], detected_type: 'TEXT' });
+              }
+              const field = unmappedCfsMap.get(lowerKey)!;
+              const strVal = String(cfVal || '');
+              if (strVal && field.sample_values!.length < 5 && !field.sample_values!.includes(strVal)) {
+                field.sample_values!.push(strVal);
               }
             }
           }
@@ -270,6 +300,12 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
         hierarchyPreview.push(processSuite(suite));
       }
 
+      // Now that every case has been walked and samples collected, run real type
+      // inference per unmapped field (replacing the previous hardcoded 'STRING'/'TEXT').
+      for (const field of unmappedCfsMap.values()) {
+        field.detected_type = inferFieldType(field.sample_values || []);
+      }
+
       const result: DryRunResult = {
         dry_run_summary: {
           total_suites_detected: totalSuitesDetected,
@@ -281,6 +317,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
           cases_skipped: casesSkipped,
           unmapped_custom_fields_count: unmappedCfsMap.size,
           validation_warnings_count: warnings.length,
+          auto_inferred_field_types_count: unmappedCfsMap.size,
         },
         warnings,
         unmapped_custom_fields: Array.from(unmappedCfsMap.values()),
@@ -319,52 +356,10 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
       const now = new Date().toISOString();
 
-      // 1. Process custom field auto-creation
-      let autoCreatedCfCount = 0;
-      const configuredMappings = configuration.field_mappings || [];
-      const customFieldIdMap = new Map<string, string>(); // incomingKey -> cfDefId
-
-      // Load existing CFs
-      const existingCfs = await db
-        .selectFrom('custom_field_definitions')
-        .selectAll()
-        .where((eb) => eb.or([eb('project_id', '=', targetProjectId), eb('project_id', 'is', null)]))
-        .execute();
-
-      for (const cf of existingCfs) {
-        customFieldIdMap.set(cf.name.toLowerCase(), cf.id);
-      }
-
-      for (const mapping of configuredMappings) {
-        if (mapping.action === 'AUTO_CREATE') {
-          const lower = mapping.incoming_key.toLowerCase();
-          if (!customFieldIdMap.has(lower)) {
-            const newCfId = uuidv4();
-            await db
-              .insertInto('custom_field_definitions')
-              .values({
-                id: newCfId,
-                project_id: targetProjectId,
-                entity_type: 'TestCaseVersion',
-                name: mapping.incoming_key,
-                field_label: mapping.field_name || mapping.incoming_key,
-                field_type: mapping.field_type || 'STRING',
-                is_required: 0,
-                default_value: null,
-                validation_regex: null,
-                created_at: now,
-                updated_at: now,
-              })
-              .execute();
-            customFieldIdMap.set(lower, newCfId);
-            autoCreatedCfCount++;
-          }
-        } else if (mapping.action === 'ROUTE_TO_EXISTING' && mapping.target_field_id) {
-          customFieldIdMap.set(mapping.incoming_key.toLowerCase(), mapping.target_field_id);
-        }
-      }
-
-      // Parse file
+      // Parse file up front -- AUTO_CREATE mappings need a resolved field_type before the
+      // transaction starts, but no re-walk of the tree happens here (the frontend wizard is
+      // expected to have already resolved field_type from dry-run's detected_type before
+      // sending this request).
       const stream = Readable.from([fileBuffer]);
       const parsedSuites: ParsedSuite[] = [];
       for await (const suite of selectedParser.parseStream(stream)) {
@@ -372,289 +367,389 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       }
 
       const dupConfig = configuration.duplicate_resolution || { default_action: 'VERSION_UP' };
+      const configuredMappings = configuration.field_mappings || [];
 
       let importedSuitesCount = 0;
       let importedCasesCount = 0;
       let createdVersionsCount = 0;
       let overwrittenCasesCount = 0;
       let skippedCasesCount = 0;
+      let autoCreatedCfCount = 0;
+      let skippedCustomFieldValuesCount = 0;
+      const skippedCustomFieldValueWarnings: SkippedCustomFieldValueWarning[] = [];
 
-      // Recursive helper to import suites & cases
-      async function importSuiteRecursive(suite: ParsedSuite, parentSuiteId: string | null, parentPath: string) {
-        importedSuitesCount++;
+      // Everything from here through the audit log insert is one transaction -- a mid-loop
+      // error now rolls back the whole import instead of leaving partial writes (previously
+      // completely unwrapped).
+      await db.transaction().execute(async (trx) => {
+        const customFieldRepo = new CustomFieldRepository(trx);
+        const customFieldIdMap = new Map<string, string>(); // incomingKey -> cfDefId
 
-        // Check if suite exists
-        let existingSuite = await db
-          .selectFrom('test_suites')
-          .selectAll()
-          .where('project_id', '=', targetProjectId!)
-          .where('name', '=', suite.name)
-          .where('parent_suite_id', parentSuiteId ? '=' : 'is', parentSuiteId || null)
-          .executeTakeFirst();
-
-        let suiteId: string;
-        let suitePath: string;
-
-        if (existingSuite) {
-          suiteId = existingSuite.id;
-          suitePath = existingSuite.path;
-        } else {
-          suiteId = uuidv4();
-          suitePath = parentPath ? `${parentPath}/${suiteId}` : `/${suiteId}`;
-          await db
-            .insertInto('test_suites')
-            .values({
-              id: suiteId,
-              project_id: targetProjectId!,
-              parent_suite_id: parentSuiteId,
-              name: suite.name,
-              description: suite.details || null,
-              position: suite.node_order || 0,
-              path: suitePath,
-              created_at: now,
-              updated_at: now,
-            })
-            .execute();
+        const existingCfs = await customFieldRepo.listVisibleToProject(targetProjectId!, 'TestCase');
+        for (const cf of existingCfs) {
+          customFieldIdMap.set(cf.name.toLowerCase(), cf.id);
         }
 
-        // Import cases in suite
-        for (const tc of suite.test_cases) {
-          // Check for duplicate test case in project
-          let existingCase = await db
-            .selectFrom('test_cases')
+        for (const mapping of configuredMappings) {
+          if (mapping.action === 'AUTO_CREATE') {
+            const lower = mapping.incoming_key.toLowerCase();
+            if (!customFieldIdMap.has(lower)) {
+              try {
+                const created = await customFieldRepo.createDefinition({
+                  project_id: targetProjectId!,
+                  entity_type: 'TestCase',
+                  name: mapping.incoming_key,
+                  field_label: mapping.field_name || mapping.incoming_key,
+                  field_type: mapping.field_type || 'TEXT',
+                });
+                customFieldIdMap.set(lower, created.id);
+                autoCreatedCfCount++;
+              } catch (err: any) {
+                if (String(err.message).startsWith('FIELD_NAME_TAKEN')) {
+                  // Someone already created it (e.g. a retried execute) -- reuse it rather
+                  // than failing the whole import over an idempotent no-op.
+                  const existing = (await customFieldRepo.listVisibleToProject(targetProjectId!, 'TestCase')).find(
+                    (d) => d.name.toLowerCase() === lower
+                  );
+                  if (existing) customFieldIdMap.set(lower, existing.id);
+                  else throw err;
+                } else {
+                  throw err;
+                }
+              }
+            }
+          } else if (mapping.action === 'ROUTE_TO_EXISTING' && mapping.target_field_id) {
+            customFieldIdMap.set(mapping.incoming_key.toLowerCase(), mapping.target_field_id);
+          }
+        }
+
+        // Recursive helper to import suites & cases
+        async function importSuiteRecursive(suite: ParsedSuite, parentSuiteId: string | null, parentPath: string) {
+          importedSuitesCount++;
+
+          // Check if suite exists
+          let existingSuite = await trx
+            .selectFrom('test_suites')
             .selectAll()
             .where('project_id', '=', targetProjectId!)
-            .where((eb) => {
-              const conds = [];
-              if (tc.external_id) conds.push(eb('external_id', '=', tc.external_id));
-              conds.push(eb.and([eb('title', '=', tc.title), eb('test_suite_id', '=', suiteId)]));
-              return eb.or(conds);
-            })
+            .where('name', '=', suite.name)
+            .where('parent_suite_id', parentSuiteId ? '=' : 'is', parentSuiteId || null)
             .executeTakeFirst();
 
-          let action = dupConfig.default_action || 'VERSION_UP';
-          if (existingCase && dupConfig.overrides && dupConfig.overrides.length > 0) {
-            const override = dupConfig.overrides.find(
-              (o) =>
-                (o.external_id && tc.external_id && o.external_id.toLowerCase() === tc.external_id.toLowerCase()) ||
-                (o.title && o.title.toLowerCase() === tc.title.toLowerCase())
-            );
-            if (override) action = override.action;
-          }
+          let suiteId: string;
+          let suitePath: string;
 
-          if (existingCase && action === 'SKIP') {
-            skippedCasesCount++;
-            continue;
-          }
-
-          let caseId: string;
-          let caseVersionId: string;
-          let versionNumber = 1;
-
-          if (!existingCase || action === 'CREATE_NEW') {
-            caseId = uuidv4();
-            const extId = tc.external_id || `${project!.prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
-            const finalTitle = existingCase && action === 'CREATE_NEW' ? `${tc.title} (Copy)` : tc.title;
-
-            await db
-              .insertInto('test_cases')
-              .values({
-                id: caseId,
-                project_id: targetProjectId!,
-                test_suite_id: suiteId,
-                external_id: extId,
-                title: finalTitle,
-                priority: tc.importance || 'HIGH',
-                execution_type: tc.execution_type || 'MANUAL',
-                created_at: now,
-                updated_at: now,
-              })
-              .execute();
-
-            caseVersionId = uuidv4();
-            versionNumber = 1;
-            await db
-              .insertInto('test_case_versions')
-              .values({
-                id: caseVersionId,
-                test_case_id: caseId,
-                version_number: versionNumber,
-                status: 'APPROVED',
-                summary: tc.summary || null,
-                preconditions: tc.preconditions || null,
-                author_id: 'usr_importer_01',
-                reviewer_id: 'usr_lead_01',
-                created_at: now,
-                updated_at: now,
-              })
-              .execute();
-
-            importedCasesCount++;
-            createdVersionsCount++;
-          } else if (action === 'VERSION_UP') {
-            caseId = existingCase.id;
-
-            // Find current max version
-            const maxVerRow = await db
-              .selectFrom('test_case_versions')
-              .select(db.fn.max('version_number').as('max_ver'))
-              .where('test_case_id', '=', caseId)
-              .executeTakeFirst();
-
-            versionNumber = Number(maxVerRow?.max_ver || 1) + 1;
-            caseVersionId = uuidv4();
-
-            await db
-              .insertInto('test_case_versions')
-              .values({
-                id: caseVersionId,
-                test_case_id: caseId,
-                version_number: versionNumber,
-                status: 'APPROVED',
-                summary: tc.summary || null,
-                preconditions: tc.preconditions || null,
-                author_id: 'usr_importer_01',
-                reviewer_id: 'usr_lead_01',
-                created_at: now,
-                updated_at: now,
-              })
-              .execute();
-
-            createdVersionsCount++;
+          if (existingSuite) {
+            suiteId = existingSuite.id;
+            suitePath = existingSuite.path;
           } else {
-            // OVERWRITE: Update latest version
-            caseId = existingCase.id;
-            const latestVer = await db
-              .selectFrom('test_case_versions')
+            suiteId = uuidv4();
+            suitePath = parentPath ? `${parentPath}/${suiteId}` : `/${suiteId}`;
+            await trx
+              .insertInto('test_suites')
+              .values({
+                id: suiteId,
+                project_id: targetProjectId!,
+                parent_suite_id: parentSuiteId,
+                name: suite.name,
+                description: suite.details || null,
+                position: suite.node_order || 0,
+                path: suitePath,
+                created_at: now,
+                updated_at: now,
+              })
+              .execute();
+          }
+
+          // Import cases in suite
+          for (const tc of suite.test_cases) {
+            // Check for duplicate test case in project
+            let existingCase = await trx
+              .selectFrom('test_cases')
               .selectAll()
-              .where('test_case_id', '=', caseId)
-              .orderBy('version_number', 'desc')
+              .where('project_id', '=', targetProjectId!)
+              .where((eb) => {
+                const conds = [];
+                if (tc.external_id) conds.push(eb('external_id', '=', tc.external_id));
+                conds.push(eb.and([eb('title', '=', tc.title), eb('test_suite_id', '=', suiteId)]));
+                return eb.or(conds);
+              })
               .executeTakeFirst();
 
-            if (latestVer) {
-              caseVersionId = latestVer.id;
-              await db
-                .updateTable('test_case_versions')
-                .set({
-                  summary: tc.summary || latestVer.summary,
-                  preconditions: tc.preconditions || latestVer.preconditions,
+            let action = dupConfig.default_action || 'VERSION_UP';
+            if (existingCase && dupConfig.overrides && dupConfig.overrides.length > 0) {
+              const override = dupConfig.overrides.find(
+                (o) =>
+                  (o.external_id && tc.external_id && o.external_id.toLowerCase() === tc.external_id.toLowerCase()) ||
+                  (o.title && o.title.toLowerCase() === tc.title.toLowerCase())
+              );
+              if (override) action = override.action;
+            }
+
+            if (existingCase && action === 'SKIP') {
+              skippedCasesCount++;
+              continue;
+            }
+
+            let caseId: string;
+            let caseVersionId: string;
+            let versionNumber = 1;
+
+            if (!existingCase || action === 'CREATE_NEW') {
+              caseId = uuidv4();
+              const extId = tc.external_id || `${project!.prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+              const finalTitle = existingCase && action === 'CREATE_NEW' ? `${tc.title} (Copy)` : tc.title;
+
+              await trx
+                .insertInto('test_cases')
+                .values({
+                  id: caseId,
+                  project_id: targetProjectId!,
+                  test_suite_id: suiteId,
+                  external_id: extId,
+                  title: finalTitle,
+                  priority: tc.importance || 'HIGH',
+                  execution_type: tc.execution_type || 'MANUAL',
+                  created_at: now,
                   updated_at: now,
                 })
-                .where('id', '=', caseVersionId)
                 .execute();
 
-              // Delete old steps to replace
-              await db.deleteFrom('test_steps').where('test_case_version_id', '=', caseVersionId).execute();
-            } else {
               caseVersionId = uuidv4();
-              await db
+              versionNumber = 1;
+              await trx
                 .insertInto('test_case_versions')
                 .values({
                   id: caseVersionId,
                   test_case_id: caseId,
-                  version_number: 1,
+                  version_number: versionNumber,
                   status: 'APPROVED',
                   summary: tc.summary || null,
                   preconditions: tc.preconditions || null,
                   author_id: 'usr_importer_01',
+                  reviewer_id: 'usr_lead_01',
                   created_at: now,
                   updated_at: now,
                 })
                 .execute();
-            }
-            overwrittenCasesCount++;
-          }
 
-          // Insert test steps
-          if (tc.steps && tc.steps.length > 0) {
-            for (let sIdx = 0; sIdx < tc.steps.length; sIdx++) {
-              const st = tc.steps[sIdx];
-              await db
-                .insertInto('test_steps')
+              importedCasesCount++;
+              createdVersionsCount++;
+            } else if (action === 'VERSION_UP') {
+              caseId = existingCase.id;
+
+              // Find current max version
+              const maxVerRow = await trx
+                .selectFrom('test_case_versions')
+                .select(trx.fn.max('version_number').as('max_ver'))
+                .where('test_case_id', '=', caseId)
+                .executeTakeFirst();
+
+              versionNumber = Number(maxVerRow?.max_ver || 1) + 1;
+              caseVersionId = uuidv4();
+
+              await trx
+                .insertInto('test_case_versions')
                 .values({
-                  id: uuidv4(),
-                  test_case_version_id: caseVersionId,
-                  step_number: st.step_number || sIdx + 1,
-                  action: st.actions || '',
-                  expected_result: st.expected_results || '',
-                  execution_type: st.execution_type || 'MANUAL',
+                  id: caseVersionId,
+                  test_case_id: caseId,
+                  version_number: versionNumber,
+                  status: 'APPROVED',
+                  summary: tc.summary || null,
+                  preconditions: tc.preconditions || null,
+                  author_id: 'usr_importer_01',
+                  reviewer_id: 'usr_lead_01',
                   created_at: now,
                   updated_at: now,
                 })
                 .execute();
-            }
-          }
 
-          // Insert custom field values
-          if (tc.custom_fields) {
-            for (const [k, v] of Object.entries(tc.custom_fields)) {
-              const defId = customFieldIdMap.get(k.toLowerCase());
-              if (defId && v) {
-                await db
-                  .insertInto('custom_field_values')
+              createdVersionsCount++;
+            } else {
+              // OVERWRITE: Update latest version
+              caseId = existingCase.id;
+              const latestVer = await trx
+                .selectFrom('test_case_versions')
+                .selectAll()
+                .where('test_case_id', '=', caseId)
+                .orderBy('version_number', 'desc')
+                .executeTakeFirst();
+
+              if (latestVer) {
+                caseVersionId = latestVer.id;
+                await trx
+                  .updateTable('test_case_versions')
+                  .set({
+                    summary: tc.summary || latestVer.summary,
+                    preconditions: tc.preconditions || latestVer.preconditions,
+                    updated_at: now,
+                  })
+                  .where('id', '=', caseVersionId)
+                  .execute();
+
+                // Delete old steps to replace
+                await trx.deleteFrom('test_steps').where('test_case_version_id', '=', caseVersionId).execute();
+              } else {
+                caseVersionId = uuidv4();
+                await trx
+                  .insertInto('test_case_versions')
+                  .values({
+                    id: caseVersionId,
+                    test_case_id: caseId,
+                    version_number: 1,
+                    status: 'APPROVED',
+                    summary: tc.summary || null,
+                    preconditions: tc.preconditions || null,
+                    author_id: 'usr_importer_01',
+                    created_at: now,
+                    updated_at: now,
+                  })
+                  .execute();
+              }
+              overwrittenCasesCount++;
+            }
+
+            // Insert test steps
+            if (tc.steps && tc.steps.length > 0) {
+              for (let sIdx = 0; sIdx < tc.steps.length; sIdx++) {
+                const st = tc.steps[sIdx];
+                await trx
+                  .insertInto('test_steps')
                   .values({
                     id: uuidv4(),
-                    custom_field_definition_id: defId,
-                    entity_type: 'TestCaseVersion',
-                    entity_id: caseVersionId,
-                    string_value: String(v),
-                    number_value: null,
-                    boolean_value: null,
-                    date_value: null,
-                    json_value: null,
+                    test_case_version_id: caseVersionId,
+                    step_number: st.step_number || sIdx + 1,
+                    action: st.actions || '',
+                    expected_result: st.expected_results || '',
+                    execution_type: st.execution_type || 'MANUAL',
                     created_at: now,
                     updated_at: now,
                   })
                   .execute();
               }
             }
+
+            // Write custom field values through the same validated CustomFieldRepository
+            // path admin-managed fields use, entity_id = the case's own id (not the
+            // version id) so values are never version-locked, matching every other
+            // Spec-mode custom field value in this app. A value that fails validation
+            // (e.g. doesn't match a SINGLE_SELECT's configured options) is skipped and
+            // reported rather than aborting the whole import.
+            if (tc.custom_fields) {
+              for (const [k, v] of Object.entries(tc.custom_fields)) {
+                const defId = customFieldIdMap.get(k.toLowerCase());
+                if (defId && v) {
+                  try {
+                    await customFieldRepo.setValue(defId, 'TestCase', caseId, v, targetProjectId!);
+                  } catch (err: any) {
+                    skippedCustomFieldValuesCount++;
+                    skippedCustomFieldValueWarnings.push({
+                      case_external_id_or_title: tc.external_id || tc.title,
+                      incoming_key: k,
+                      reason: err.message || 'Validation failed',
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          // Sub suites
+          for (const sub of suite.sub_suites || []) {
+            await importSuiteRecursive(sub, suiteId, suitePath);
           }
         }
 
-        // Sub suites
-        for (const sub of suite.sub_suites || []) {
-          await importSuiteRecursive(sub, suiteId, suitePath);
+        for (const rootSuite of parsedSuites) {
+          await importSuiteRecursive(rootSuite, null, '');
         }
-      }
 
-      for (const rootSuite of parsedSuites) {
-        await importSuiteRecursive(rootSuite, null, '');
-      }
+        const durationMs = Date.now() - startTime;
+        const summary = {
+          imported_suites_count: importedSuitesCount,
+          imported_cases_count: importedCasesCount,
+          created_versions_count: createdVersionsCount,
+          overwritten_cases_count: overwrittenCasesCount,
+          skipped_cases_count: skippedCasesCount,
+          auto_created_custom_fields_count: autoCreatedCfCount,
+          skipped_custom_field_values_count: skippedCustomFieldValuesCount,
+          duration_ms: durationMs,
+        };
+
+        await trx
+          .insertInto('audit_logs')
+          .values({
+            id: uuidv4(),
+            actor_id: user.id,
+            actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+            action: 'IMPORT_EXECUTED',
+            resource_type: 'project',
+            resource_id: targetProjectId!,
+            project_id: targetProjectId!,
+            diff: JSON.stringify(summary),
+            ip_address: '127.0.0.1',
+            user_agent: 'TestifyIngestionService',
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+      });
 
       const durationMs = Date.now() - startTime;
-      const summary = {
-        imported_suites_count: importedSuitesCount,
-        imported_cases_count: importedCasesCount,
-        created_versions_count: createdVersionsCount,
-        overwritten_cases_count: overwrittenCasesCount,
-        skipped_cases_count: skippedCasesCount,
-        auto_created_custom_fields_count: autoCreatedCfCount,
-        duration_ms: durationMs,
-      };
-
-      await db
-        .insertInto('audit_logs')
-        .values({
-          id: uuidv4(),
-          actor_id: user.id,
-          actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
-          action: 'IMPORT_EXECUTED',
-          resource_type: 'project',
-          resource_id: targetProjectId,
-          project_id: targetProjectId,
-          diff: JSON.stringify(summary),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyIngestionService',
-          created_at: new Date().toISOString(),
-        })
-        .execute();
-
       return reply.status(200).send({
         object: 'import_execute_result',
-        summary,
+        summary: {
+          imported_suites_count: importedSuitesCount,
+          imported_cases_count: importedCasesCount,
+          created_versions_count: createdVersionsCount,
+          overwritten_cases_count: overwrittenCasesCount,
+          skipped_cases_count: skippedCasesCount,
+          auto_created_custom_fields_count: autoCreatedCfCount,
+          skipped_custom_field_values_count: skippedCustomFieldValuesCount,
+          duration_ms: durationMs,
+        },
+        ...(skippedCustomFieldValueWarnings.length > 0
+          ? { skipped_custom_field_value_warnings: skippedCustomFieldValueWarnings }
+          : {}),
       });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
     }
+  });
+
+  // GET /api/v1/imports/custom-field-options -- lists the custom field definitions
+  // (global ∪ the given project's own) visible for mapping an unmapped import column
+  // against. Gated more permissively than /api/v1/admin/custom-fields: an importer needs
+  // read access to the field catalog without needing full CUSTOM_FIELD_MANAGE rights.
+  app.get('/api/v1/imports/custom-field-options', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await authenticateRequest(req, reply, db, jwtSecret);
+    if (!user) return;
+    if (
+      !user.permissions.includes('IMPORT_DATA') &&
+      !user.permissions.includes('CUSTOM_FIELD_MANAGE') &&
+      !user.permissions.includes('SYSTEM_ADMIN')
+    ) {
+      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+    }
+
+    const { target_project_id: targetProjectId, entity_type: entityTypeRaw } = req.query as {
+      target_project_id?: string;
+      entity_type?: string;
+    };
+    if (!targetProjectId) {
+      return reply.status(400).send({ error: 'target_project_id is required' });
+    }
+    const entityType = entityTypeRaw === 'TestSuite' ? 'TestSuite' : 'TestCase';
+
+    const customFieldRepo = new CustomFieldRepository(db);
+    const definitions = await customFieldRepo.listVisibleToProject(targetProjectId, entityType);
+    return reply.status(200).send({
+      definitions: definitions.map((d) => ({
+        id: d.id,
+        name: d.name,
+        field_label: d.field_label,
+        field_type: d.field_type,
+        project_id: d.project_id,
+      })),
+    });
   });
 }

@@ -6,30 +6,7 @@ import type {
   ParsedCase,
   ParsedStep,
 } from './types.js';
-
-function parseCsvLine(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-  result.push(current);
-  return result;
-}
+import { parseCsvLine, bufferStreamToLines, splitSuitePath, slugifyColumnName } from './csvHelpers.js';
 
 export class CsvParser implements IFileParser {
   readonly formatId = 'STANDARD_CSV';
@@ -44,29 +21,7 @@ export class CsvParser implements IFileParser {
     inputStream: Readable | ReadableStream | AsyncIterable<Buffer | string>,
     options?: ParseOptions
   ): AsyncIterable<ParsedSuite> {
-    const lines: string[] = [];
-    let remainder = '';
-
-    const processTextChunk = (chunk: string) => {
-      const text = remainder + chunk;
-      const splitLines = text.split(/\r?\n/);
-      remainder = splitLines.pop() || '';
-      lines.push(...splitLines);
-    };
-
-    if (Symbol.asyncIterator in (inputStream as any)) {
-      for await (const chunk of inputStream as AsyncIterable<Buffer | string>) {
-        processTextChunk(typeof chunk === 'string' ? chunk : chunk.toString('utf-8'));
-      }
-    } else {
-      const stream = inputStream as Readable;
-      for await (const chunk of stream) {
-        processTextChunk(typeof chunk === 'string' ? chunk : chunk.toString('utf-8'));
-      }
-    }
-    if (remainder.trim()) {
-      lines.push(remainder);
-    }
+    const lines = await bufferStreamToLines(inputStream);
 
     if (lines.length === 0) return;
 
@@ -115,12 +70,10 @@ export class CsvParser implements IFileParser {
         if (expectedIdx === -1) expectedIdx = idx;
       } else if (h.toLowerCase().startsWith('cf:') || h.toLowerCase().startsWith('customfield:')) {
         const fieldName = h.split(':')[1].trim();
-        const key = 'cf_' + fieldName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        customFieldCols.push({ index: idx, key });
+        customFieldCols.push({ index: idx, key: slugifyColumnName(fieldName) });
       } else {
         // Any unknown column is treated as custom field
-        const key = 'cf_' + h.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        customFieldCols.push({ index: idx, key });
+        customFieldCols.push({ index: idx, key: slugifyColumnName(h) });
       }
     });
 
@@ -163,8 +116,7 @@ export class CsvParser implements IFileParser {
       }
 
       // Build or resolve suite path hierarchy (e.g. "Suite A / SubSuite B")
-      const suiteSegments = suitePath.split(/[\/>]/).map((s) => s.trim()).filter(Boolean);
-      if (suiteSegments.length === 0) suiteSegments.push('Default Suite');
+      const suiteSegments = splitSuitePath(suitePath);
 
       const rootName = suiteSegments[0];
       if (!rootSuitesMap.has(rootName)) {

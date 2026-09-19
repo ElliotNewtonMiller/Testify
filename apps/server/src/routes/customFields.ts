@@ -199,7 +199,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       return reply.status(404).send({ error: 'Test case not found' });
     }
 
-    const values = await fieldRepo.getValuesForEntity('TestCase', caseId);
+    const values = await fieldRepo.getValuesForEntity('TestCase', caseId, testCase.project_id);
     return { values };
   });
 
@@ -216,7 +216,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       }
 
       try {
-        const savedValue = await fieldRepo.setValue(definitionId, 'TestCase', caseId, value);
+        const savedValue = await fieldRepo.setValue(definitionId, 'TestCase', caseId, value, testCase.project_id);
         return reply.status(200).send({ value: savedValue });
       } catch (err: any) {
         if (err.message?.startsWith('UNKNOWN_FIELD')) {
@@ -255,7 +255,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       return reply.status(404).send({ error: 'Test suite not found' });
     }
 
-    const values = await fieldRepo.getValuesForEntity('TestSuite', suiteId);
+    const values = await fieldRepo.getValuesForEntity('TestSuite', suiteId, suite.project_id);
     return { values };
   });
 
@@ -272,7 +272,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       }
 
       try {
-        const savedValue = await fieldRepo.setValue(definitionId, 'TestSuite', suiteId, value);
+        const savedValue = await fieldRepo.setValue(definitionId, 'TestSuite', suiteId, value, suite.project_id);
         return reply.status(200).send({ value: savedValue });
       } catch (err: any) {
         if (err.message?.startsWith('UNKNOWN_FIELD')) {

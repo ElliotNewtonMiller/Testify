@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
+import { CustomFieldRepository } from '@testify/db';
 
 describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
   let serverInstance: any;
@@ -295,5 +296,27 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     });
     const values = JSON.parse(getRes.payload).values;
     expect(values.find((v: any) => v.definition.id === definition.id).value).toBe('Platform Team');
+  });
+
+  it('a project-scoped definition (e.g. one created by the import wizard) never leaks into the Admin Panel\'s global-only listing', async () => {
+    const { app, db, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+
+    await new CustomFieldRepository(db).createDefinition({
+      project_id: seed.projectId,
+      entity_type: 'TestCase',
+      name: 'imported_only_field',
+      field_label: 'Imported Only',
+      field_type: 'TEXT',
+    });
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/custom-fields?entity_type=TestCase',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const names = JSON.parse(listRes.payload).definitions.map((d: any) => d.name);
+    expect(names).not.toContain('imported_only_field');
   });
 });

@@ -135,10 +135,10 @@ export interface AuditLogsTable {
 export interface CustomFieldDefinitionsTable {
   id: string;
   project_id: string | null;
-  entity_type: string; // 'TestCaseVersion' | 'TestSuite' | 'Execution' | 'Project'
+  entity_type: string; // 'TestCase' | 'TestSuite'
   name: string;
   field_label: string;
-  field_type: string; // 'STRING' | 'NUMBER' | 'BOOLEAN' | 'DATE' | 'SINGLE_SELECT' | 'MULTI_SELECT' | 'MARKDOWN_TEXT'
+  field_type: string; // 'TEXT' | 'NUMBER' | 'CHECKBOX' | 'DATE' | 'SINGLE_SELECT' | 'MULTI_SELECT'
   is_required: Generated<number>; // 0 or 1
   default_value: string | null;
   validation_regex: string | null;

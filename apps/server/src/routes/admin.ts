@@ -227,6 +227,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'ROLE_UPDATED',
       'ROLE_DELETED',
       'PERMISSION_OVERRIDES_UPDATED',
+      'IMPORT_EXECUTED',
     ];
 
     const logs = await db

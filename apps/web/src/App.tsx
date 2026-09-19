@@ -16,6 +16,7 @@ import {
 } from "./components/SpecCaseListGrid";
 import { AuthModal, UserProfile } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
+import { ImportWizardModal } from "./components/ImportWizardModal";
 import { LoginPage } from "./components/LoginPage";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
 import { SuiteCustomFieldsPanel } from "./components/SuiteCustomFieldsPanel";
@@ -244,6 +245,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(false);
+  const [importWizardOpen, setImportWizardOpen] = useState<boolean>(false);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Entity Selection State (Project, Plan, Run)
@@ -1511,6 +1513,8 @@ export default function App() {
     userPermissions.includes("SPEC_APPROVE") || userPermissions.includes("SYSTEM_ADMIN");
   const hasSpecDeletePermission =
     userPermissions.includes("SPEC_DELETE") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasImportDataPermission =
+    userPermissions.includes("IMPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
@@ -1549,6 +1553,15 @@ export default function App() {
         currentUser={currentUser}
         projects={projectsList}
         onSelfPermissionsChanged={fetchCurrentUser}
+      />
+
+      <ImportWizardModal
+        isOpen={importWizardOpen}
+        onClose={() => setImportWizardOpen(false)}
+        currentUser={currentUser}
+        projects={projectsList}
+        defaultProjectId={selectedProjectId}
+        onImportComplete={refreshSpecTree}
       />
 
       <EntityManagementModal
@@ -1820,6 +1833,23 @@ export default function App() {
 
         {/* USER WIDGET & ADMIN PANEL */}
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {hasImportDataPermission && (
+            <button
+              onClick={() => setImportWizardOpen(true)}
+              style={{
+                backgroundColor: "#0ea5e9",
+                color: "#ffffff",
+                border: "none",
+                padding: "4px 10px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              📥 Import
+            </button>
+          )}
           {hasUserManagePermission && (
             <button
               onClick={() => setAdminPanelOpen(true)}

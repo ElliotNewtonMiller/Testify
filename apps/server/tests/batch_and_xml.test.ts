@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
-import { TestCaseRepository, TestCaseVersionRepository, ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
+import { TestCaseRepository, TestCaseVersionRepository, ProjectRepository, TestPlanRepository, BuildRepository, CustomFieldRepository } from '@testify/db';
 
 describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
   let serverInstance: any;
@@ -221,7 +221,7 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
                 incoming_key: 'cf_gateway',
                 action: 'AUTO_CREATE',
                 field_name: 'Payment Gateway',
-                field_type: 'STRING',
+                field_type: 'TEXT',
               },
             ],
             duplicate_resolution: { default_action: 'CREATE_NEW' },
@@ -246,10 +246,34 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
 
       const cfDef = await db.selectFrom('custom_field_definitions').selectAll().where('name', '=', 'cf_gateway').executeTakeFirst();
       expect(cfDef).toBeDefined();
+      // Routed through the same unified CustomFieldRepository the Admin Panel/Spec-mode
+      // use -- entity_type 'TestCase' (not the old raw-SQL path's undeclared
+      // 'TestCaseVersion'), project-scoped (not global), real field_type validation.
+      expect(cfDef?.entity_type).toBe('TestCase');
+      expect(cfDef?.project_id).toBe(seed.projectId);
+      expect(cfDef?.field_type).toBe('TEXT');
 
       const cfVal = await db.selectFrom('custom_field_values').selectAll().where('custom_field_definition_id', '=', cfDef!.id).executeTakeFirst();
       expect(cfVal).toBeDefined();
       expect(cfVal?.string_value).toBe('Stripe');
+      // entity_id is the case's own id, not a version id -- values are never
+      // version-locked, matching every other Spec-mode custom field value in this app.
+      // This is also what makes the value visible through the existing
+      // GET /api/v1/test-cases/:caseId/custom-field-values read path with zero
+      // special-casing.
+      expect(cfVal?.entity_type).toBe('TestCase');
+      expect(cfVal?.entity_id).toBe(caseInDb!.id);
+
+      const valuesRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/test-cases/${caseInDb!.id}/custom-field-values`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(valuesRes.statusCode).toBe(200);
+      const valuesBody = JSON.parse(valuesRes.body);
+      const gatewayEntry = valuesBody.values.find((v: any) => v.definition.name === 'cf_gateway');
+      expect(gatewayEntry).toBeDefined();
+      expect(gatewayEntry.value).toBe('Stripe');
 
       // The dangling security gap this feature closes: import execute now leaves an
       // audit trail attributing the import to the real authenticated actor.
@@ -261,6 +285,19 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
         .executeTakeFirst();
       expect(auditRow).toBeDefined();
       expect(auditRow?.actor_type).toBe('USER');
+
+      // Also visible through the Admin Panel's own Security Audit Log route, not just the
+      // raw table -- regression test for IMPORT_EXECUTED being in its action allowlist.
+      const auditLogRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/audit-logs',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(auditLogRes.statusCode).toBe(200);
+      const visibleImportLog = JSON.parse(auditLogRes.payload).audit_logs.find(
+        (l: any) => l.action === 'IMPORT_EXECUTED' && l.resource_id === seed.projectId
+      );
+      expect(visibleImportLog).toBeDefined();
     });
 
     it('handles duplicate reconciliation with VERSION_UP strategy', async () => {
@@ -379,6 +416,219 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       });
       expect(mismatchRes.statusCode).toBe(403);
       expect(JSON.parse(mismatchRes.payload).code).toBe('TOKEN_PROJECT_MISMATCH');
+    });
+
+    it('rolls back the entire import, including an earlier successfully-created field, when a later AUTO_CREATE mapping fails', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const before = await db.selectFrom('test_cases').select(db.fn.count('id').as('cnt')).executeTakeFirst();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          file_content:
+            '<testsuites><testsuite name="Atomicity Suite"><testcase name="Atomicity Case"><externalid>ATOM-1</externalid><custom_fields><custom_field><name><![CDATA[cf_a]]></name><value><![CDATA[x]]></value></custom_field><custom_field><name><![CDATA[cf_b]]></name><value><![CDATA[y]]></value></custom_field></custom_fields></testcase></testsuite></testsuites>',
+          format: 'TESTLINK_XML',
+          target_project_id: seed.projectId,
+          configuration: {
+            field_mappings: [
+              { incoming_key: 'cf_a', action: 'AUTO_CREATE', field_type: 'TEXT' },
+              { incoming_key: 'cf_b', action: 'AUTO_CREATE', field_type: 'NOT_A_REAL_TYPE' as any },
+            ],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+
+      // Neither the earlier-in-the-loop cf_a field nor the suite/case were left behind --
+      // the whole transaction rolled back, not just the statement that actually threw.
+      const cfA = await db.selectFrom('custom_field_definitions').selectAll().where('name', '=', 'cf_a').executeTakeFirst();
+      expect(cfA).toBeUndefined();
+      const caseInDb = await db.selectFrom('test_cases').selectAll().where('external_id', '=', 'ATOM-1').executeTakeFirst();
+      expect(caseInDb).toBeUndefined();
+      const after = await db.selectFrom('test_cases').select(db.fn.count('id').as('cnt')).executeTakeFirst();
+      expect(Number(after?.cnt)).toBe(Number(before?.cnt));
+    });
+
+    it('skips a single custom field value that fails validation, without aborting the rest of the import', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const selectField = await new CustomFieldRepository(db).createDefinition({
+        project_id: seed.projectId,
+        entity_type: 'TestCase',
+        name: 'preexisting_select',
+        field_label: 'Environment',
+        field_type: 'SINGLE_SELECT',
+        options: [{ option_label: 'Staging', option_value: 'staging' }],
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          file_content:
+            '<testsuites><testsuite name="Skip Suite"><testcase name="Skip Case"><externalid>SKIP-1</externalid><custom_fields><custom_field><name><![CDATA[cf_env]]></name><value><![CDATA[production]]></value></custom_field></custom_fields></testcase></testsuite></testsuites>',
+          format: 'TESTLINK_XML',
+          target_project_id: seed.projectId,
+          configuration: {
+            field_mappings: [{ incoming_key: 'cf_env', action: 'ROUTE_TO_EXISTING', target_field_id: selectField.id }],
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.summary.imported_cases_count).toBe(1);
+      expect(body.summary.skipped_custom_field_values_count).toBe(1);
+      expect(body.skipped_custom_field_value_warnings).toHaveLength(1);
+      expect(body.skipped_custom_field_value_warnings[0]).toMatchObject({ case_external_id_or_title: 'SKIP-1', incoming_key: 'cf_env' });
+
+      // The case itself was still created despite the one bad value.
+      const caseInDb = await db.selectFrom('test_cases').selectAll().where('external_id', '=', 'SKIP-1').executeTakeFirst();
+      expect(caseInDb).toBeDefined();
+      const valueRow = await db
+        .selectFrom('custom_field_values')
+        .selectAll()
+        .where('custom_field_definition_id', '=', selectField.id)
+        .executeTakeFirst();
+      expect(valueRow).toBeUndefined();
+    });
+
+    it('imports a JUnit XML report as AUTOMATED cases with junit_status/junit_duration_seconds as ordinary mappable custom fields', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const junitPayload = `<testsuites>
+  <testsuite name="CI Run" tests="1">
+    <testcase classname="pkg.LoginTest" name="testLogin" time="0.5" />
+  </testsuite>
+</testsuites>`;
+
+      const dryRunRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/dry-run',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { file_content: junitPayload, format: 'JUNIT_XML', target_project_id: seed.projectId },
+      });
+      expect(dryRunRes.statusCode).toBe(200);
+      const dryRunBody = JSON.parse(dryRunRes.payload);
+      const keys = dryRunBody.unmapped_custom_fields.map((f: any) => f.incoming_key);
+      expect(keys).toContain('junit_status');
+      expect(keys).toContain('junit_duration_seconds');
+
+      const execRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          file_content: junitPayload,
+          format: 'JUNIT_XML',
+          target_project_id: seed.projectId,
+          configuration: {
+            field_mappings: [
+              { incoming_key: 'junit_status', action: 'AUTO_CREATE', field_type: 'TEXT' },
+              { incoming_key: 'junit_duration_seconds', action: 'DROP' },
+            ],
+          },
+        },
+      });
+      expect(execRes.statusCode).toBe(200);
+
+      const caseInDb = await db.selectFrom('test_cases').selectAll().where('title', '=', 'testLogin').executeTakeFirst();
+      expect(caseInDb).toBeDefined();
+      expect(caseInDb?.execution_type).toBe('AUTOMATED');
+
+      // No Execution-mode records are created by a JUnit import (case-level custom fields
+      // only) -- confirms the locked-in "custom fields only" design decision.
+      const executionCount = await db.selectFrom('executions').select(db.fn.count('id').as('cnt')).executeTakeFirst();
+      expect(Number(executionCount?.cnt)).toBe(0);
+    });
+
+    it('requires TESTRAIL_CSV to be explicitly selected -- it is never auto-detected', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const testRailCsv = ['Title,Section,Priority,Steps,Expected Result', 'TR Case,Suite A,High,Do X,See Y'].join('\n');
+
+      // No explicit format -- falls through to STANDARD_CSV's generic fuzzy matching
+      // rather than being recognized as TestRail's shape.
+      const autoRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { file_content: testRailCsv, filename: 'export.csv', target_project_id: seed.projectId },
+      });
+      expect(autoRes.statusCode).toBe(200);
+      const autoCase = await db.selectFrom('test_cases').selectAll().where('title', '=', 'TR Case').executeTakeFirst();
+      // STANDARD_CSV has no "Priority" column recognition and treats "Section" generically
+      // as the suite path column -- title still comes through, but priority does not fold
+      // TestRail's label the way TESTRAIL_CSV would (this just proves STANDARD_CSV, not
+      // TESTRAIL_CSV, handled it).
+      expect(autoCase).toBeDefined();
+
+      // Explicit selection works and folds priority correctly.
+      const explicitRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          file_content: testRailCsv,
+          filename: 'export2.csv',
+          format: 'TESTRAIL_CSV',
+          target_project_id: seed.projectId,
+          configuration: { duplicate_resolution: { default_action: 'CREATE_NEW' } },
+        },
+      });
+      expect(explicitRes.statusCode).toBe(200);
+    });
+  });
+
+  describe('GET /api/v1/imports/custom-field-options', () => {
+    it('401s with no auth, 403s for a Viewer, and 200s with a global+project-scoped merged list for an IMPORT_DATA holder', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token: adminToken } = await loginAsAdmin(app);
+      const { token: viewerToken } = await createAndLoginAs(app, adminToken, 'Viewer');
+
+      await new CustomFieldRepository(db).createDefinition({ entity_type: 'TestCase', name: 'global_opt', field_label: 'Global', field_type: 'TEXT' });
+      await new CustomFieldRepository(db).createDefinition({
+        project_id: seed.projectId,
+        entity_type: 'TestCase',
+        name: 'project_opt',
+        field_label: 'Project',
+        field_type: 'TEXT',
+      });
+
+      const noAuthRes = await app.inject({ method: 'GET', url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}` });
+      expect(noAuthRes.statusCode).toBe(401);
+
+      const viewerRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+      });
+      expect(viewerRes.statusCode).toBe(403);
+
+      const okRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(okRes.statusCode).toBe(200);
+      const names = JSON.parse(okRes.payload).definitions.map((d: any) => d.name);
+      expect(names).toEqual(expect.arrayContaining(['global_opt', 'project_opt']));
+
+      const missingProjectRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/imports/custom-field-options',
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(missingProjectRes.statusCode).toBe(400);
     });
   });
 
