@@ -9,3 +9,4 @@ export * from './audit_log.repository.js';
 export * from './user.repository.js';
 export * from './role.repository.js';
 export * from './custom_field.repository.js';
+export * from './api_token.repository.js';

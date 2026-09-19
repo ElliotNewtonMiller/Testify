@@ -2,15 +2,16 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { sendPlanLockedError, sendBuildClosedError } from '../errors.js';
+import { sendPlanLockedError, sendBuildClosedError, sendTokenProjectMismatchError } from '../errors.js';
 import { resolveCaseLinkability } from './testPlanCases.js';
+import { authenticateRequest } from '../middleware/auth.js';
 import type {
   BatchExecutionRequest,
   BatchExecutionResponse,
   BatchExecutionSingleResult,
 } from '@testify/core';
 
-export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>) {
+export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   app.post(
     '/api/v1/test-plans/:planId/builds/:buildId/executions/batch',
     async (
@@ -21,6 +22,12 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       }>,
       reply: FastifyReply
     ) => {
+      const user = await authenticateRequest(req, reply, db, jwtSecret);
+      if (!user) return;
+      if (!user.permissions.includes('EXECUTE_RUN') && !user.permissions.includes('SYSTEM_ADMIN')) {
+        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'EXECUTE_RUN' });
+      }
+
       const startTime = Date.now();
       const { planId, buildId } = req.params;
       const allOrNothing =
@@ -59,6 +66,11 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       }
 
       const projectId = buildPlanInfo.project_id;
+
+      if (user.api_token && user.api_token.project_id !== projectId) {
+        return sendTokenProjectMismatchError(reply, user.api_token.project_id, projectId, req.url);
+      }
+
       const now = new Date().toISOString();
 
       // 2. Pre-fetched key resolution cache
@@ -239,7 +251,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           id: execId,
           build_id: buildId,
           test_plan_case_id: resolvedPlanCase.plan_case_id,
-          tester_id: body.runner_info?.name || 'usr_ci_runner',
+          tester_id: user.id,
           status: item.status || 'COMPLETED',
           verdict: item.verdict,
           execution_duration_ms: item.duration_ms || 0,
@@ -311,6 +323,25 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
         },
         results,
       };
+
+      // One summary row per batch call, not per execution item, to avoid flooding
+      // audit_logs on a large batch.
+      await db
+        .insertInto('audit_logs')
+        .values({
+          id: uuidv4(),
+          actor_id: user.id,
+          actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+          action: 'BATCH_EXECUTION_RECORDED',
+          resource_type: 'build',
+          resource_id: buildId,
+          project_id: projectId,
+          diff: JSON.stringify({ successful: successCount, failed: failedCount, plan_id: planId }),
+          ip_address: '127.0.0.1',
+          user_agent: 'TestifyBatchExecutionService',
+          created_at: now,
+        })
+        .execute();
 
       const httpStatus = failedCount > 0 && !allOrNothing ? 207 : 201;
       return reply.status(httpStatus).send(responsePayload);

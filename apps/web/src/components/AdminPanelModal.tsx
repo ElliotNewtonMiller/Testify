@@ -72,6 +72,19 @@ interface CustomFieldDefinition {
   options: CustomFieldOption[];
 }
 
+interface ApiTokenItem {
+  id: string;
+  project_id: string;
+  name: string;
+  token_prefix: string;
+  capabilities: string[];
+  created_by: string;
+  expires_at: string | null;
+  is_revoked: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
 interface AdminPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -90,7 +103,7 @@ export function AdminPanelModal({
   onSelfPermissionsChanged,
 }: AdminPanelModalProps) {
   const [activeTab, setActiveTab] = useState<
-    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "AUDIT"
+    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "AUDIT"
   >("ROSTER");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
@@ -164,6 +177,21 @@ export function AdminPanelModal({
     detail: string;
   } | null>(null);
 
+  // API Tokens tab state. Tokens are project-scoped (api_tokens.project_id is NOT NULL),
+  // so this tab carries its own project picker independent of the main workspace header's.
+  const [apiTokens, setApiTokens] = useState<ApiTokenItem[]>([]);
+  const [tokenProjectScope, setTokenProjectScope] = useState<string>("");
+  const [issuerCapabilityCeiling, setIssuerCapabilityCeiling] = useState<string[]>([]);
+  const [newTokenName, setNewTokenName] = useState<string>("");
+  const [newTokenExpiresAt, setNewTokenExpiresAt] = useState<string>("");
+  const [newTokenCapabilities, setNewTokenCapabilities] = useState<Set<string>>(new Set());
+  const [isCreatingToken, setIsCreatingToken] = useState<boolean>(false);
+  // Deliberately separate from `apiTokens` (which only ever holds prefix/metadata after
+  // the fact) -- the plaintext must never be merged into state that could linger, get
+  // re-rendered after dismissal, or round-trip back from a refetch.
+  const [justCreatedToken, setJustCreatedToken] = useState<{ plaintext: string; name: string } | null>(null);
+  const [copyButtonLabel, setCopyButtonLabel] = useState<string>("Copy");
+
   // Shared, dynamically-fetched role option list -- replaces 3 previously-hardcoded
   // <select> option lists (create-user form, Matrix global-role picker, Matrix per-project
   // role picker), which had drifted from each other and were all missing "Automation
@@ -190,6 +218,32 @@ export function AdminPanelModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUserId, overrideScope, activeTab]);
+
+  // Default the token tab's project scope once the project list is available.
+  useEffect(() => {
+    if (!tokenProjectScope && projects.length > 0) {
+      setTokenProjectScope(projects[0].id);
+    }
+  }, [projects, tokenProjectScope]);
+
+  // Reload the token list + issuer ceiling whenever the tab is active and the scope changes.
+  useEffect(() => {
+    if (isOpen && activeTab === "API_TOKENS" && tokenProjectScope) {
+      fetchApiTokens(tokenProjectScope);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeTab, tokenProjectScope]);
+
+  // The plaintext is shown exactly once -- clear it on tab switch, scope change, or close
+  // so it can never reappear from a stale render after the user has moved on.
+  useEffect(() => {
+    if (!isOpen || activeTab !== "API_TOKENS") {
+      setJustCreatedToken(null);
+    }
+  }, [isOpen, activeTab]);
+  useEffect(() => {
+    setJustCreatedToken(null);
+  }, [tokenProjectScope]);
 
   // Builds the Authorization header from the signed JWT in localStorage. The admin API
   // requires a real Bearer token on every request (see apps/server/src/middleware/auth.ts) --
@@ -274,6 +328,90 @@ export function AdminPanelModal({
     } catch {
       // Ignore -- the tab just shows an empty list
     }
+  };
+
+  const fetchApiTokens = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/v1/projects/${projectId}/api-tokens`, {
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setApiTokens(data.tokens || []);
+        setIssuerCapabilityCeiling(data.issuer_capability_ceiling || []);
+      }
+    } catch {
+      // Ignore -- the tab just shows an empty list
+    }
+  };
+
+  const handleCreateToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setIsCreatingToken(true);
+    try {
+      const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          name: newTokenName,
+          capabilities: Array.from(newTokenCapabilities),
+          expires_at: newTokenExpiresAt ? new Date(newTokenExpiresAt).toISOString() : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || "Failed to create token");
+      }
+      setJustCreatedToken({ plaintext: data.plaintext, name: data.token.name });
+      setCopyButtonLabel("Copy");
+      setNewTokenName("");
+      setNewTokenExpiresAt("");
+      setNewTokenCapabilities(new Set());
+      fetchApiTokens(tokenProjectScope);
+      fetchAuditLogs();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to create token");
+    } finally {
+      setIsCreatingToken(false);
+    }
+  };
+
+  // One-step revoke, modeled on handleDeleteTemplate -- revocation has no "in use"
+  // collision to warn about, so there's no confirmation dialog needed.
+  const handleRevokeToken = async (tokenId: string) => {
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens/${tokenId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to revoke token");
+      }
+      flashSuccess("Token revoked.");
+      fetchApiTokens(tokenProjectScope);
+      fetchAuditLogs();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to revoke token");
+    }
+  };
+
+  const handleCopyToken = (plaintext: string) => {
+    navigator.clipboard.writeText(plaintext).then(
+      () => {
+        setCopyButtonLabel("Copied!");
+        setTimeout(() => setCopyButtonLabel("Copy"), 2000);
+      },
+      () => {
+        setCopyButtonLabel("Copy failed");
+        setTimeout(() => setCopyButtonLabel("Copy"), 2000);
+      },
+    );
   };
 
   const fetchOverrides = async (userId: string, projectId: string | null) => {
@@ -843,6 +981,21 @@ export function AdminPanelModal({
             }}
           >
             🏷️ Custom Fields ({customFields.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("API_TOKENS")}
+            style={{
+              padding: "10px 16px",
+              backgroundColor: "transparent",
+              border: "none",
+              borderBottom:
+                activeTab === "API_TOKENS" ? "2px solid #38bdf8" : "none",
+              color: activeTab === "API_TOKENS" ? "#38bdf8" : "#94a3b8",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            🔑 API Tokens
           </button>
           <button
             onClick={() => setActiveTab("AUDIT")}
@@ -2208,6 +2361,323 @@ export function AdminPanelModal({
                   Select a custom field from the list, or create a new one.
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: API TOKENS -- project-scoped machine credentials for CI/automation callers.
+            Capabilities are capped at the issuing admin's own effective permissions on the
+            selected project, and SYSTEM_ADMIN can never be granted to a token (see
+            apps/server/src/routes/apiTokens.ts). */}
+        {activeTab === "API_TOKENS" && (
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <label style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 700 }}>PROJECT</label>
+              <select
+                value={tokenProjectScope}
+                onChange={(e) => setTokenProjectScope(e.target.value)}
+                style={{
+                  padding: "6px 10px",
+                  backgroundColor: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: "4px",
+                  color: "#e2e8f0",
+                  fontSize: "12px",
+                }}
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {justCreatedToken && (
+              <div
+                style={{
+                  padding: "12px",
+                  backgroundColor: "rgba(34, 197, 94, 0.1)",
+                  border: "1px solid #22c55e",
+                  borderRadius: "6px",
+                }}
+              >
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#4ade80", marginBottom: "6px" }}>
+                  ✓ Token "{justCreatedToken.name}" created
+                </div>
+                <div style={{ fontSize: "11px", color: "#fca5a5", marginBottom: "8px" }}>
+                  Copy this token now -- for security, it will never be shown again.
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <code
+                    style={{
+                      flex: 1,
+                      padding: "8px 10px",
+                      backgroundColor: "#0f172a",
+                      border: "1px solid #334155",
+                      borderRadius: "4px",
+                      color: "#e2e8f0",
+                      fontSize: "12px",
+                      overflowX: "auto",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {justCreatedToken.plaintext}
+                  </code>
+                  <button
+                    onClick={() => handleCopyToken(justCreatedToken.plaintext)}
+                    style={{
+                      padding: "8px 12px",
+                      backgroundColor: "#16a34a",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {copyButtonLabel}
+                  </button>
+                  <button
+                    onClick={() => setJustCreatedToken(null)}
+                    style={{
+                      padding: "8px 10px",
+                      backgroundColor: "transparent",
+                      border: "1px solid #4b5563",
+                      borderRadius: "4px",
+                      color: "#9ca3af",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "20px", flex: 1, overflow: "hidden" }}>
+              {/* Token list */}
+              <div
+                style={{
+                  flex: 1,
+                  backgroundColor: "#1e293b",
+                  borderRadius: "6px",
+                  border: "1px solid #334155",
+                  overflowY: "auto",
+                  padding: "12px",
+                }}
+              >
+                {apiTokens.length === 0 ? (
+                  <div style={{ color: "#64748b", fontSize: "13px" }}>
+                    No tokens for this project yet.
+                  </div>
+                ) : (
+                  apiTokens.map((t) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        padding: "10px",
+                        marginBottom: "8px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: "6px",
+                        opacity: t.is_revoked ? 0.5 : 1,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>
+                            {t.name}
+                            {t.is_revoked && (
+                              <span style={{ marginLeft: "8px", fontSize: "10px", color: "#f87171", fontWeight: 700 }}>
+                                REVOKED
+                              </span>
+                            )}
+                          </div>
+                          <code style={{ fontSize: "11px", color: "#64748b" }}>{t.token_prefix}…</code>
+                        </div>
+                        {!t.is_revoked && (
+                          <button
+                            onClick={() => handleRevokeToken(t.id)}
+                            style={{
+                              padding: "4px 10px",
+                              backgroundColor: "transparent",
+                              border: "1px solid #ef4444",
+                              borderRadius: "4px",
+                              color: "#f87171",
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px" }}>
+                        {t.capabilities.map((c) => (
+                          <span
+                            key={c}
+                            style={{
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              border: "1px solid #4b5563",
+                              color: "#9ca3af",
+                            }}
+                          >
+                            {c}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px" }}>
+                        Created {new Date(t.created_at).toLocaleString()}
+                        {t.expires_at && ` · Expires ${new Date(t.expires_at).toLocaleString()}`}
+                        {t.last_used_at
+                          ? ` · Last used ${new Date(t.last_used_at).toLocaleString()}`
+                          : " · Never used"}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Create form */}
+              <div
+                style={{
+                  width: "340px",
+                  backgroundColor: "#1e293b",
+                  borderRadius: "6px",
+                  border: "1px solid #334155",
+                  padding: "14px",
+                  overflowY: "auto",
+                }}
+              >
+                <h4 style={{ fontSize: "12px", fontWeight: 700, margin: "0 0 10px 0", color: "#e2e8f0" }}>
+                  New Token
+                </h4>
+                <input
+                  type="text"
+                  placeholder="Token name (e.g. CI runner)"
+                  value={newTokenName}
+                  onChange={(e) => setNewTokenName(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    marginBottom: "8px",
+                    backgroundColor: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: "4px",
+                    color: "#e2e8f0",
+                    fontSize: "12px",
+                    boxSizing: "border-box",
+                  }}
+                />
+                <label style={{ fontSize: "10px", color: "#64748b", display: "block", marginBottom: "2px" }}>
+                  Expires (optional)
+                </label>
+                <input
+                  type="date"
+                  value={newTokenExpiresAt}
+                  onChange={(e) => setNewTokenExpiresAt(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    marginBottom: "12px",
+                    backgroundColor: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: "4px",
+                    color: "#e2e8f0",
+                    fontSize: "12px",
+                    boxSizing: "border-box",
+                  }}
+                />
+
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#e2e8f0", marginBottom: "6px" }}>
+                  Capabilities
+                </div>
+                {Array.from(
+                  new Set(
+                    permissionRegistry
+                      .filter((p) => p.key !== "SYSTEM_ADMIN" && issuerCapabilityCeiling.includes(p.key))
+                      .map((p) => p.module),
+                  ),
+                ).map((moduleName) => (
+                  <div key={moduleName} style={{ marginBottom: "10px" }}>
+                    <div
+                      style={{
+                        fontSize: "10px",
+                        color: "#64748b",
+                        textTransform: "uppercase",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      {moduleName}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {permissionRegistry
+                        .filter((p) => p.module === moduleName && p.key !== "SYSTEM_ADMIN" && issuerCapabilityCeiling.includes(p.key))
+                        .map((p) => {
+                          const isOn = newTokenCapabilities.has(p.key);
+                          return (
+                            <button
+                              key={p.key}
+                              onClick={() =>
+                                setNewTokenCapabilities((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(p.key)) next.delete(p.key);
+                                  else next.add(p.key);
+                                  return next;
+                                })
+                              }
+                              title={p.description}
+                              style={{
+                                padding: "3px 8px",
+                                borderRadius: "4px",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                border: isOn ? "1px solid #22c55e" : "1px solid #4b5563",
+                                backgroundColor: isOn ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                                color: isOn ? "#4ade80" : "#9ca3af",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {isOn ? "✓" : "—"} {p.key}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                ))}
+                {issuerCapabilityCeiling.filter((k) => k !== "SYSTEM_ADMIN").length === 0 && (
+                  <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                    You have no grantable permissions on this project.
+                  </div>
+                )}
+
+                <button
+                  onClick={handleCreateToken}
+                  disabled={isCreatingToken || !newTokenName || newTokenCapabilities.size === 0}
+                  style={{
+                    marginTop: "8px",
+                    padding: "8px 16px",
+                    backgroundColor: isCreatingToken ? "#166534" : "#16a34a",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#fff",
+                    fontWeight: 600,
+                    fontSize: "12px",
+                    cursor: isCreatingToken ? "default" : "pointer",
+                    opacity: isCreatingToken || !newTokenName || newTokenCapabilities.size === 0 ? 0.6 : 1,
+                  }}
+                >
+                  {isCreatingToken ? "Creating..." : "Create Token"}
+                </button>
+              </div>
             </div>
           </div>
         )}

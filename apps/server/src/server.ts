@@ -20,6 +20,7 @@ import { registerTestPlanCaseRoutes } from './routes/testPlanCases.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerCustomFieldRoutes } from './routes/customFields.js';
 import { registerSpecEditingRoutes } from './routes/specEditing.js';
+import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { requirePermission } from './middleware/auth.js';
 import { UserRepository } from '@testify/db';
 
@@ -65,15 +66,16 @@ export async function createServer(connectionString?: string) {
     await seedDevFixtures(db);
   }
 
-  // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, Project, Custom Field, & Spec-Editing Routes
-  await registerIngestionRoutes(app, db);
-  await registerBatchExecutionRoutes(app, db);
+  // Register Ingestion, Batch Execution, Auth, Admin, Spec/Plan-Curation, Project, Custom Field, Spec-Editing, & API Token Routes
+  await registerIngestionRoutes(app, db, jwtSecret);
+  await registerBatchExecutionRoutes(app, db, jwtSecret);
   await registerAuthRoutes(app, db, jwtSecret);
   await registerAdminRoutes(app, db, jwtSecret);
   await registerTestPlanCaseRoutes(app, db, jwtSecret);
   await registerProjectRoutes(app, db, jwtSecret);
   await registerCustomFieldRoutes(app, db, jwtSecret);
   await registerSpecEditingRoutes(app, db, jwtSecret);
+  await registerApiTokenRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {

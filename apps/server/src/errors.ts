@@ -174,3 +174,71 @@ export function sendRoleInUseError(
     ],
   });
 }
+
+export function sendInvalidTokenError(reply: FastifyReply, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'INVALID_TOKEN',
+    status: 401,
+    title: 'Unauthorized',
+    detail: 'The provided API token is invalid.',
+    instance,
+  });
+}
+
+export function sendTokenRevokedError(reply: FastifyReply, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'TOKEN_REVOKED',
+    status: 401,
+    title: 'Unauthorized',
+    detail: 'This API token has been revoked.',
+    instance,
+  });
+}
+
+export function sendTokenExpiredError(reply: FastifyReply, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'TOKEN_EXPIRED',
+    status: 401,
+    title: 'Unauthorized',
+    detail: 'This API token has expired.',
+    instance,
+  });
+}
+
+export function sendTokenProjectMismatchError(
+  reply: FastifyReply,
+  tokenProjectId: string,
+  requestedProjectId: string,
+  instance?: string
+) {
+  return sendProblemDetails(reply, {
+    code: 'TOKEN_PROJECT_MISMATCH',
+    status: 403,
+    title: 'Forbidden',
+    detail: `This API token is scoped to project '${tokenProjectId}' and cannot be used against project '${requestedProjectId}'.`,
+    instance,
+    invalid_params: [
+      {
+        name: 'target_project_id',
+        reason: "Does not match the authenticating token's bound project",
+      },
+    ],
+  });
+}
+
+export function sendCapabilityCeilingExceededError(
+  reply: FastifyReply,
+  requestedKeys: string[],
+  allowedKeys: string[],
+  instance?: string
+) {
+  const excessKeys = requestedKeys.filter((k) => !allowedKeys.includes(k));
+  return sendProblemDetails(reply, {
+    code: 'CAPABILITY_CEILING_EXCEEDED',
+    status: 403,
+    title: 'Forbidden',
+    detail: `Cannot grant capabilities you don't hold yourself on this project: ${excessKeys.join(', ')}.`,
+    instance,
+    invalid_params: excessKeys.map((key) => ({ name: 'capabilities', reason: `You do not hold '${key}' on this project` })),
+  });
+}

@@ -1,8 +1,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository } from '@testify/db';
+import { UserRepository, RoleRepository, ApiTokenRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
 import { verifyJwt } from '@testify/core';
+import { sendInvalidTokenError, sendTokenRevokedError, sendTokenExpiredError } from '../errors.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -10,6 +11,11 @@ export interface AuthenticatedUser {
   email: string;
   global_role: string;
   permissions: string[];
+  /** Present only when authenticated via a machine API token (see authenticateApiToken
+   * below). Lets project-binding-sensitive routes (ingestion.ts, batchExecution.ts)
+   * enforce "this token may only touch its own project." Absent for JWT-authenticated
+   * human users. */
+  api_token?: { id: string; project_id: string };
 }
 
 declare module 'fastify' {
@@ -19,7 +25,69 @@ declare module 'fastify' {
 }
 
 /**
- * Authenticates a request from its `Authorization: Bearer <jwt>` header.
+ * Authenticates a request presenting a machine API token (Authorization: Bearer
+ * tf_ci_...) instead of a JWT. Produces the same AuthenticatedUser shape as the JWT path
+ * so every downstream consumer (request.user!.id/.permissions/etc.) keeps working
+ * unmodified regardless of which auth method was used.
+ *
+ * The synthetic id is deliberately never the issuing admin's own user id -- attributing
+ * every CI-recorded execution/import to the human who happened to mint the token would
+ * corrupt tester_id/audit_logs.actor_id with a false identity. permissions are the
+ * token's own `capabilities` array, frozen at mint time (no re-evaluation against
+ * RoleRepository) -- capabilities can never include 'SYSTEM_ADMIN' (enforced at mint
+ * time in routes/apiTokens.ts), so requirePermission's SYSTEM_ADMIN bypass simply never
+ * fires for a token, which is exactly the desired behavior.
+ */
+async function authenticateApiToken(
+  rawToken: string,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  db: Kysely<Database>
+): Promise<AuthenticatedUser | null> {
+  const tokenRepo = new ApiTokenRepository(db);
+  const tokenHash = hashToken(rawToken);
+  const token = await tokenRepo.findByHash(tokenHash);
+
+  if (!token) {
+    sendInvalidTokenError(reply, request.url);
+    return null;
+  }
+  if (token.is_revoked) {
+    sendTokenRevokedError(reply, request.url);
+    return null;
+  }
+  if (token.expires_at && new Date(token.expires_at).getTime() <= Date.now()) {
+    sendTokenExpiredError(reply, request.url);
+    return null;
+  }
+
+  try {
+    await tokenRepo.touchLastUsed(token.id);
+  } catch {
+    // Best-effort -- a failure to record last-used must never fail the request itself.
+  }
+
+  const authUser: AuthenticatedUser = {
+    // The token's own id, unprefixed -- every id column this ends up written into
+    // (executions.tester_id, audit_logs.actor_id, etc.) is varchar(36), exactly one
+    // uuidv7's width with zero room for a prefix (the same class of bug this repo hit
+    // once already with devId()-generated fixture ids). api_token.id below is what
+    // actually signals "this is a machine identity" to any code that cares.
+    id: token.id,
+    username: token.name,
+    email: '',
+    global_role: 'ServiceAccount',
+    permissions: token.capabilities,
+    api_token: { id: token.id, project_id: token.project_id },
+  };
+
+  request.user = authUser;
+  return authUser;
+}
+
+/**
+ * Authenticates a request from its `Authorization: Bearer <...>` header -- either a
+ * human JWT or a machine API token (tf_ci_...), dispatched by prefix.
  *
  * There is no other way in: no `X-User-Id` impersonation header, and no fallback to
  * an admin (or any) user when the header is missing or invalid -- both existed here
@@ -44,6 +112,11 @@ export async function authenticateRequest(
   }
 
   const token = authHeader.substring(7);
+
+  if (token.startsWith(API_TOKEN_PREFIX)) {
+    return authenticateApiToken(token, request, reply, db);
+  }
+
   const result = verifyJwt(token, jwtSecret);
   if (!result.valid || !result.payload) {
     reply.status(401).send({ error: `Unauthorized: ${result.reason || 'invalid token'}` });

@@ -16,8 +16,39 @@ import {
   type DryRunWarning,
   type HierarchyPreviewNode,
 } from '@testify/core';
+import { authenticateRequest, type AuthenticatedUser } from '../middleware/auth.js';
+import { sendTokenProjectMismatchError } from '../errors.js';
 
-export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<Database>) {
+/**
+ * Resolves the project a request should import into, given the caller's identity and
+ * whatever project id (if any) parseImportRequest found in the body/multipart fields.
+ * A machine token's own bound project always wins (a mismatched body field is rejected
+ * outright, closing the "token scoped to project A imports into project B" hole);
+ * a human JWT caller must be explicit -- there is deliberately no fallback to an
+ * arbitrary project anymore (see the removed fallback in parseImportRequest below).
+ */
+function resolveImportProjectId(
+  user: AuthenticatedUser,
+  bodyProjectId: string | undefined,
+  reply: FastifyReply,
+  instance: string
+): string | null {
+  if (user.api_token) {
+    if (bodyProjectId && bodyProjectId !== user.api_token.project_id) {
+      sendTokenProjectMismatchError(reply, user.api_token.project_id, bodyProjectId, instance);
+      return null;
+    }
+    return user.api_token.project_id;
+  }
+
+  if (!bodyProjectId) {
+    reply.status(400).send({ error: 'target_project_id is required' });
+    return null;
+  }
+  return bodyProjectId;
+}
+
+export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   // Helper to extract file buffer and configuration from request
   async function parseImportRequest(req: FastifyRequest) {
     let fileBuffer: Buffer | null = null;
@@ -63,12 +94,11 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       throw new Error('No import file provided in request.');
     }
 
-    if (!targetProjectId) {
-      // Fallback: pick first project from DB
-      const proj = await db.selectFrom('projects').select('id').executeTakeFirst();
-      if (!proj) throw new Error('No target project found.');
-      targetProjectId = proj.id;
-    }
+    // targetProjectId may be undefined here -- this is a pure parser now. Which project
+    // to actually import into (and validating that a caller is allowed to use it) is
+    // resolved by resolveImportProjectId() in each route handler below, since that
+    // decision depends on the caller's authenticated identity (human vs. machine token),
+    // not just on what the request body happened to contain.
 
     // Select parser
     const parsers: IFileParser[] = [new SaxXmlParser(), new JsonSchemaParser(), new CsvParser()];
@@ -89,8 +119,16 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
   // POST /api/v1/imports/dry-run
   app.post('/api/v1/imports/dry-run', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await authenticateRequest(req, reply, db, jwtSecret);
+    if (!user) return;
+    if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {
+      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+    }
+
     try {
-      const { fileBuffer, filename, selectedParser, targetProjectId, configuration } = await parseImportRequest(req);
+      const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
+      const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
+      if (!targetProjectId) return;
 
       // Verify project exists
       const project = await db
@@ -257,9 +295,17 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
   // POST /api/v1/imports/execute
   app.post('/api/v1/imports/execute', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await authenticateRequest(req, reply, db, jwtSecret);
+    if (!user) return;
+    if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {
+      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+    }
+
     const startTime = Date.now();
     try {
-      const { fileBuffer, filename, selectedParser, targetProjectId, configuration } = await parseImportRequest(req);
+      const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
+      const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
+      if (!targetProjectId) return;
 
       const project = await db
         .selectFrom('projects')
@@ -576,17 +622,36 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       }
 
       const durationMs = Date.now() - startTime;
+      const summary = {
+        imported_suites_count: importedSuitesCount,
+        imported_cases_count: importedCasesCount,
+        created_versions_count: createdVersionsCount,
+        overwritten_cases_count: overwrittenCasesCount,
+        skipped_cases_count: skippedCasesCount,
+        auto_created_custom_fields_count: autoCreatedCfCount,
+        duration_ms: durationMs,
+      };
+
+      await db
+        .insertInto('audit_logs')
+        .values({
+          id: uuidv4(),
+          actor_id: user.id,
+          actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+          action: 'IMPORT_EXECUTED',
+          resource_type: 'project',
+          resource_id: targetProjectId,
+          project_id: targetProjectId,
+          diff: JSON.stringify(summary),
+          ip_address: '127.0.0.1',
+          user_agent: 'TestifyIngestionService',
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+
       return reply.status(200).send({
         object: 'import_execute_result',
-        summary: {
-          imported_suites_count: importedSuitesCount,
-          imported_cases_count: importedCasesCount,
-          created_versions_count: createdVersionsCount,
-          overwritten_cases_count: overwrittenCasesCount,
-          skipped_cases_count: skippedCasesCount,
-          auto_created_custom_fields_count: autoCreatedCfCount,
-          duration_ms: durationMs,
-        },
+        summary,
       });
     } catch (err) {
       return reply.status(400).send({ error: (err as Error).message });
