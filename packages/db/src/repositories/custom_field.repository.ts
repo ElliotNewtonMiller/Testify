@@ -375,6 +375,58 @@ export class CustomFieldRepository {
     });
   }
 
+  /** Batched sibling of getValuesForEntity() -- fetches every definition's value for every
+   * entity in `entityIds` in one round-trip (one listVisibleToProject/listDefinitions call +
+   * one custom_field_values query with entity_id IN (...)), instead of one getValuesForEntity
+   * call per entity. Built for export, which needs this across potentially hundreds of cases
+   * in a single request. Every entity id always gets an entry in the returned Map (possibly
+   * [] if there are no visible definitions), and every definition always gets a
+   * CustomFieldValueEntry per entity (value: null if unset), matching getValuesForEntity's
+   * per-definition-always-present contract. */
+  async getValuesForEntities(
+    entityType: CustomFieldEntityType,
+    entityIds: string[],
+    projectId?: string
+  ): Promise<Map<string, CustomFieldValueEntry[]>> {
+    if (entityIds.length === 0) return new Map();
+
+    const definitions = projectId ? await this.listVisibleToProject(projectId, entityType) : await this.listDefinitions(entityType);
+    if (definitions.length === 0) {
+      return new Map(entityIds.map((id) => [id, []]));
+    }
+
+    const valueRows = await this.db
+      .selectFrom('custom_field_values')
+      .selectAll()
+      .where('entity_type', '=', entityType)
+      .where('entity_id', 'in', entityIds)
+      .where('custom_field_definition_id', 'in', definitions.map((d) => d.id))
+      .execute();
+
+    const rowByKey = new Map(valueRows.map((r) => [`${r.entity_id}::${r.custom_field_definition_id}`, r]));
+
+    const result = new Map<string, CustomFieldValueEntry[]>();
+    for (const entityId of entityIds) {
+      result.set(
+        entityId,
+        definitions.map((definition) => {
+          const row = rowByKey.get(`${entityId}::${definition.id}`);
+          const value = row
+            ? readCustomFieldValue(definition.field_type, {
+                string_value: row.string_value,
+                number_value: row.number_value,
+                boolean_value: row.boolean_value,
+                date_value: row.date_value,
+                json_value: row.json_value,
+              })
+            : null;
+          return { definition, value };
+        })
+      );
+    }
+    return result;
+  }
+
   /** Validates `rawValue` against the definition's field_type/options/validation_regex via
    * @testify/core's parseCustomFieldValue (throwing INVALID_FIELD_VALUE/REQUIRED_FIELD_MISSING
    * on failure), then updates the existing value row for this (definition, entity) pair or

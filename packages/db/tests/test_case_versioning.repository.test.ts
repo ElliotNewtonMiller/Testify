@@ -106,6 +106,46 @@ describe('Suite/case CRUD: external-id generation, draft versioning, and force-d
     });
   });
 
+  describe('TestCaseVersionRepository.findByIds / getStepsForVersions (batched, built for export)', () => {
+    it('findByIds matches individual findById calls for a set of version ids', async () => {
+      const project = await projectRepo.create({ name: 'P', prefix: 'BAT' });
+      const suite = await suiteRepo.create({ project_id: project.id, name: 'S' });
+      const caseA = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'BAT-A', title: 'A' });
+      const caseB = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'BAT-B', title: 'B' });
+      const versionA = await versionRepo.create({ test_case_id: caseA.id, version_number: 1, author_id: 'a1', summary: 'Sum A' });
+      const versionB = await versionRepo.create({ test_case_id: caseB.id, version_number: 1, author_id: 'a1', summary: 'Sum B' });
+
+      const batched = await versionRepo.findByIds([versionA.id, versionB.id]);
+      expect(batched.map((v) => v.id).sort()).toEqual([versionA.id, versionB.id].sort());
+      expect(batched.find((v) => v.id === versionA.id)?.summary).toBe('Sum A');
+
+      expect(await versionRepo.findByIds([])).toEqual([]);
+    });
+
+    it('getStepsForVersions groups steps per version, matching individual getSteps calls', async () => {
+      const project = await projectRepo.create({ name: 'P', prefix: 'BAT2' });
+      const suite = await suiteRepo.create({ project_id: project.id, name: 'S' });
+      const caseA = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'BAT2-A', title: 'A' });
+      const caseB = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'BAT2-B', title: 'B' });
+      const versionA = await versionRepo.create({
+        test_case_id: caseA.id,
+        version_number: 1,
+        author_id: 'a1',
+        steps: [{ step_number: 1, action: 'A1', expected_result: 'R1' }, { step_number: 2, action: 'A2', expected_result: 'R2' }],
+      });
+      const versionB = await versionRepo.create({ test_case_id: caseB.id, version_number: 1, author_id: 'a1', steps: [] });
+
+      const stepsMap = await versionRepo.getStepsForVersions([versionA.id, versionB.id]);
+      expect(stepsMap.get(versionA.id)).toEqual(await versionRepo.getSteps(versionA.id));
+      expect(stepsMap.get(versionA.id)).toHaveLength(2);
+      // A version with zero steps has no map entry (nothing to group), matching the
+      // "one query, group what exists" batching pattern used elsewhere in this repo.
+      expect(stepsMap.has(versionB.id)).toBe(false);
+
+      expect(await versionRepo.getStepsForVersions([])).toEqual(new Map());
+    });
+  });
+
   describe('TestCaseVersionRepository.updateContent', () => {
     it('updates summary/preconditions without touching status or steps', async () => {
       const project = await projectRepo.create({ name: 'P', prefix: 'UPC' });

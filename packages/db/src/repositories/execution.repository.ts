@@ -159,6 +159,26 @@ export class ExecutionRepository {
       .execute();
   }
 
+  /** Batched sibling of getExecutionSteps() -- one query for every execution's steps
+   * instead of one getExecutionSteps() call per execution. Built for export, which needs
+   * step results across every execution in a build in a single request. */
+  async getExecutionStepsForExecutions(executionIds: string[]): Promise<Map<string, ExecutionStep[]>> {
+    if (executionIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom('execution_steps')
+      .selectAll()
+      .where('execution_id', 'in', executionIds)
+      .orderBy('step_number', 'asc')
+      .execute();
+    const map = new Map<string, ExecutionStep[]>();
+    for (const row of rows) {
+      const list = map.get(row.execution_id) ?? [];
+      list.push(row);
+      map.set(row.execution_id, list);
+    }
+    return map;
+  }
+
   async createBatch(inputs: CreateExecutionInput[]): Promise<ExecutionWithSteps[]> {
     if (inputs.length === 0) return [];
 

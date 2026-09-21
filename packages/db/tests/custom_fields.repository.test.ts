@@ -349,4 +349,53 @@ describe('CustomFieldRepository', () => {
     const result = await fieldRepo.deleteDefinition('does-not-exist');
     expect(result).toEqual({ deleted: false, blockedByValueCount: 0, affectedEntityIds: [] });
   });
+
+  describe('getValuesForEntities (batched sibling of getValuesForEntity, built for export)', () => {
+    it('returns the same result as calling getValuesForEntity once per entity, for a mix of set/unset values', async () => {
+      const { project, suite } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({ entity_type: 'TestCase', name: 'batch_cf', field_label: 'Batch CF', field_type: 'TEXT' });
+
+      const caseA = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'CFP-A', title: 'A', priority: 'HIGH', execution_type: 'MANUAL' });
+      const caseB = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'CFP-B', title: 'B', priority: 'HIGH', execution_type: 'MANUAL' });
+      const caseC = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'CFP-C', title: 'C', priority: 'HIGH', execution_type: 'MANUAL' });
+
+      await fieldRepo.setValue(field.id, 'TestCase', caseA.id, 'value-a');
+      // caseB left unset; caseC gets a value too
+      await fieldRepo.setValue(field.id, 'TestCase', caseC.id, 'value-c');
+
+      const batched = await fieldRepo.getValuesForEntities('TestCase', [caseA.id, caseB.id, caseC.id]);
+      expect(batched.size).toBe(3);
+
+      for (const c of [caseA, caseB, caseC]) {
+        const individual = await fieldRepo.getValuesForEntity('TestCase', c.id);
+        expect(batched.get(c.id)).toEqual(individual);
+      }
+      expect(batched.get(caseA.id)![0].value).toBe('value-a');
+      expect(batched.get(caseB.id)![0].value).toBeNull();
+      expect(batched.get(caseC.id)![0].value).toBe('value-c');
+    });
+
+    it('returns an empty Map for an empty entityIds array, without querying', async () => {
+      const result = await fieldRepo.getValuesForEntities('TestCase', []);
+      expect(result.size).toBe(0);
+    });
+
+    it('honors projectId to include project-scoped definitions, matching getValuesForEntity', async () => {
+      const { project, testCase } = await makeCaseAndSuite();
+      const projectField = await fieldRepo.createDefinition({
+        project_id: project.id,
+        entity_type: 'TestCase',
+        name: 'project_scoped_cf',
+        field_label: 'Project Scoped',
+        field_type: 'TEXT',
+      });
+      await fieldRepo.setValue(projectField.id, 'TestCase', testCase.id, 'scoped-value', project.id);
+
+      const withProjectId = await fieldRepo.getValuesForEntities('TestCase', [testCase.id], project.id);
+      expect(withProjectId.get(testCase.id)!.find((e) => e.definition.id === projectField.id)?.value).toBe('scoped-value');
+
+      const withoutProjectId = await fieldRepo.getValuesForEntities('TestCase', [testCase.id]);
+      expect(withoutProjectId.get(testCase.id)!.find((e) => e.definition.id === projectField.id)).toBeUndefined();
+    });
+  });
 });

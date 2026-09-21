@@ -189,6 +189,34 @@ export class TestCaseVersionRepository {
     };
   }
 
+  /** Batched lookup of version rows by id (metadata only, no steps) -- for scopes (e.g. a
+   * Plan's pinned versions) that need a specific, possibly-non-latest set of version ids in
+   * one round-trip instead of N findById calls. */
+  async findByIds(versionIds: string[]): Promise<TestCaseVersion[]> {
+    if (versionIds.length === 0) return [];
+    return this.db.selectFrom('test_case_versions').selectAll().where('id', 'in', versionIds).execute();
+  }
+
+  /** Batched sibling of getSteps() -- one query for every version's steps instead of one
+   * getSteps() call per version. Built for export, which needs steps across every case
+   * version in a project/suite/plan scope in a single request. */
+  async getStepsForVersions(versionIds: string[]): Promise<Map<string, TestStep[]>> {
+    if (versionIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom('test_steps')
+      .selectAll()
+      .where('test_case_version_id', 'in', versionIds)
+      .orderBy('step_number', 'asc')
+      .execute();
+    const map = new Map<string, TestStep[]>();
+    for (const row of rows) {
+      const list = map.get(row.test_case_version_id) ?? [];
+      list.push(row);
+      map.set(row.test_case_version_id, list);
+    }
+    return map;
+  }
+
   async updateStatus(
     id: string,
     status: 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED',

@@ -21,6 +21,7 @@ import { registerProjectRoutes } from './routes/projects.js';
 import { registerCustomFieldRoutes } from './routes/customFields.js';
 import { registerSpecEditingRoutes } from './routes/specEditing.js';
 import { registerApiTokenRoutes } from './routes/apiTokens.js';
+import { registerExportRoutes } from './routes/exports.js';
 import { requirePermission } from './middleware/auth.js';
 import { UserRepository } from '@testify/db';
 
@@ -76,6 +77,7 @@ export async function createServer(connectionString?: string) {
   await registerCustomFieldRoutes(app, db, jwtSecret);
   await registerSpecEditingRoutes(app, db, jwtSecret);
   await registerApiTokenRoutes(app, db, jwtSecret);
+  await registerExportRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {

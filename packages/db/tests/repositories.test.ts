@@ -292,6 +292,18 @@ describe('Repositories', () => {
 
     const allExecsForBuild = await executionRepo.findByBuild(build.id);
     expect(allExecsForBuild).toHaveLength(3); // 1 manual + 2 batch
+
+    // getExecutionStepsForExecutions: batched sibling of getExecutionSteps, built for
+    // export -- one query for every execution's steps instead of one call per execution.
+    const stepsMap = await executionRepo.getExecutionStepsForExecutions(allExecsForBuild.map((e) => e.id));
+    expect(stepsMap.get(exec.id)).toEqual(await executionRepo.getExecutionSteps(exec.id));
+    expect(stepsMap.get(exec.id)).toHaveLength(1);
+    // The 2 batch executions had no step_results -- no map entry, matching the same
+    // "group what exists" convention as the other new batched methods.
+    for (const be of batchExecs) {
+      expect(stepsMap.has(be.id)).toBe(false);
+    }
+    expect(await executionRepo.getExecutionStepsForExecutions([])).toEqual(new Map());
   });
 
   it('TestCaseRepository.findByProjectWithLatestVersion / findBySuiteIds', async () => {
