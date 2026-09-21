@@ -94,7 +94,7 @@ export interface ExportableExecution {
   tester_username: string | null; // best-effort resolved; null if the user record is gone
   status: string;
   verdict: string;
-  execution_duration_ms: number;
+  execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
   execution_timestamp: string;
   // Parsed from executions.custom_fields_snapshot -- despite the column's name, this is

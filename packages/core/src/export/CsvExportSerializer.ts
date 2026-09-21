@@ -176,7 +176,7 @@ export class CsvExportSerializer implements IFileSerializer {
         ex.tester_username || ex.tester_id,
         ex.status,
         ex.verdict,
-        String(ex.execution_duration_ms),
+        ex.execution_duration_ms === null ? '' : String(ex.execution_duration_ms),
         ex.notes || '',
         ex.execution_timestamp,
       ];

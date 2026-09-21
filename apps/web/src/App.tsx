@@ -18,6 +18,7 @@ import { AuthModal, UserProfile } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
 import { ImportWizardModal } from "./components/ImportWizardModal";
 import { ExportModal } from "./components/ExportModal";
+import { ReportingModal } from "./components/ReportingModal";
 import { LoginPage } from "./components/LoginPage";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
 import { SuiteCustomFieldsPanel } from "./components/SuiteCustomFieldsPanel";
@@ -248,6 +249,7 @@ export default function App() {
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(false);
   const [importWizardOpen, setImportWizardOpen] = useState<boolean>(false);
   const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
+  const [reportingModalOpen, setReportingModalOpen] = useState<boolean>(false);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Entity Selection State (Project, Plan, Run)
@@ -1519,6 +1521,8 @@ export default function App() {
     userPermissions.includes("IMPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
   const hasExportDataPermission =
     userPermissions.includes("EXPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasSpecViewPermission =
+    userPermissions.includes("SPEC_VIEW") || userPermissions.includes("SYSTEM_ADMIN");
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
@@ -1571,6 +1575,14 @@ export default function App() {
       <ExportModal
         isOpen={exportModalOpen}
         onClose={() => setExportModalOpen(false)}
+        currentUser={currentUser}
+        projects={projectsList}
+        defaultProjectId={selectedProjectId}
+      />
+
+      <ReportingModal
+        isOpen={reportingModalOpen}
+        onClose={() => setReportingModalOpen(false)}
         currentUser={currentUser}
         projects={projectsList}
         defaultProjectId={selectedProjectId}
@@ -1877,6 +1889,23 @@ export default function App() {
               }}
             >
               📤 Export
+            </button>
+          )}
+          {hasSpecViewPermission && (
+            <button
+              onClick={() => setReportingModalOpen(true)}
+              style={{
+                backgroundColor: "#0ea5e9",
+                color: "#ffffff",
+                border: "none",
+                padding: "4px 10px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              📊 Reports
             </button>
           )}
           {hasUserManagePermission && (

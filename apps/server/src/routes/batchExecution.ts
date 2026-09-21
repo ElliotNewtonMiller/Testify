@@ -254,7 +254,9 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           tester_id: user.id,
           status: item.status || 'COMPLETED',
           verdict: item.verdict,
-          execution_duration_ms: item.duration_ms || 0,
+          // null (not a fabricated 0) when the CI caller doesn't report a real duration --
+          // see server.ts's single-execution route for the matching fix and rationale.
+          execution_duration_ms: item.duration_ms ?? null,
           notes: item.notes || null,
           custom_fields_snapshot: JSON.stringify(envTags),
           execution_timestamp: execTimestamp,

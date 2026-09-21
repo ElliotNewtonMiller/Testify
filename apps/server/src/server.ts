@@ -22,6 +22,7 @@ import { registerCustomFieldRoutes } from './routes/customFields.js';
 import { registerSpecEditingRoutes } from './routes/specEditing.js';
 import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { registerExportRoutes } from './routes/exports.js';
+import { registerReportRoutes } from './routes/reports.js';
 import { requirePermission } from './middleware/auth.js';
 import { UserRepository } from '@testify/db';
 
@@ -78,6 +79,7 @@ export async function createServer(connectionString?: string) {
   await registerSpecEditingRoutes(app, db, jwtSecret);
   await registerApiTokenRoutes(app, db, jwtSecret);
   await registerExportRoutes(app, db, jwtSecret);
+  await registerReportRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {
@@ -224,7 +226,10 @@ export async function createServer(connectionString?: string) {
         tester_id: actorId,
         status: body.status || 'COMPLETED',
         verdict: body.verdict,
-        execution_duration_ms: body.execution_duration_ms || 450,
+        // null (not a fabricated number like the old `|| 450`) when the caller doesn't
+        // report a real duration -- reporting queries filter these out explicitly rather
+        // than silently averaging in a made-up value. `??` also means a genuine 0 survives.
+        execution_duration_ms: body.execution_duration_ms ?? null,
         notes: body.notes || null,
         custom_fields_snapshot: JSON.stringify({ environment: 'STAGING' }),
         execution_timestamp: now,

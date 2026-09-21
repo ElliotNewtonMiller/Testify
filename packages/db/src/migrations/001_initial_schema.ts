@@ -133,7 +133,11 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('tester_id', 'varchar(36)', (col) => col.notNull())
     .addColumn('status', 'varchar(20)', (col) => col.notNull().defaultTo('COMPLETED'))
     .addColumn('verdict', 'varchar(50)', (col) => col.notNull())
-    .addColumn('execution_duration_ms', 'integer', (col) => col.notNull().defaultTo(0))
+    // Nullable, no default: null means "not measured/not supplied" by the caller. Never
+    // fabricate a number here (a prior version of this column had NOT NULL DEFAULT 0, and
+    // two routes independently invented fake numbers -- 450ms and 0ms -- to satisfy it,
+    // silently polluting any duration-based report). See reports.ts and its callers.
+    .addColumn('execution_duration_ms', 'integer')
     .addColumn('notes', 'text')
     .addColumn('custom_fields_snapshot', 'text', (col) => col.notNull().defaultTo('{}'))
     .addColumn('execution_timestamp', 'varchar(30)', (col) => col.notNull())
@@ -143,6 +147,9 @@ export async function up(db: Kysely<any>): Promise<void> {
 
   await db.schema.createIndex('idx_executions_build_case').on('executions').columns(['build_id', 'test_plan_case_id']).execute();
   await db.schema.createIndex('idx_executions_verdict').on('executions').column('verdict').execute();
+  // Backs the reporting feature's "latest execution per plan-case" window functions and
+  // trend/slowest-tests ORDER BY execution_timestamp queries.
+  await db.schema.createIndex('idx_executions_timestamp').on('executions').column('execution_timestamp').execute();
 
   // 10. Execution Steps Table
   await db.schema

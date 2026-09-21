@@ -153,6 +153,33 @@ describe('Repositories', () => {
     expect(newTree[1].children).toHaveLength(1); // root2 has child1 now
   });
 
+  it('TestSuiteRepository.getCoverageByPlan -- flat per-suite case counts, built for the reporting feature', async () => {
+    const project = await projectRepo.create({ name: 'Coverage Proj', prefix: 'COV' });
+    const suiteWithCases = await suiteRepo.create({ project_id: project.id, name: 'Has Cases' });
+    const emptySuite = await suiteRepo.create({ project_id: project.id, name: 'Empty' });
+
+    const caseA = await caseRepo.create({ project_id: project.id, test_suite_id: suiteWithCases.id, external_id: 'COV-A', title: 'A' });
+    const caseB = await caseRepo.create({ project_id: project.id, test_suite_id: suiteWithCases.id, external_id: 'COV-B', title: 'B' });
+    await caseRepo.create({ project_id: project.id, test_suite_id: suiteWithCases.id, external_id: 'COV-C', title: 'C' }); // not in plan
+
+    const versionA = await versionRepo.create({ test_case_id: caseA.id, version_number: 1, author_id: 'a1' });
+    const versionB = await versionRepo.create({ test_case_id: caseB.id, version_number: 1, author_id: 'a1' });
+    const plan = await planRepo.create({ project_id: project.id, name: 'Coverage Plan' });
+    await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
+    await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseB.id, test_case_version_id: versionB.id });
+
+    const coverage = await suiteRepo.getCoverageByPlan(project.id, plan.id);
+    expect(coverage).toHaveLength(2);
+
+    const withCases = coverage.find((c) => c.suite_id === suiteWithCases.id)!;
+    expect(withCases.total_case_count).toBe(3);
+    expect(withCases.in_plan_count).toBe(2);
+
+    const empty = coverage.find((c) => c.suite_id === emptySuite.id)!;
+    expect(empty.total_case_count).toBe(0);
+    expect(empty.in_plan_count).toBe(0);
+  });
+
   it('TestCase & TestCaseVersion repositories with steps', async () => {
     const project = await projectRepo.create({ name: 'Case Proj', prefix: 'CASE' });
     const suite = await suiteRepo.create({ project_id: project.id, name: 'Login Suite' });

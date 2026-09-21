@@ -100,7 +100,7 @@ export interface ExecutionsTable {
   tester_id: string;
   status: Generated<string>; // 'UNTESTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED'
   verdict: string; // 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE'
-  execution_duration_ms: Generated<number>;
+  execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
   custom_fields_snapshot: Generated<string>;
   execution_timestamp: string;
