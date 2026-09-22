@@ -655,7 +655,10 @@ export default function App() {
   // in_plan/tri-state counts reflect the change.
   const handleToggleCaseInclusion = useCallback(
     async (testCaseId: string, include: boolean) => {
-      if (!selectedPlanId) return;
+      if (!selectedPlanId) {
+        showToast("No test plan selected");
+        return;
+      }
       setPendingToggleId(testCaseId);
       try {
         const res = await fetch(
@@ -691,7 +694,10 @@ export default function App() {
 
   const handleToggleSuiteInclusion = useCallback(
     async (suiteId: string, action: "ADD" | "REMOVE") => {
-      if (!selectedPlanId) return;
+      if (!selectedPlanId) {
+        showToast("No test plan selected");
+        return;
+      }
       setPendingToggleId(suiteId);
       try {
         const res = await fetch(
@@ -2096,6 +2102,7 @@ export default function App() {
                 placeholder="Suite name"
                 value={suiteFormState.name}
                 onChange={(e) => setSuiteFormState((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                autoFocus
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
@@ -2716,51 +2723,6 @@ export default function App() {
                     const isDraft = specVersionDetail?.status === "DRAFT";
                     return (
                       <>
-                        <div
-                          style={{
-                            marginBottom: "16px",
-                            backgroundColor: "#111827",
-                            padding: "12px",
-                            borderRadius: "6px",
-                            border: "1px solid #1f2937",
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: "11px",
-                              fontWeight: 600,
-                              color: "#6b7280",
-                              textTransform: "uppercase",
-                              marginBottom: "4px",
-                            }}
-                          >
-                            Preconditions
-                          </div>
-                          {isDraft && hasSpecEditPermission ? (
-                            <textarea
-                              key={`pre-${specVersionDetail?.id}`}
-                              defaultValue={specVersionDetail?.preconditions ?? ""}
-                              onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
-                              rows={2}
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                fontSize: "12px",
-                                color: "#f8fafc",
-                                backgroundColor: "#0d111c",
-                                border: "1px solid #1f2937",
-                                borderRadius: "4px",
-                                padding: "6px 8px",
-                                resize: "vertical",
-                              }}
-                            />
-                          ) : (
-                            <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                              {specVersionDetail?.preconditions || "—"}
-                            </div>
-                          )}
-                        </div>
-
                         {(isDraft || specVersionDetail?.summary) && (
                           <div
                             style={{
@@ -2807,6 +2769,51 @@ export default function App() {
                             )}
                           </div>
                         )}
+
+                        <div
+                          style={{
+                            marginBottom: "16px",
+                            backgroundColor: "#111827",
+                            padding: "12px",
+                            borderRadius: "6px",
+                            border: "1px solid #1f2937",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              color: "#6b7280",
+                              textTransform: "uppercase",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            Preconditions
+                          </div>
+                          {isDraft && hasSpecEditPermission ? (
+                            <textarea
+                              key={`pre-${specVersionDetail?.id}`}
+                              defaultValue={specVersionDetail?.preconditions ?? ""}
+                              onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
+                              rows={2}
+                              style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                fontSize: "12px",
+                                color: "#f8fafc",
+                                backgroundColor: "#0d111c",
+                                border: "1px solid #1f2937",
+                                borderRadius: "4px",
+                                padding: "6px 8px",
+                                resize: "vertical",
+                              }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                              {specVersionDetail?.preconditions || "—"}
+                            </div>
+                          )}
+                        </div>
 
                         {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
                           <div style={{ marginBottom: "16px" }}>

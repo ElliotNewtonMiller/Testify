@@ -90,7 +90,8 @@ export function sendSuiteInUseError(
   reply: FastifyReply,
   suiteId: string,
   counts: { subSuites: number; cases: number; planLinks: number; executions: number },
-  instance?: string
+  instance?: string,
+  suiteName?: string
 ) {
   const parts: string[] = [];
   if (counts.subSuites > 0) parts.push(`${counts.subSuites} sub-suite${counts.subSuites === 1 ? '' : 's'}`);
@@ -98,11 +99,13 @@ export function sendSuiteInUseError(
   if (counts.planLinks > 0) parts.push(`${counts.planLinks} plan link${counts.planLinks === 1 ? '' : 's'}`);
   if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
 
+  const suiteRef = suiteName ? suiteName : `(ID: ${suiteId})`;
+
   return sendProblemDetails(reply, {
     code: 'SUITE_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Suite (ID: ${suiteId}) still contains ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard all of it.`,
+    detail: `Suite ${suiteRef} still contains ${counts.cases} case${counts.cases === 1 ? '' : 's'}. They will all be deleted.`,
     instance,
     invalid_params: [{ name: 'suite_id', reason: `Contains ${parts.join(', ')}` }],
   });

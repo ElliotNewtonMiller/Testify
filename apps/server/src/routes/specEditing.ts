@@ -163,7 +163,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
             planLinks: result.blockedPlanLinkCount,
             executions: result.blockedExecutionCount,
           },
-          request.url
+          request.url,
+          existing.name
         );
       }
 
