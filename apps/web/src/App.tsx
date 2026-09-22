@@ -225,7 +225,7 @@ export default function App() {
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
   const [newCaseTitle, setNewCaseTitle] = useState("");
-  const [newCasePriority, setNewCasePriority] = useState("HIGH");
+  const [newCasePriority, setNewCasePriority] = useState("MEDIUM");
   const [newCaseExecutionType, setNewCaseExecutionType] = useState("MANUAL");
   const [isCreatingCase, setIsCreatingCase] = useState(false);
   const [deleteCasePrompt, setDeleteCasePrompt] = useState<{ id: string; detail: string } | null>(null);
@@ -284,6 +284,11 @@ export default function App() {
 
   const notesInputRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Per-row refs for the step editor's Action textareas, keyed by index -- lets addStep()
+  // focus the newly-added row's Action field once it exists in the DOM (see the
+  // pendingStepFocusIndexRef effect below addStep).
+  const stepActionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const pendingStepFocusIndexRef = useRef<number | null>(null);
 
   // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
   // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
@@ -308,6 +313,25 @@ export default function App() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3000);
   }, []);
+
+  // Shared 401 handling for the Spec-mode save handlers below (create/approve/edit-content/
+  // save-steps). Login tokens are short-lived (15 minute JWTs, no refresh mechanism -- see
+  // packages/core/src/security/jwt.ts), and unlike verdict submission (a single fast POST),
+  // Spec-mode editing is often a long, network-idle drafting session (typing into steps,
+  // reordering, etc. is pure client-side state with zero requests) before the user finally
+  // clicks Save/Approve -- so that click is often the first request issued after the token
+  // has silently expired. Without this, the handler's generic catch surfaces the raw
+  // "Unauthorized: Token expired" server string and leaves the dead token in localStorage,
+  // so every retry just fails the same way. Mirrors submitVerdict's existing 401 branch
+  // (clear the token, drop back to a logged-out state, toast a clear message) so every
+  // Spec-mode save handler behaves the same way execution recording already does.
+  const handleAuthExpiry = useCallback(() => {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_id");
+    setCurrentUser(null);
+    setUserPermissions([]);
+    showToast("Session expired -- please log in again");
+  }, [showToast]);
 
   const openEntityModal = (entityType: EntityType, actionType: ActionType) => {
     let targetItem: EntityItem | null = null;
@@ -961,13 +985,19 @@ export default function App() {
           body: JSON.stringify({ [field]: value }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || data.detail || "Failed to save");
+        if (!res.ok) {
+          if (res.status === 401) {
+            handleAuthExpiry();
+            return;
+          }
+          throw new Error(data.error || data.detail || "Failed to save");
+        }
         await refreshSpecTree();
       } catch (err: any) {
         setSavingCaseFieldError(err.message || "Failed to save");
       }
     },
-    [specSelectedCaseId, selectedProjectId, refreshSpecTree],
+    [specSelectedCaseId, selectedProjectId, refreshSpecTree, handleAuthExpiry],
   );
 
   const handleCreateDraft = useCallback(async () => {
@@ -980,7 +1010,13 @@ export default function App() {
         { method: "POST", headers: authHeaders() },
       );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || "Failed to create draft");
+      if (!res.ok) {
+        if (res.status === 401) {
+          handleAuthExpiry();
+          return;
+        }
+        throw new Error(data.error || data.detail || "Failed to create draft");
+      }
       setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       await refreshSpecTree();
     } catch (err: any) {
@@ -988,7 +1024,7 @@ export default function App() {
     } finally {
       setIsCreatingDraft(false);
     }
-  }, [specSelectedCaseId, selectedProjectId, refreshSpecTree]);
+  }, [specSelectedCaseId, selectedProjectId, refreshSpecTree, handleAuthExpiry]);
 
   const handleApproveVersion = useCallback(async () => {
     if (!selectedProjectId || !specCaseDetail?.version) return;
@@ -1000,7 +1036,13 @@ export default function App() {
         { method: "POST", headers: authHeaders() },
       );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || "Failed to approve");
+      if (!res.ok) {
+        if (res.status === 401) {
+          handleAuthExpiry();
+          return;
+        }
+        throw new Error(data.error || data.detail || "Failed to approve");
+      }
       setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       await refreshSpecTree();
     } catch (err: any) {
@@ -1008,7 +1050,7 @@ export default function App() {
     } finally {
       setIsApprovingVersion(false);
     }
-  }, [selectedProjectId, specCaseDetail, refreshSpecTree]);
+  }, [selectedProjectId, specCaseDetail, refreshSpecTree, handleAuthExpiry]);
 
   const handleSaveVersionContent = useCallback(
     async (field: "summary" | "preconditions", value: string) => {
@@ -1024,13 +1066,19 @@ export default function App() {
           },
         );
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || data.detail || "Failed to save");
+        if (!res.ok) {
+          if (res.status === 401) {
+            handleAuthExpiry();
+            return;
+          }
+          throw new Error(data.error || data.detail || "Failed to save");
+        }
         setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       } catch (err: any) {
         setSpecEditError(err.message || "Failed to save");
       }
     },
-    [selectedProjectId, specCaseDetail],
+    [selectedProjectId, specCaseDetail, handleAuthExpiry],
   );
 
   const handleSaveSteps = useCallback(async () => {
@@ -1053,14 +1101,20 @@ export default function App() {
         },
       );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || "Failed to save steps");
+      if (!res.ok) {
+        if (res.status === 401) {
+          handleAuthExpiry();
+          return;
+        }
+        throw new Error(data.error || data.detail || "Failed to save steps");
+      }
       setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
     } catch (err: any) {
       setSpecEditError(err.message || "Failed to save steps");
     } finally {
       setIsSavingSteps(false);
     }
-  }, [selectedProjectId, specCaseDetail, stepsDraft]);
+  }, [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry]);
 
   const moveStep = (index: number, direction: -1 | 1) => {
     setStepsDraft((prev) => {
@@ -1078,11 +1132,24 @@ export default function App() {
     setStepsDraft((prev) => prev.filter((_, i) => i !== index));
   };
   const addStep = () => {
-    setStepsDraft((prev) => [
-      ...prev,
-      { id: `new-${Date.now()}`, step_number: prev.length + 1, action: "", expected_result: "" },
-    ]);
+    setStepsDraft((prev) => {
+      pendingStepFocusIndexRef.current = prev.length;
+      return [
+        ...prev,
+        { id: `new-${Date.now()}`, step_number: prev.length + 1, action: "", expected_result: "" },
+      ];
+    });
   };
+
+  // Runs after the new row above has actually rendered (the ref doesn't exist yet during
+  // addStep() itself), then focuses its Action field and clears the pending marker.
+  useEffect(() => {
+    if (pendingStepFocusIndexRef.current !== null) {
+      const idx = pendingStepFocusIndexRef.current;
+      pendingStepFocusIndexRef.current = null;
+      stepActionRefs.current[idx]?.focus();
+    }
+  }, [stepsDraft.length]);
 
   // Suite create/rename form
   const openCreateSuiteForm = (parentSuiteId: string | null) => {
@@ -2102,6 +2169,9 @@ export default function App() {
                 placeholder="Suite name"
                 value={suiteFormState.name}
                 onChange={(e) => setSuiteFormState((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && suiteFormState.name.trim() && !isSavingSuiteForm) handleSaveSuiteForm();
+                }}
                 autoFocus
                 style={{
                   width: "100%",
@@ -2342,6 +2412,10 @@ export default function App() {
                 placeholder="New case title"
                 value={newCaseTitle}
                 onChange={(e) => setNewCaseTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newCaseTitle.trim() && !isCreatingCase) handleCreateCase();
+                }}
+                autoFocus
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
@@ -2503,6 +2577,9 @@ export default function App() {
                         if (e.target.value !== specActiveCase.title) {
                           handleUpdateCaseField("title", e.target.value);
                         }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
                       }}
                       disabled={!hasSpecEditPermission}
                       title={hasSpecEditPermission ? "Case title" : "Requires SPEC_EDIT permission"}
@@ -2833,40 +2910,14 @@ export default function App() {
 
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            color: "#6b7280",
+                            textTransform: "uppercase",
                             marginBottom: "8px",
                           }}
                         >
-                          <div
-                            style={{
-                              fontSize: "11px",
-                              fontWeight: 600,
-                              color: "#6b7280",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Ordered Step Specification {isDraft ? "" : "(read-only)"}
-                          </div>
-                          {isDraft && hasSpecEditPermission && (
-                            <button
-                              onClick={handleSaveSteps}
-                              disabled={isSavingSteps}
-                              style={{
-                                fontSize: "11px",
-                                padding: "3px 10px",
-                                borderRadius: "4px",
-                                border: "none",
-                                backgroundColor: isSavingSteps ? "#166534" : "#16a34a",
-                                color: "#fff",
-                                fontWeight: 700,
-                                cursor: isSavingSteps ? "default" : "pointer",
-                              }}
-                            >
-                              {isSavingSteps ? "Saving…" : "Save Steps"}
-                            </button>
-                          )}
+                          Ordered Step Specification {isDraft ? "" : "(read-only)"}
                         </div>
 
                         {isDraft && hasSpecEditPermission ? (
@@ -2889,6 +2940,9 @@ export default function App() {
                                   {i + 1}
                                 </span>
                                 <textarea
+                                  ref={(el) => {
+                                    stepActionRefs.current[i] = el;
+                                  }}
                                   placeholder="Action"
                                   value={step.action}
                                   onChange={(e) => updateStepField(i, { action: e.target.value })}
@@ -2961,6 +3015,24 @@ export default function App() {
                             >
                               + Add Step
                             </button>
+                            <div style={{ marginTop: "10px", textAlign: "right" }}>
+                              <button
+                                onClick={handleSaveSteps}
+                                disabled={isSavingSteps}
+                                style={{
+                                  fontSize: "11px",
+                                  padding: "5px 14px",
+                                  borderRadius: "4px",
+                                  border: "none",
+                                  backgroundColor: isSavingSteps ? "#166534" : "#16a34a",
+                                  color: "#fff",
+                                  fontWeight: 700,
+                                  cursor: isSavingSteps ? "default" : "pointer",
+                                }}
+                              >
+                                {isSavingSteps ? "Saving…" : "Save Steps"}
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>

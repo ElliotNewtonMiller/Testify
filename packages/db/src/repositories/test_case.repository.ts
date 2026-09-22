@@ -52,7 +52,7 @@ export class TestCaseRepository {
       test_suite_id: input.test_suite_id,
       external_id: input.external_id,
       title: input.title,
-      priority: input.priority ?? 'HIGH',
+      priority: input.priority ?? 'MEDIUM',
       execution_type: input.execution_type ?? 'MANUAL',
       created_at: now,
       updated_at: now,
