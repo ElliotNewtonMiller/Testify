@@ -395,4 +395,176 @@ describe('Specification / Plan Curation Routes', () => {
     const plans = JSON.parse(plansRes.payload).plans;
     expect(plans.some((p: any) => p.id === seed.planId)).toBe(true);
   });
+
+  describe('Test Plan CRUD (POST/PUT/DELETE .../projects/:projectId/plans)', () => {
+    it('requires PLAN_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
+      const { app, seed } = serverInstance;
+      const { token: adminToken } = await loginAsAdmin(app);
+      const viewerToken = await createAndLoginViewer(app, adminToken);
+
+      const createRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+        payload: { name: 'Should Not Exist' },
+      });
+      expect(createRes.statusCode).toBe(403);
+
+      const updateRes = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+        payload: { name: 'Renamed' },
+      });
+      expect(updateRes.statusCode).toBe(403);
+
+      const deleteRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+      });
+      expect(deleteRes.statusCode).toBe(403);
+    });
+
+    it('creates a plan, and it is immediately listed for the project', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Regression Sweep 2', status: 'ACTIVE' },
+      });
+      expect(res.statusCode).toBe(201);
+      const created = JSON.parse(res.payload).plan;
+      expect(created.name).toBe('Regression Sweep 2');
+      expect(created.project_id).toBe(seed.projectId);
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(JSON.parse(listRes.payload).plans.some((p: any) => p.id === created.id)).toBe(true);
+    });
+
+    it('rejects a create with a missing name, and an update/create with an invalid status', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const noName = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {},
+      });
+      expect(noName.statusCode).toBe(400);
+
+      const badStatus = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'X', status: 'DRAFT' },
+      });
+      expect(badStatus.statusCode).toBe(400);
+    });
+
+    it('updates a plan\'s name and status', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Renamed Plan', status: 'LOCKED' },
+      });
+      expect(res.statusCode).toBe(200);
+      const updated = JSON.parse(res.payload).plan;
+      expect(updated.name).toBe('Renamed Plan');
+      expect(updated.status).toBe('LOCKED');
+    });
+
+    it('404s updating/deleting a plan that belongs to a different project', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+      const { ProjectRepository } = await import('@testify/db');
+      const otherProject = await new ProjectRepository(db).create({ name: 'Other', prefix: 'OTHR' });
+
+      const updateRes = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${otherProject.id}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Hijacked' },
+      });
+      expect(updateRes.statusCode).toBe(404);
+
+      const deleteRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${otherProject.id}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(deleteRes.statusCode).toBe(404);
+    });
+
+    it('deleting a plan with content returns 409 with counts, then force=true deletes it and everything inside', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      // The seeded plan/build already has 10 pinned cases (see seed_core_loop.ts); record one
+      // execution too so blockedExecutionCount is also exercised, not just build/case-link counts.
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
+      });
+
+      const blockedRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(blockedRes.statusCode).toBe(409);
+      const blockedBody = JSON.parse(blockedRes.payload);
+      expect(blockedBody.code).toBe('PLAN_IN_USE');
+      expect(blockedBody.detail).toContain('Sprint 42 Regression Plan');
+
+      const forcedRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}?force=true`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(forcedRes.statusCode).toBe(200);
+      expect(JSON.parse(forcedRes.payload).deleted).toBe(true);
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(JSON.parse(listRes.payload).plans.some((p: any) => p.id === seed.planId)).toBe(false);
+    });
+
+    it('an empty plan (no builds/pinned cases) deletes immediately with no force needed', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const createRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Throwaway Empty Plan' },
+      });
+      const planId = JSON.parse(createRes.payload).plan.id;
+
+      const deleteRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${planId}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(deleteRes.statusCode).toBe(200);
+    });
+  });
 });

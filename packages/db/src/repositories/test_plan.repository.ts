@@ -40,6 +40,10 @@ export interface BulkAddCaseEntry {
   position?: number;
 }
 
+export type DeleteTestPlanResult =
+  | { deleted: true }
+  | { deleted: false; blockedBuildCount: number; blockedCaseLinkCount: number; blockedExecutionCount: number };
+
 export class TestPlanRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -237,5 +241,52 @@ export class TestPlanRepository {
       .executeTakeFirst();
 
     return (result.numDeletedRows ?? 0n) > 0n;
+  }
+
+  /**
+   * Deletes a plan and everything under it. Unlike the plain `delete()` above (which relies
+   * purely on the DB's ON DELETE RESTRICT FKs on builds.test_plan_id and
+   * test_plan_cases.test_plan_id), this checks usage first and, without `force`, leaves
+   * everything untouched and reports the blocking counts -- the same warn-then-confirm shape
+   * as TestSuiteRepository.deleteWithForce/TestCaseRepository.deleteWithForce. With `force`
+   * (or an already-empty plan), it deletes every execution under this plan's builds (their
+   * execution_steps cascade away automatically), then the builds themselves, then the plan's
+   * test_plan_cases links, then the plan. Executions must go before builds since
+   * executions.build_id is ON DELETE RESTRICT, and builds/plan-case-links must both go before
+   * the plan itself for the same reason.
+   */
+  async deleteWithForce(id: string, opts: { force?: boolean } = {}): Promise<DeleteTestPlanResult> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      return { deleted: false, blockedBuildCount: 0, blockedCaseLinkCount: 0, blockedExecutionCount: 0 };
+    }
+
+    const builds = await this.db.selectFrom('builds').select('id').where('test_plan_id', '=', id).execute();
+    const buildIds = builds.map((b) => b.id);
+
+    let blockedExecutionCount = 0;
+    if (buildIds.length > 0) {
+      const execRows = await this.db.selectFrom('executions').select('id').where('build_id', 'in', buildIds).execute();
+      blockedExecutionCount = execRows.length;
+    }
+    const blockedBuildCount = buildIds.length;
+
+    const planCases = await this.db.selectFrom('test_plan_cases').select('id').where('test_plan_id', '=', id).execute();
+    const blockedCaseLinkCount = planCases.length;
+
+    if ((blockedBuildCount > 0 || blockedCaseLinkCount > 0) && !opts.force) {
+      return { deleted: false, blockedBuildCount, blockedCaseLinkCount, blockedExecutionCount };
+    }
+
+    await this.db.transaction().execute(async (trx) => {
+      if (buildIds.length > 0) {
+        await trx.deleteFrom('executions').where('build_id', 'in', buildIds).execute();
+        await trx.deleteFrom('builds').where('id', 'in', buildIds).execute();
+      }
+      await trx.deleteFrom('test_plan_cases').where('test_plan_id', '=', id).execute();
+      await trx.deleteFrom('test_plans').where('id', '=', id).execute();
+    });
+
+    return { deleted: true };
   }
 }

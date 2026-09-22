@@ -111,6 +111,29 @@ export function sendSuiteInUseError(
   });
 }
 
+export function sendPlanInUseError(
+  reply: FastifyReply,
+  planId: string,
+  counts: { builds: number; caseLinks: number; executions: number },
+  instance?: string,
+  planName?: string
+) {
+  const planRef = planName ? planName : `(ID: ${planId})`;
+  const parts: string[] = [];
+  if (counts.builds > 0) parts.push(`${counts.builds} build${counts.builds === 1 ? '' : 's'}`);
+  if (counts.caseLinks > 0) parts.push(`${counts.caseLinks} plan-linked case${counts.caseLinks === 1 ? '' : 's'}`);
+  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+
+  return sendProblemDetails(reply, {
+    code: 'PLAN_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Test Plan ${planRef} still contains ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard all of it.`,
+    instance,
+    invalid_params: [{ name: 'plan_id', reason: `Contains ${parts.join(', ')}` }],
+  });
+}
+
 export function sendCaseInUseError(
   reply: FastifyReply,
   caseId: string,

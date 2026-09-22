@@ -308,7 +308,6 @@ export function EntityManagementModal({
                   {entityType === "PLAN" ? (
                     <>
                       <option value="ACTIVE">ACTIVE</option>
-                      <option value="DRAFT">DRAFT</option>
                       <option value="LOCKED">LOCKED</option>
                       <option value="ARCHIVED">ARCHIVED</option>
                     </>

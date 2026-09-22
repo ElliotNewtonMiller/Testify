@@ -110,6 +110,19 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Grows a textarea to fit its content instead of showing a scrollbar -- resetting height to
+// "auto" first (rather than just reading scrollHeight directly) is required so the element
+// can shrink back down too, not just grow: scrollHeight never reports smaller than the
+// element's current height, so without the reset a field would never shrink after its
+// content got shorter (e.g. deleting a wrapped line). Called from a mount-time ref callback
+// (so a field that already has long content shows fully expanded immediately, not just after
+// the first keystroke) and from onInput while typing.
+function autoGrowTextarea(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
   project: { id: "prj_01", name: "Testify Core", prefix: "TFY" },
   suites: [
@@ -221,6 +234,10 @@ export default function App() {
 
   // Two-step delete confirmation for suites -- mirrors AdminPanelModal's deleteFieldPrompt.
   const [deleteSuitePrompt, setDeleteSuitePrompt] = useState<{ id: string; detail: string } | null>(null);
+
+  // Two-step delete confirmation for test plans, same shape as deleteSuitePrompt -- shown
+  // via EntityManagementModal's PLAN/DELETE flow after a non-force delete comes back 409.
+  const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -414,56 +431,81 @@ export default function App() {
         showToast(`Deleted Project: ${item.name}`);
       }
     } else if (entityType === "PLAN") {
+      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT/DELETE
+      // .../plans routes. Unlike PROJECT/RUN below (still client-side mock state, a known,
+      // separately-flagged gap), Test Plan create/edit/delete now actually persists.
+      if (!selectedProjectId) return;
       if (actionType === "CREATE") {
-        setPlansList((prev) => [...prev, item]);
-        setSelectedPlanId(item.id);
-        setWorkspace((prev) =>
-          prev
-            ? {
-                ...prev,
-                plan: {
-                  id: item.id,
-                  name: item.name,
-                  status: item.status || "ACTIVE",
-                },
-              }
-            : prev,
-        );
-        showToast(`Created New Test Plan: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, status: item.status || "ACTIVE" }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test plan");
+            const created = data.plan;
+            setPlansList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
+            setSelectedPlanId(created.id);
+            setWorkspace((prev) =>
+              prev ? { ...prev, plan: { id: created.id, name: created.name, status: created.status } } : prev,
+            );
+            showToast(`Created New Test Plan: ${created.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to create test plan");
+          }
+        })();
       } else if (actionType === "EDIT") {
-        setPlansList((prev) => prev.map((p) => (p.id === item.id ? item : p)));
-        setWorkspace((prev) =>
-          prev && prev.plan.id === item.id
-            ? {
-                ...prev,
-                plan: {
-                  ...prev.plan,
-                  name: item.name,
-                  status: item.status || prev.plan.status,
-                },
-              }
-            : prev,
-        );
-        showToast(`Updated Test Plan: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, status: item.status }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test plan");
+            const updatedPlan = data.plan;
+            setPlansList((prev) =>
+              prev.map((p) => (p.id === updatedPlan.id ? { id: updatedPlan.id, name: updatedPlan.name, status: updatedPlan.status } : p)),
+            );
+            setWorkspace((prev) =>
+              prev && prev.plan.id === updatedPlan.id
+                ? { ...prev, plan: { ...prev.plan, name: updatedPlan.name, status: updatedPlan.status } }
+                : prev,
+            );
+            showToast(`Updated Test Plan: ${updatedPlan.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to update test plan");
+          }
+        })();
       } else if (actionType === "DELETE") {
-        const updated = plansList.filter((p) => p.id !== item.id);
-        setPlansList(updated);
-        if (selectedPlanId === item.id && updated.length > 0) {
-          setSelectedPlanId(updated[0].id);
-          setWorkspace((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  plan: {
-                    id: updated[0].id,
-                    name: updated[0].name,
-                    status: updated[0].status || "ACTIVE",
-                  },
-                }
-              : prev,
-          );
-        }
-        showToast(`Deleted Test Plan: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
+              method: "DELETE",
+              headers: authHeaders(),
+            });
+            if (res.status === 409) {
+              const data = await res.json();
+              setDeletePlanPrompt({
+                id: item.id,
+                name: item.name,
+                detail: data.detail || "This test plan still contains content.",
+              });
+              return;
+            }
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}) as any);
+              throw new Error(data.error || "Failed to delete test plan");
+            }
+            applyPlanDeletedLocally(item.id);
+            showToast(`Deleted Test Plan: ${item.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to delete test plan");
+          }
+        })();
       }
     } else if (entityType === "RUN") {
       if (actionType === "CREATE") {
@@ -520,6 +562,51 @@ export default function App() {
     }
   };
 
+  // Shared local-state update after a plan is genuinely gone server-side (either path: a
+  // clean non-force delete, or the confirmed force delete below). Computed from the current
+  // plansList directly (not via setPlansList's functional-updater form) so the remaining-list
+  // length is available to decide selectedPlanId's next value without nesting one setState
+  // call inside another's updater callback.
+  const applyPlanDeletedLocally = (deletedId: string) => {
+    const updated = plansList.filter((p) => p.id !== deletedId);
+    setPlansList(updated);
+    if (selectedPlanId === deletedId) {
+      if (updated.length > 0) {
+        setSelectedPlanId(updated[0].id);
+        setWorkspace((prev) =>
+          prev ? { ...prev, plan: { id: updated[0].id, name: updated[0].name, status: updated[0].status || "ACTIVE" } } : prev,
+        );
+      } else {
+        // The last plan for this project is gone -- clear selectedPlanId (rather than
+        // leaving it dangling on the deleted id) so refreshSpecTree's selectedPlanId-keyed
+        // effect re-fires and refetches without a plan_id, immediately showing every case
+        // as not-in-plan instead of stale "In Plan" badges from the deleted plan.
+        setSelectedPlanId("");
+      }
+    }
+  };
+
+  const handleConfirmDeletePlan = useCallback(async () => {
+    if (!deletePlanPrompt || !selectedProjectId) return;
+    try {
+      const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${deletePlanPrompt.id}?force=true`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as any);
+        throw new Error(data.error || "Failed to delete test plan");
+      }
+      applyPlanDeletedLocally(deletePlanPrompt.id);
+      const deletedName = deletePlanPrompt.name;
+      setDeletePlanPrompt(null);
+      showToast(`Deleted Test Plan: ${deletedName}`);
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete test plan");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deletePlanPrompt, selectedProjectId, plansList, selectedPlanId, showToast]);
+
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
     setSelectedSuiteId(null);
@@ -571,17 +658,19 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.plans && data.plans.length > 0) {
-          const mapped: EntityItem[] = data.plans.map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            status: p.status,
-          }));
-          setPlansList(mapped);
-          setSelectedPlanId((prev) =>
-            mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
-          );
-        }
+        const mapped: EntityItem[] = (data.plans || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          status: p.status,
+        }));
+        setPlansList(mapped);
+        // A project can genuinely have zero plans (e.g. its last one was just deleted) --
+        // without this branch, selectedPlanId/plansList were left stale on whatever the
+        // previous project had, so Spec mode kept showing a since-gone plan's "In Plan"
+        // state indefinitely.
+        setSelectedPlanId((prev) =>
+          mapped.length === 0 ? "" : mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
+        );
       }
     } catch {
       // Network error -- keep the existing (fallback) list
@@ -660,13 +749,18 @@ export default function App() {
   // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
   // suiteNodes below), fixing the tree's pre-existing flat/fake-count display.
   const refreshSpecTree = useCallback(async () => {
-    if (!selectedProjectId || !selectedPlanId) return;
+    // plan_id is genuinely optional on this route (apps/server/src/routes/testPlanCases.ts) --
+    // omitted, every case just comes back in_plan: false rather than 404ing. That's what makes
+    // it safe to still fetch (and show real suites/cases, correctly annotated as not-in-plan)
+    // when the project currently has no test plan at all, instead of leaving whatever was
+    // fetched for a since-deleted plan stale on screen.
+    if (!selectedProjectId) return;
     const seq = ++specTreeRequestSeq.current;
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/spec-tree?plan_id=${selectedPlanId}`,
-        { headers: authHeaders() },
-      );
+      const url = selectedPlanId
+        ? `/api/v1/projects/${selectedProjectId}/spec-tree?plan_id=${selectedPlanId}`
+        : `/api/v1/projects/${selectedProjectId}/spec-tree`;
+      const res = await fetch(url, { headers: authHeaders() });
       const data = res.ok ? await res.json() : null;
       if (specTreeRequestSeq.current === seq) setSpecData(data);
     } catch {
@@ -856,7 +950,11 @@ export default function App() {
   // drives Pane 1's suite tree in Execution mode -- see suiteNodes below); Execution mode
   // additionally needs the plan's execution queue.
   useEffect(() => {
-    if (!currentUser || !selectedProjectId || !selectedPlanId) return;
+    // refreshSpecTree itself now tolerates no plan being selected (see its own comment);
+    // refreshExecutionWorkspace still self-guards on selectedPlanId (Execution mode has
+    // nothing to queue without one), so it's safe to always attempt both here and let each
+    // decide what it can actually do.
+    if (!currentUser || !selectedProjectId) return;
     refreshSpecTree();
     if (workspaceMode === "EXECUTION") {
       refreshExecutionWorkspace();
@@ -1081,55 +1179,72 @@ export default function App() {
     [selectedProjectId, specCaseDetail, handleAuthExpiry],
   );
 
-  const handleSaveSteps = useCallback(async () => {
-    if (!selectedProjectId || !specCaseDetail?.version) return;
-    setIsSavingSteps(true);
-    setSpecEditError(null);
-    try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({
-            steps: stepsDraft.map((s, i) => ({
-              step_number: i + 1,
-              action: s.action,
-              expected_result: s.expected_result,
-            })),
-          }),
-        },
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 401) {
-          handleAuthExpiry();
-          return;
+  // Steps autosave -- no explicit "Save Steps" button (per Elliot's request, matching the
+  // Summary/Preconditions fields' existing silent-onBlur-save convention). Accepts an
+  // optional explicit array so a structural change (remove/reorder) can save the freshly
+  // computed array immediately rather than racing setStepsDraft's async state update --
+  // stepsDraft itself is only safe to read from a blur handler, which fires after React
+  // has already re-rendered with the latest onChange-driven state.
+  const saveSteps = useCallback(
+    async (stepsOverride?: Step[]) => {
+      if (!selectedProjectId || !specCaseDetail?.version) return;
+      const stepsToSave = stepsOverride ?? stepsDraft;
+      setIsSavingSteps(true);
+      setSpecEditError(null);
+      try {
+        const res = await fetch(
+          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({
+              steps: stepsToSave.map((s, i) => ({
+                step_number: i + 1,
+                action: s.action,
+                expected_result: s.expected_result,
+              })),
+            }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 401) {
+            handleAuthExpiry();
+            return;
+          }
+          throw new Error(data.error || data.detail || "Failed to save steps");
         }
-        throw new Error(data.error || data.detail || "Failed to save steps");
+        setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+      } catch (err: any) {
+        setSpecEditError(err.message || "Failed to save steps");
+      } finally {
+        setIsSavingSteps(false);
       }
-      setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
-    } catch (err: any) {
-      setSpecEditError(err.message || "Failed to save steps");
-    } finally {
-      setIsSavingSteps(false);
-    }
-  }, [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry]);
+    },
+    [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry],
+  );
 
+  // moveStep/removeStep compute the next array from the current stepsDraft directly (rather
+  // than via setStepsDraft's functional-updater form) specifically so that same array can
+  // also be handed to saveSteps() as a plain, synchronous side effect outside of state
+  // reconciliation -- a fetch triggered from inside a state updater callback would be an
+  // impure side effect there (risky under React StrictMode's intentional double-invocation
+  // of updaters) and updater functions don't have anywhere to hand `next` back out anyway.
   const moveStep = (index: number, direction: -1 | 1) => {
-    setStepsDraft((prev) => {
-      const next = [...prev];
-      const target = index + direction;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
+    const target = index + direction;
+    if (target < 0 || target >= stepsDraft.length) return;
+    const next = [...stepsDraft];
+    [next[index], next[target]] = [next[target], next[index]];
+    setStepsDraft(next);
+    saveSteps(next);
   };
   const updateStepField = (index: number, patch: Partial<Step>) => {
     setStepsDraft((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
   const removeStep = (index: number) => {
-    setStepsDraft((prev) => prev.filter((_, i) => i !== index));
+    const next = stepsDraft.filter((_, i) => i !== index);
+    setStepsDraft(next);
+    saveSteps(next);
   };
   const addStep = () => {
     setStepsDraft((prev) => {
@@ -2071,6 +2186,56 @@ export default function App() {
         </div>
       </header>
 
+      {deletePlanPrompt && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #1f2937",
+            backgroundColor: "#111827",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ Confirm Deletion
+          </div>
+          <div style={{ fontSize: "11px", color: "#cbd5e1", flex: 1 }}>{deletePlanPrompt.detail}</div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setDeletePlanPrompt(null)}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#334155",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDeletePlan}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#dc2626",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Delete Anyway
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 3-PANE TOPOLOGY WORKSPACE */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* PANE 1: RECURSIVE TREE NAVIGATION (28px NODE DENSITY) */}
@@ -2824,7 +2989,9 @@ export default function App() {
                             {isDraft && hasSpecEditPermission ? (
                               <textarea
                                 key={`sum-${specVersionDetail?.id}`}
+                                ref={autoGrowTextarea}
                                 defaultValue={specVersionDetail?.summary ?? ""}
+                                onInput={(e) => autoGrowTextarea(e.currentTarget)}
                                 onBlur={(e) => handleSaveVersionContent("summary", e.target.value)}
                                 rows={2}
                                 style={{
@@ -2836,7 +3003,8 @@ export default function App() {
                                   border: "1px solid #1f2937",
                                   borderRadius: "4px",
                                   padding: "6px 8px",
-                                  resize: "vertical",
+                                  resize: "none",
+                                  overflow: "hidden",
                                 }}
                               />
                             ) : (
@@ -2870,7 +3038,9 @@ export default function App() {
                           {isDraft && hasSpecEditPermission ? (
                             <textarea
                               key={`pre-${specVersionDetail?.id}`}
+                              ref={autoGrowTextarea}
                               defaultValue={specVersionDetail?.preconditions ?? ""}
+                              onInput={(e) => autoGrowTextarea(e.currentTarget)}
                               onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
                               rows={2}
                               style={{
@@ -2882,7 +3052,8 @@ export default function App() {
                                 border: "1px solid #1f2937",
                                 borderRadius: "4px",
                                 padding: "6px 8px",
-                                resize: "vertical",
+                                resize: "none",
+                                overflow: "hidden",
                               }}
                             />
                           ) : (
@@ -2942,10 +3113,13 @@ export default function App() {
                                 <textarea
                                   ref={(el) => {
                                     stepActionRefs.current[i] = el;
+                                    autoGrowTextarea(el);
                                   }}
                                   placeholder="Action"
                                   value={step.action}
                                   onChange={(e) => updateStepField(i, { action: e.target.value })}
+                                  onInput={(e) => autoGrowTextarea(e.currentTarget)}
+                                  onBlur={() => saveSteps()}
                                   rows={1}
                                   style={{
                                     flex: 1,
@@ -2955,13 +3129,17 @@ export default function App() {
                                     border: "1px solid #1f2937",
                                     borderRadius: "4px",
                                     padding: "5px 8px",
-                                    resize: "vertical",
+                                    resize: "none",
+                                    overflow: "hidden",
                                   }}
                                 />
                                 <textarea
+                                  ref={autoGrowTextarea}
                                   placeholder="Expected Result"
                                   value={step.expected_result}
                                   onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
+                                  onInput={(e) => autoGrowTextarea(e.currentTarget)}
+                                  onBlur={() => saveSteps()}
                                   rows={1}
                                   style={{
                                     flex: 1,
@@ -2971,7 +3149,8 @@ export default function App() {
                                     border: "1px solid #1f2937",
                                     borderRadius: "4px",
                                     padding: "5px 8px",
-                                    resize: "vertical",
+                                    resize: "none",
+                                    overflow: "hidden",
                                   }}
                                 />
                                 <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -3015,24 +3194,11 @@ export default function App() {
                             >
                               + Add Step
                             </button>
-                            <div style={{ marginTop: "10px", textAlign: "right" }}>
-                              <button
-                                onClick={handleSaveSteps}
-                                disabled={isSavingSteps}
-                                style={{
-                                  fontSize: "11px",
-                                  padding: "5px 14px",
-                                  borderRadius: "4px",
-                                  border: "none",
-                                  backgroundColor: isSavingSteps ? "#166534" : "#16a34a",
-                                  color: "#fff",
-                                  fontWeight: 700,
-                                  cursor: isSavingSteps ? "default" : "pointer",
-                                }}
-                              >
-                                {isSavingSteps ? "Saving…" : "Save Steps"}
-                              </button>
-                            </div>
+                            {isSavingSteps && (
+                              <div style={{ marginTop: "10px", textAlign: "right", fontSize: "11px", color: "#6b7280" }}>
+                                Saving…
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>

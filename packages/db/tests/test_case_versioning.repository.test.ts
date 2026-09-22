@@ -296,4 +296,60 @@ describe('Suite/case CRUD: external-id generation, draft versioning, and force-d
       expect(result).toEqual({ deleted: false, blockedSubSuiteCount: 0, blockedCaseCount: 0, blockedPlanLinkCount: 0, blockedExecutionCount: 0 });
     });
   });
+
+  describe('TestPlanRepository.deleteWithForce', () => {
+    it('an empty plan with no builds/plan-links deletes immediately', async () => {
+      const project = await projectRepo.create({ name: 'P', prefix: 'EP' });
+      const plan = await planRepo.create({ project_id: project.id, name: 'Empty Plan' });
+
+      const result = await planRepo.deleteWithForce(plan.id);
+      expect(result).toEqual({ deleted: true });
+      expect(await planRepo.findById(plan.id)).toBeUndefined();
+    });
+
+    it('without force, blocks with accurate counts and leaves everything untouched', async () => {
+      const { plan, build, planCase, execution } = await setupCaseWithPlanLinkAndExecution();
+
+      const result = await planRepo.deleteWithForce(plan.id);
+      expect(result).toEqual({ deleted: false, blockedBuildCount: 1, blockedCaseLinkCount: 1, blockedExecutionCount: 1 });
+
+      expect(await planRepo.findById(plan.id)).toBeDefined();
+      expect(await buildRepo.findById(build.id)).toBeDefined();
+      const stillThere = await db.selectFrom('test_plan_cases').selectAll().where('id', '=', planCase.id).executeTakeFirst();
+      expect(stillThere).toBeDefined();
+      const execStillThere = await db.selectFrom('executions').selectAll().where('id', '=', execution.id).executeTakeFirst();
+      expect(execStillThere).toBeDefined();
+    });
+
+    it('with force, deletes executions, execution_steps, builds, plan-links, and the plan itself', async () => {
+      const { plan, build, planCase, execution } = await setupCaseWithPlanLinkAndExecution();
+
+      const result = await planRepo.deleteWithForce(plan.id, { force: true });
+      expect(result).toEqual({ deleted: true });
+
+      expect(await planRepo.findById(plan.id)).toBeUndefined();
+      expect(await buildRepo.findById(build.id)).toBeUndefined();
+      expect(await db.selectFrom('test_plan_cases').selectAll().where('id', '=', planCase.id).executeTakeFirst()).toBeUndefined();
+      expect(await db.selectFrom('executions').selectAll().where('id', '=', execution.id).executeTakeFirst()).toBeUndefined();
+      expect(await db.selectFrom('execution_steps').selectAll().where('execution_id', '=', execution.id).execute()).toHaveLength(0);
+    });
+
+    it('a plan with a build but no pinned cases still blocks on the build alone', async () => {
+      const project = await projectRepo.create({ name: 'P', prefix: 'BLD' });
+      const plan = await planRepo.create({ project_id: project.id, name: 'Plan' });
+      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
+
+      const result = await planRepo.deleteWithForce(plan.id);
+      expect(result).toEqual({ deleted: false, blockedBuildCount: 1, blockedCaseLinkCount: 0, blockedExecutionCount: 0 });
+
+      const forced = await planRepo.deleteWithForce(plan.id, { force: true });
+      expect(forced).toEqual({ deleted: true });
+      expect(await buildRepo.findById(build.id)).toBeUndefined();
+    });
+
+    it('deleting a missing plan returns deleted:false with zero counts', async () => {
+      const result = await planRepo.deleteWithForce('does-not-exist');
+      expect(result).toEqual({ deleted: false, blockedBuildCount: 0, blockedCaseLinkCount: 0, blockedExecutionCount: 0 });
+    });
+  });
 });
