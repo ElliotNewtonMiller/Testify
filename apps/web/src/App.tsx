@@ -235,9 +235,12 @@ export default function App() {
   // Two-step delete confirmation for suites -- mirrors AdminPanelModal's deleteFieldPrompt.
   const [deleteSuitePrompt, setDeleteSuitePrompt] = useState<{ id: string; detail: string } | null>(null);
 
-  // Two-step delete confirmation for test plans, same shape as deleteSuitePrompt -- shown
-  // via EntityManagementModal's PLAN/DELETE flow after a non-force delete comes back 409.
+  // Two-step delete confirmation for test plans, same shape as deleteSuitePrompt -- shown by
+  // handleDeletePlanClick after a non-force delete comes back 409 (bypasses
+  // EntityManagementModal entirely, so this is the only confirmation dialog ever shown).
   const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
+  // Same shape one level down, for test runs (builds) -- see handleDeleteRunClick.
+  const [deleteRunPrompt, setDeleteRunPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -434,6 +437,8 @@ export default function App() {
       // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT/DELETE
       // .../plans routes. Unlike PROJECT/RUN below (still client-side mock state, a known,
       // separately-flagged gap), Test Plan create/edit/delete now actually persists.
+      // DELETE is handled by handleDeletePlanClick below instead of here -- it bypasses this
+      // modal entirely (see that function's comment for why).
       if (!selectedProjectId) return;
       if (actionType === "CREATE") {
         (async () => {
@@ -480,84 +485,59 @@ export default function App() {
             showToast(err.message || "Failed to update test plan");
           }
         })();
-      } else if (actionType === "DELETE") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
-              method: "DELETE",
-              headers: authHeaders(),
-            });
-            if (res.status === 409) {
-              const data = await res.json();
-              setDeletePlanPrompt({
-                id: item.id,
-                name: item.name,
-                detail: data.detail || "This test plan still contains content.",
-              });
-              return;
-            }
-            if (!res.ok) {
-              const data = await res.json().catch(() => ({}) as any);
-              throw new Error(data.error || "Failed to delete test plan");
-            }
-            applyPlanDeletedLocally(item.id);
-            showToast(`Deleted Test Plan: ${item.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to delete test plan");
-          }
-        })();
       }
     } else if (entityType === "RUN") {
+      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT
+      // .../plans/:planId/builds routes. A run always belongs to whichever plan is currently
+      // selected (there's no plan-picker in the modal -- matches how creating a Suite
+      // implicitly uses the selected project, not a picker). DELETE is handled by
+      // handleDeleteRunClick below instead of here, same reasoning as Plan delete above.
+      if (!selectedProjectId || !selectedPlanId) return;
       if (actionType === "CREATE") {
-        setRunsList((prev) => [...prev, item]);
-        setSelectedRunId(item.id);
-        setWorkspace((prev) =>
-          prev
-            ? {
-                ...prev,
-                build: {
-                  id: item.id,
-                  name: item.name,
-                  status: item.status || "OPEN",
-                },
-              }
-            : prev,
-        );
-        showToast(`Created New Test Run: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, status: item.status || "OPEN" }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test run");
+            const created = data.build;
+            setRunsList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
+            setSelectedRunId(created.id);
+            setWorkspace((prev) =>
+              prev ? { ...prev, build: { id: created.id, name: created.name, status: created.status } } : prev,
+            );
+            showToast(`Created New Test Run: ${created.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to create test run");
+          }
+        })();
       } else if (actionType === "EDIT") {
-        setRunsList((prev) => prev.map((r) => (r.id === item.id ? item : r)));
-        setWorkspace((prev) =>
-          prev && prev.build.id === item.id
-            ? {
-                ...prev,
-                build: {
-                  ...prev.build,
-                  name: item.name,
-                  status: item.status || prev.build.status,
-                },
-              }
-            : prev,
-        );
-        showToast(`Updated Test Run: ${item.name}`);
-      } else if (actionType === "DELETE") {
-        const updated = runsList.filter((r) => r.id !== item.id);
-        setRunsList(updated);
-        if (selectedRunId === item.id && updated.length > 0) {
-          setSelectedRunId(updated[0].id);
-          setWorkspace((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  build: {
-                    id: updated[0].id,
-                    name: updated[0].name,
-                    status: updated[0].status || "OPEN",
-                  },
-                }
-              : prev,
-          );
-        }
-        showToast(`Deleted Test Run: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${item.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, status: item.status }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test run");
+            const updatedRun = data.build;
+            setRunsList((prev) =>
+              prev.map((r) => (r.id === updatedRun.id ? { id: updatedRun.id, name: updatedRun.name, status: updatedRun.status } : r)),
+            );
+            setWorkspace((prev) =>
+              prev && prev.build.id === updatedRun.id
+                ? { ...prev, build: { ...prev.build, name: updatedRun.name, status: updatedRun.status } }
+                : prev,
+            );
+            showToast(`Updated Test Run: ${updatedRun.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to update test run");
+          }
+        })();
       }
     }
   };
@@ -582,9 +562,50 @@ export default function App() {
         // effect re-fires and refetches without a plan_id, immediately showing every case
         // as not-in-plan instead of stale "In Plan" badges from the deleted plan.
         setSelectedPlanId("");
+        // The deleted plan's builds are genuinely gone too (deleteWithForce cascades them
+        // server-side) -- without this, runsList/selectedRunId are never touched again, since
+        // refreshExecutionWorkspace itself no-ops once selectedPlanId is empty, leaving a
+        // stale, now-nonexistent Run showing in the dropdown forever.
+        setRunsList([]);
+        setSelectedRunId("");
       }
     }
   };
+
+  // Plan delete (two-step confirmation), matching handleDeleteSuiteClick's exact pattern --
+  // attempts the real delete immediately with no separate "are you sure?" dialog first. That
+  // used to be EntityManagementModal's job (open a generic confirm modal, then on Confirm
+  // Click, this same attempt would run and could STILL come back 409 and show a second,
+  // content-bearing warning banner below it -- two stacked dialogs for one delete). Bypassing
+  // the modal for PLAN/DELETE specifically means the blocked-with-counts banner (below) is
+  // the only confirmation shown, ever -- same one-dialog shape Suite/Case delete already has.
+  const handleDeletePlanClick = useCallback(
+    async (planId: string) => {
+      if (!selectedProjectId) return;
+      const planName = plansList.find((p) => p.id === planId)?.name || "";
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${planId}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        if (res.status === 409) {
+          const data = await res.json();
+          setDeletePlanPrompt({ id: planId, name: planName, detail: data.detail || "This test plan still contains content." });
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          throw new Error(data.error || "Failed to delete test plan");
+        }
+        applyPlanDeletedLocally(planId);
+        showToast(`Deleted Test Plan: ${planName}`);
+      } catch (err: any) {
+        showToast(err.message || "Failed to delete test plan");
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [selectedProjectId, plansList, showToast],
+  );
 
   const handleConfirmDeletePlan = useCallback(async () => {
     if (!deletePlanPrompt || !selectedProjectId) return;
@@ -606,6 +627,72 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deletePlanPrompt, selectedProjectId, plansList, selectedPlanId, showToast]);
+
+  // Same shape as applyPlanDeletedLocally/handleDeletePlanClick/handleConfirmDeletePlan above,
+  // one level down (a run belongs to the selected plan, not the project).
+  const applyRunDeletedLocally = (deletedId: string) => {
+    const updated = runsList.filter((r) => r.id !== deletedId);
+    setRunsList(updated);
+    if (selectedRunId === deletedId) {
+      if (updated.length > 0) {
+        setSelectedRunId(updated[0].id);
+        setWorkspace((prev) =>
+          prev ? { ...prev, build: { id: updated[0].id, name: updated[0].name, status: updated[0].status || "OPEN" } } : prev,
+        );
+      } else {
+        setSelectedRunId("");
+      }
+    }
+  };
+
+  const handleDeleteRunClick = useCallback(
+    async (runId: string) => {
+      if (!selectedProjectId || !selectedPlanId) return;
+      const runName = runsList.find((r) => r.id === runId)?.name || "";
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${runId}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        if (res.status === 409) {
+          const data = await res.json();
+          setDeleteRunPrompt({ id: runId, name: runName, detail: data.detail || "This test run still contains content." });
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          throw new Error(data.error || "Failed to delete test run");
+        }
+        applyRunDeletedLocally(runId);
+        showToast(`Deleted Test Run: ${runName}`);
+      } catch (err: any) {
+        showToast(err.message || "Failed to delete test run");
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [selectedProjectId, selectedPlanId, runsList, showToast],
+  );
+
+  const handleConfirmDeleteRun = useCallback(async () => {
+    if (!deleteRunPrompt || !selectedProjectId || !selectedPlanId) return;
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${deleteRunPrompt.id}?force=true`,
+        { method: "DELETE", headers: authHeaders() },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as any);
+        throw new Error(data.error || "Failed to delete test run");
+      }
+      applyRunDeletedLocally(deleteRunPrompt.id);
+      const deletedName = deleteRunPrompt.name;
+      setDeleteRunPrompt(null);
+      showToast(`Deleted Test Run: ${deletedName}`);
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete test run");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteRunPrompt, selectedProjectId, selectedPlanId, runsList, selectedRunId, showToast]);
 
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -1961,7 +2048,7 @@ export default function App() {
               ✏️
             </button>
             <button
-              onClick={() => openEntityModal("PLAN", "DELETE")}
+              onClick={() => selectedPlanId && handleDeletePlanClick(selectedPlanId)}
               title="Delete Selected Test Plan"
               style={{
                 background: "transparent",
@@ -2028,7 +2115,7 @@ export default function App() {
               ✏️
             </button>
             <button
-              onClick={() => openEntityModal("RUN", "DELETE")}
+              onClick={() => selectedRunId && handleDeleteRunClick(selectedRunId)}
               title="Delete Selected Test Run"
               style={{
                 background: "transparent",
@@ -2219,6 +2306,56 @@ export default function App() {
             </button>
             <button
               onClick={handleConfirmDeletePlan}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#dc2626",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Delete Anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {deleteRunPrompt && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #1f2937",
+            backgroundColor: "#111827",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ Confirm Deletion
+          </div>
+          <div style={{ fontSize: "11px", color: "#cbd5e1", flex: 1 }}>{deleteRunPrompt.detail}</div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setDeleteRunPrompt(null)}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#334155",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDeleteRun}
               style={{
                 padding: "5px 12px",
                 backgroundColor: "#dc2626",

@@ -128,9 +128,28 @@ export function sendPlanInUseError(
     code: 'PLAN_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Test Plan ${planRef} still contains ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard all of it.`,
+    detail: `Test Plan ${planRef} still contains ${parts.join(', ')}. Are you sure you want to delete the test plan with its builds and links to test cases?`,
     instance,
     invalid_params: [{ name: 'plan_id', reason: `Contains ${parts.join(', ')}` }],
+  });
+}
+
+export function sendBuildInUseError(
+  reply: FastifyReply,
+  buildId: string,
+  counts: { executions: number },
+  instance?: string,
+  buildName?: string
+) {
+  const buildRef = buildName ? buildName : `(ID: ${buildId})`;
+
+  return sendProblemDetails(reply, {
+    code: 'BUILD_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Test Run ${buildRef} still contains ${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}. Are you sure you want to delete the test run with its recorded executions?`,
+    instance,
+    invalid_params: [{ name: 'build_id', reason: `Has ${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}` }],
   });
 }
 

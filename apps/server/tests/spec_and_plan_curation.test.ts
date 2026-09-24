@@ -567,4 +567,196 @@ describe('Specification / Plan Curation Routes', () => {
       expect(deleteRes.statusCode).toBe(200);
     });
   });
+
+  describe('Test Run (Build) CRUD (POST/PUT/DELETE .../projects/:projectId/plans/:planId/builds)', () => {
+    it('requires BUILD_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
+      const { app, seed } = serverInstance;
+      const { token: adminToken } = await loginAsAdmin(app);
+      const viewerToken = await createAndLoginViewer(app, adminToken);
+
+      const createRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+        payload: { name: 'Should Not Exist' },
+      });
+      expect(createRes.statusCode).toBe(403);
+
+      const updateRes = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+        payload: { name: 'Renamed' },
+      });
+      expect(updateRes.statusCode).toBe(403);
+
+      const deleteRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+      });
+      expect(deleteRes.statusCode).toBe(403);
+    });
+
+    it('creates a run, and it is immediately listed for the plan', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'v1.0.1-rc1', status: 'OPEN' },
+      });
+      expect(res.statusCode).toBe(201);
+      const created = JSON.parse(res.payload).build;
+      expect(created.name).toBe('v1.0.1-rc1');
+      expect(created.test_plan_id).toBe(seed.planId);
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(JSON.parse(listRes.payload).builds.some((b: any) => b.id === created.id)).toBe(true);
+    });
+
+    it('rejects a create with a missing name, an invalid status, and a duplicate name within the same plan', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const noName = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {},
+      });
+      expect(noName.statusCode).toBe(400);
+
+      const badStatus = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'X', status: 'IN_PROGRESS' },
+      });
+      expect(badStatus.statusCode).toBe(400);
+
+      const dupe = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'v1.0.0-rc1' }, // matches the seeded build's name in this same plan
+      });
+      expect(dupe.statusCode).toBe(409);
+    });
+
+    it("updates a run's name and status", async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Renamed Run', status: 'CLOSED' },
+      });
+      expect(res.statusCode).toBe(200);
+      const updated = JSON.parse(res.payload).build;
+      expect(updated.name).toBe('Renamed Run');
+      expect(updated.status).toBe('CLOSED');
+    });
+
+    it('404s a run that belongs to a different plan', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+      const otherPlanRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Other Plan' },
+      });
+      const otherPlanId = JSON.parse(otherPlanRes.payload).plan.id;
+
+      const updateRes = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${seed.projectId}/plans/${otherPlanId}/builds/${seed.buildId}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Hijacked' },
+      });
+      expect(updateRes.statusCode).toBe(404);
+    });
+
+    it('deleting a run with recorded executions returns 409 with the count, then force=true deletes it', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
+      });
+
+      const blockedRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(blockedRes.statusCode).toBe(409);
+      const blockedBody = JSON.parse(blockedRes.payload);
+      expect(blockedBody.code).toBe('BUILD_IN_USE');
+      expect(blockedBody.detail).toContain('v1.0.0-rc1');
+
+      const forcedRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}?force=true`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(forcedRes.statusCode).toBe(200);
+      expect(JSON.parse(forcedRes.payload).deleted).toBe(true);
+    });
+
+    it('an empty run (no executions) deletes immediately with no force needed', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const createRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Throwaway Empty Run' },
+      });
+      const runId = JSON.parse(createRes.payload).build.id;
+
+      const deleteRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${runId}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(deleteRes.statusCode).toBe(200);
+    });
+
+    it('deleting a plan cascades to delete its runs too', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const forcedRes = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}?force=true`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(forcedRes.statusCode).toBe(200);
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      // The plan itself is gone, but this listing route doesn't verify plan ownership (a
+      // pre-existing, narrow gap -- see exports.ts) so it still 200s with an empty array
+      // rather than 404ing; the meaningful assertion is that the build row is really gone.
+      expect(listRes.statusCode).toBe(200);
+      expect(JSON.parse(listRes.payload).builds).toHaveLength(0);
+    });
+  });
 });

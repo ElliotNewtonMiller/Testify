@@ -22,6 +22,10 @@ export interface UpdateBuildInput {
   release_date?: string | null;
 }
 
+export type DeleteBuildResult =
+  | { deleted: true }
+  | { deleted: false; blockedExecutionCount: number };
+
 export class BuildRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -99,5 +103,37 @@ export class BuildRepository {
       .executeTakeFirst();
 
     return (result.numDeletedRows ?? 0n) > 0n;
+  }
+
+  /**
+   * Deletes a build and its recorded executions. Unlike the plain `delete()` above (which
+   * relies purely on the DB's ON DELETE RESTRICT FK on executions.build_id), this checks
+   * usage first and, without `force`, leaves everything untouched and reports the blocked
+   * execution count -- the same warn-then-confirm shape as
+   * TestPlanRepository/TestSuiteRepository/TestCaseRepository's deleteWithForce. With `force`
+   * (or a build with zero executions), it deletes every execution under this build (their
+   * execution_steps cascade away automatically) before deleting the build itself.
+   */
+  async deleteWithForce(id: string, opts: { force?: boolean } = {}): Promise<DeleteBuildResult> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      return { deleted: false, blockedExecutionCount: 0 };
+    }
+
+    const execRows = await this.db.selectFrom('executions').select('id').where('build_id', '=', id).execute();
+    const blockedExecutionCount = execRows.length;
+
+    if (blockedExecutionCount > 0 && !opts.force) {
+      return { deleted: false, blockedExecutionCount };
+    }
+
+    await this.db.transaction().execute(async (trx) => {
+      if (blockedExecutionCount > 0) {
+        await trx.deleteFrom('executions').where('build_id', '=', id).execute();
+      }
+      await trx.deleteFrom('builds').where('id', '=', id).execute();
+    });
+
+    return { deleted: true };
   }
 }

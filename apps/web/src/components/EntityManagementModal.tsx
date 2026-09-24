@@ -314,7 +314,6 @@ export function EntityManagementModal({
                   ) : (
                     <>
                       <option value="OPEN">OPEN</option>
-                      <option value="IN_PROGRESS">IN_PROGRESS</option>
                       <option value="CLOSED">CLOSED</option>
                     </>
                   )}

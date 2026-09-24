@@ -352,4 +352,42 @@ describe('Suite/case CRUD: external-id generation, draft versioning, and force-d
       expect(result).toEqual({ deleted: false, blockedBuildCount: 0, blockedCaseLinkCount: 0, blockedExecutionCount: 0 });
     });
   });
+
+  describe('BuildRepository.deleteWithForce', () => {
+    it('an empty build with no executions deletes immediately', async () => {
+      const project = await projectRepo.create({ name: 'P', prefix: 'EB' });
+      const plan = await planRepo.create({ project_id: project.id, name: 'Plan' });
+      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Empty Build' });
+
+      const result = await buildRepo.deleteWithForce(build.id);
+      expect(result).toEqual({ deleted: true });
+      expect(await buildRepo.findById(build.id)).toBeUndefined();
+    });
+
+    it('without force, blocks with the accurate execution count and leaves everything untouched', async () => {
+      const { build, execution } = await setupCaseWithPlanLinkAndExecution();
+
+      const result = await buildRepo.deleteWithForce(build.id);
+      expect(result).toEqual({ deleted: false, blockedExecutionCount: 1 });
+
+      expect(await buildRepo.findById(build.id)).toBeDefined();
+      expect(await db.selectFrom('executions').selectAll().where('id', '=', execution.id).executeTakeFirst()).toBeDefined();
+    });
+
+    it('with force, deletes the execution, execution_steps, and the build itself', async () => {
+      const { build, execution } = await setupCaseWithPlanLinkAndExecution();
+
+      const result = await buildRepo.deleteWithForce(build.id, { force: true });
+      expect(result).toEqual({ deleted: true });
+
+      expect(await buildRepo.findById(build.id)).toBeUndefined();
+      expect(await db.selectFrom('executions').selectAll().where('id', '=', execution.id).executeTakeFirst()).toBeUndefined();
+      expect(await db.selectFrom('execution_steps').selectAll().where('execution_id', '=', execution.id).execute()).toHaveLength(0);
+    });
+
+    it('deleting a missing build returns deleted:false with zero counts', async () => {
+      const result = await buildRepo.deleteWithForce('does-not-exist');
+      expect(result).toEqual({ deleted: false, blockedExecutionCount: 0 });
+    });
+  });
 });
