@@ -1710,9 +1710,11 @@ export default function App() {
       const targetCase = targetCaseOverride || activeCase;
       if (!targetCase || !workspace) return;
 
-      const resolvedNotes =
-        notes ||
-        (verdict === "FAILED" || verdict === "BLOCKED" ? failureNotes : null);
+      // Whatever's in the Notes field gets saved regardless of verdict -- it's a general
+      // "execution details or notes" field (see its placeholder), not failure-only, so a
+      // note typed before hitting Pass/Skip shouldn't be silently discarded just because the
+      // verdict isn't FAILED/BLOCKED.
+      const resolvedNotes = notes || (failureNotes.trim() ? failureNotes : null);
 
       // 1. OPTIMISTIC UI UPDATE (<10ms) -- also updates latest_notes, not just
       // latest_verdict, so returning to this case (without a full refetch) shows the note
