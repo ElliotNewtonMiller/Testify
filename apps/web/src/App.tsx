@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { useFocusFSM, FocusZone } from "./hooks/useFocusFSM";
 import { useHotkeyEngine, VerdictType } from "./hooks/useHotkeyEngine";
 import { buildExecutionCaseOrder, nextExecutionCaseIndex } from "./utils/executionCaseOrder";
@@ -122,6 +122,62 @@ function autoGrowTextarea(el: HTMLTextAreaElement | null) {
   if (!el) return;
   el.style.height = "auto";
   el.style.height = `${el.scrollHeight}px`;
+}
+
+type StepsScrollRestoreMode = "restore" | "scrollToBottom";
+
+/**
+ * Shared scroll-preservation primitives for the Spec-mode step editor (see
+ * specDetailScrollRef). Reordering/removing/adding a step mutates DOM nodes inside that
+ * scroll container, and React's commit-phase focus/selection restoration (restoreSelection)
+ * engages whenever a mutation touches a subtree containing the currently-focused node,
+ * re-applying a snapshotted scroll offset that can land wrong -- captureScroll/
+ * blurActiveElement/scheduleRestore give every mutation site the same, consistent discipline
+ * (capture the position worth keeping -> blur so restoreSelection has nothing to misapply ->
+ * mutate -> schedule the correction) instead of four independently hand-rolled variants, which
+ * is exactly how one of the four (addStep) ended up missing the blur step in an earlier pass.
+ * scheduleRestore's correction runs in a useLayoutEffect -- synchronously after the DOM
+ * mutation/any restoreSelection adjustment but strictly before the browser paints -- so it's
+ * always the last word before the user sees a frame, never a later, visibly-corrective jump.
+ */
+function useStepsScrollPreserved(scrollRef: React.RefObject<HTMLDivElement>) {
+  const preservedTopRef = useRef<number | null>(null);
+  const pendingModeRef = useRef<StepsScrollRestoreMode | null>(null);
+  const [restoreTick, setRestoreTick] = useState(0);
+
+  const captureScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) preservedTopRef.current = el.scrollTop;
+  }, [scrollRef]);
+
+  const blurActiveElement = useCallback(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+  }, []);
+
+  // "restore" re-applies the position captureScroll last saw (right for a reorder/removal,
+  // which shouldn't move the viewport at all); "scrollToBottom" ignores the captured value and
+  // scrolls to the new bottom instead (right for an append, where the previous scrollTop would
+  // now fall short of the true bottom by one row's height and leave the new row off-screen).
+  const scheduleRestore = useCallback((mode: StepsScrollRestoreMode) => {
+    pendingModeRef.current = mode;
+    setRestoreTick((t) => t + 1);
+  }, []);
+
+  useLayoutEffect(() => {
+    const mode = pendingModeRef.current;
+    if (mode === null) return;
+    pendingModeRef.current = null;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (mode === "scrollToBottom") {
+      el.scrollTop = el.scrollHeight;
+    } else if (preservedTopRef.current !== null) {
+      el.scrollTop = preservedTopRef.current;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreTick]);
+
+  return { captureScroll, blurActiveElement, scheduleRestore };
 }
 
 const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
@@ -315,36 +371,14 @@ export default function App() {
   // pendingStepFocusIndexRef effect below addStep).
   const stepActionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const pendingStepFocusIndexRef = useRef<number | null>(null);
+  // Tracks the in-flight steps-save request (if any) -- see saveSteps' own comment for the
+  // stale-save race this guards against between a field's blur-triggered save and a
+  // Move/Remove's own save.
+  const stepsSaveAbortRef = useRef<AbortController | null>(null);
   // The Spec-mode case detail pane's own scroll container (Summary/Preconditions/steps all
-  // live inside it) -- see captureStepsScroll/restoreStepsScroll below for why this needs
-  // tracking at all.
+  // live inside it) -- see useStepsScrollPreserved above for why this needs tracking at all.
   const specDetailScrollRef = useRef<HTMLDivElement>(null);
-  const preservedStepsScrollTopRef = useRef<number | null>(null);
-
-  // Reordering/removing a step moves or replaces DOM nodes inside specDetailScrollRef.
-  // React's own commit-phase focus/selection restoration (ReactDOM's restoreSelection,
-  // called from resetAfterCommit) tries to preserve the previously-focused element's scroll
-  // position across that kind of DOM change, and under some interaction paths (confirmed via
-  // a scrollTop property trap while testing this) gets it wrong -- moveStep/removeStep
-  // blur the focused Move/Remove button before reordering specifically to give that
-  // mechanism nothing to restore. As a second line of defense (there's also a later commit
-  // when saveSteps' fetch resolves and calls setSpecCaseDetail), this captures the scroll
-  // position once before the action and re-applies it a couple of animation frames after
-  // both the sync reorder and the later async save, i.e. after whatever scroll adjustment
-  // would have already settled.
-  const captureStepsScroll = () => {
-    const el = specDetailScrollRef.current;
-    if (el) preservedStepsScrollTopRef.current = el.scrollTop;
-  };
-  const restoreStepsScroll = () => {
-    const top = preservedStepsScrollTopRef.current;
-    if (top === null) return;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (specDetailScrollRef.current) specDetailScrollRef.current.scrollTop = top;
-      });
-    });
-  };
+  const stepsScroll = useStepsScrollPreserved(specDetailScrollRef);
 
   // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
   // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
@@ -1370,6 +1404,17 @@ export default function App() {
     async (stepsOverride?: Step[]) => {
       if (!selectedProjectId || !specCaseDetail?.version) return;
       const stepsToSave = stepsOverride ?? stepsDraft;
+      // Abort any still-in-flight save before starting this one. Without this, a field's own
+      // blur-triggered save (using stepsDraft as it was *before* a reorder/removal, since a
+      // field's native blur fires before the Move/Remove button's own onClick even runs) can
+      // still be in flight when moveStep/removeStep immediately fire their own save with the
+      // freshly mutated array. With no cancellation, both requests hit the same PUT endpoint
+      // and whichever happens to resolve last silently wins -- occasionally reverting the
+      // user's reorder/removal back to the stale pre-mutation order. Aborting the previous
+      // request here means only the most recently-started save can ever complete/apply.
+      stepsSaveAbortRef.current?.abort();
+      const controller = new AbortController();
+      stepsSaveAbortRef.current = controller;
       setIsSavingSteps(true);
       setSpecEditError(null);
       try {
@@ -1385,6 +1430,7 @@ export default function App() {
                 expected_result: s.expected_result,
               })),
             }),
+            signal: controller.signal,
           },
         );
         const data = await res.json();
@@ -1397,17 +1443,25 @@ export default function App() {
         }
         setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       } catch (err: any) {
+        // A superseded save is expected/intentional, not a real failure -- don't surface it.
+        if (err?.name === "AbortError") return;
         setSpecEditError(err.message || "Failed to save steps");
       } finally {
-        setIsSavingSteps(false);
+        // Only the still-current (non-superseded) call gets to clear the saving indicator --
+        // an aborted stale call's finally would otherwise fire almost immediately (abort
+        // rejects fast) and flip isSavingSteps back to false while the real, newer save is
+        // still genuinely in flight.
+        if (stepsSaveAbortRef.current === controller) {
+          setIsSavingSteps(false);
+        }
         // This setSpecCaseDetail/setIsSavingSteps commit is the second of the two scroll-
-        // resetting commits described above captureStepsScroll -- restore again here, not
-        // just at the call site, since that first restore alone gets silently overwritten
-        // once this async save actually resolves.
-        restoreStepsScroll();
+        // resetting commits described in useStepsScrollPreserved's comment -- schedule a
+        // restore again here, not just at the call site, since that first restore alone gets
+        // silently overwritten once this async save actually resolves.
+        stepsScroll.scheduleRestore("restore");
       }
     },
-    [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry],
+    [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry, stepsScroll],
   );
 
   // moveStep/removeStep compute the next array from the current stepsDraft directly (rather
@@ -1419,32 +1473,42 @@ export default function App() {
   const moveStep = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= stepsDraft.length) return;
-    captureStepsScroll();
+    stepsScroll.captureScroll();
     // The native click already focused this Move up/down button before this handler even
     // started (mousedown focuses synchronously, ahead of the click event). That focused
     // button's row is one of the two about to swap position -- blurring it here, before the
     // state update, means React's own commit-phase focus/selection preservation logic has
     // nothing focused left to "restore" a scroll position for, which is what was causing the
-    // incorrect reset in the first place (see captureStepsScroll's comment).
-    (document.activeElement as HTMLElement | null)?.blur();
+    // incorrect reset in the first place (see useStepsScrollPreserved's comment).
+    stepsScroll.blurActiveElement();
     const next = [...stepsDraft];
     [next[index], next[target]] = [next[target], next[index]];
     setStepsDraft(next);
-    restoreStepsScroll();
+    stepsScroll.scheduleRestore("restore");
     saveSteps(next);
   };
   const updateStepField = (index: number, patch: Partial<Step>) => {
     setStepsDraft((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
   const removeStep = (index: number) => {
-    captureStepsScroll();
-    (document.activeElement as HTMLElement | null)?.blur();
+    stepsScroll.captureScroll();
+    stepsScroll.blurActiveElement();
     const next = stepsDraft.filter((_, i) => i !== index);
     setStepsDraft(next);
-    restoreStepsScroll();
+    stepsScroll.scheduleRestore("restore");
     saveSteps(next);
   };
   const addStep = () => {
+    // Blur whatever's currently focused (typically the "+Add Step" button itself, which
+    // Chromium native-focuses on click before this handler runs -- Safari/Firefox-mac don't,
+    // so this is a partial mitigation, not the full fix; see the useLayoutEffect below for
+    // why the fix works regardless of browser) before mutating state, matching moveStep/
+    // removeStep's existing pattern: React's commit-phase focus/selection restoration
+    // (restoreSelection) engages whenever a mutation touches a subtree containing the
+    // currently-focused node -- inserting the new row right before a still-focused button
+    // qualifies -- and re-applies a snapshotted scroll offset that can land wrong. Blurring
+    // first gives it nothing to "restore" for.
+    stepsScroll.blurActiveElement();
     setStepsDraft((prev) => {
       pendingStepFocusIndexRef.current = prev.length;
       return [
@@ -1452,27 +1516,28 @@ export default function App() {
         { id: `new-${Date.now()}`, step_number: prev.length + 1, action: "", expected_result: "" },
       ];
     });
+    // Unlike moveStep/removeStep (which restore the pane's *previous* scroll position -- see
+    // useStepsScrollPreserved's comment), a new step is appended at the end of the list, so
+    // "stay at the bottom" means scrolling further down to the new bottom.
+    stepsScroll.scheduleRestore("scrollToBottom");
   };
 
-  // Runs after the new row above has actually rendered (the ref doesn't exist yet during
-  // addStep() itself), then focuses its Action field and clears the pending marker.
-  useEffect(() => {
+  // Focuses the newly-added row's Action field once it actually exists in the DOM (the ref
+  // doesn't exist yet during addStep() itself). Scroll placement itself is handled by
+  // useStepsScrollPreserved's own layout effect (scheduled via scrollToBottom above, which
+  // React batches into the same commit as the setStepsDraft call here) -- this effect only
+  // owns focusing the specific new field, which the shared hook has no way to know about.
+  // useLayoutEffect (not useEffect) deliberately, for the same reason: focusing before paint
+  // means preventScroll's suppression of the browser's own native scroll-into-view pass is
+  // never raced by an intermediate painted frame.
+  useLayoutEffect(() => {
     if (pendingStepFocusIndexRef.current !== null) {
       const idx = pendingStepFocusIndexRef.current;
       pendingStepFocusIndexRef.current = null;
-      stepActionRefs.current[idx]?.focus();
-      // Unlike moveStep/removeStep (which restore the pane's *previous* scroll position --
-      // see captureStepsScroll's comment), a new step is appended at the end of the list, so
-      // "stay at the bottom" means scrolling further down to the new bottom, not restoring
-      // the pre-add scrollTop (which would now fall short of the true bottom by one row's
-      // height and leave the newly-focused row off-screen). Also guards against whatever was
-      // producing the reported upward jump -- captureStepsScroll's comment documents a
-      // similar React focus/commit interaction misplacing scroll on this same pane -- by
-      // deterministically forcing the final scroll position after the DOM settles.
-      requestAnimationFrame(() => {
-        const el = specDetailScrollRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-      });
+      // preventScroll: true stops the browser's own native "scroll focused element into
+      // view" pass from running at all -- useStepsScrollPreserved's own scrollTop assignment
+      // is the only thing that gets to move scroll.
+      stepActionRefs.current[idx]?.focus({ preventScroll: true });
     }
   }, [stepsDraft.length]);
 
@@ -3424,13 +3489,22 @@ export default function App() {
                                 <textarea
                                   ref={(el) => {
                                     stepActionRefs.current[i] = el;
-                                    autoGrowTextarea(el);
+                                    // Only auto-size on genuine mount (no inline height set yet), not on
+                                    // every reattach -- this callback closes over `i`, so it's a fresh
+                                    // function identity every render, and React detaches/reattaches it
+                                    // for EVERY row (not just a changed one) on every commit that
+                                    // touches this list. Calling autoGrowTextarea unconditionally here
+                                    // meant every existing row got a synchronous forced-reflow resize on
+                                    // every add/move/remove -- extra layout thrash interleaved with
+                                    // exactly the commits the scroll-jump fixes above care about. Live
+                                    // growth while typing is already covered by onInput below.
+                                    if (el && !el.style.height) autoGrowTextarea(el);
                                   }}
                                   placeholder="Action"
                                   value={step.action}
                                   onChange={(e) => updateStepField(i, { action: e.target.value })}
                                   onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => { captureStepsScroll(); saveSteps(); }}
+                                  onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
                                   rows={1}
                                   style={{
                                     flex: 1,
@@ -3450,7 +3524,7 @@ export default function App() {
                                   value={step.expected_result}
                                   onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
                                   onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => { captureStepsScroll(); saveSteps(); }}
+                                  onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
                                   rows={1}
                                   style={{
                                     flex: 1,
@@ -3505,11 +3579,25 @@ export default function App() {
                             >
                               + Add Step
                             </button>
-                            {isSavingSteps && (
-                              <div style={{ marginTop: "10px", textAlign: "right", fontSize: "11px", color: "#6b7280" }}>
-                                Saving…
-                              </div>
-                            )}
+                            {/* Always mounted (not conditionally rendered) so toggling it never changes
+                                specDetailScrollRef's scrollHeight -- a conditionally-mounted version
+                                growing/shrinking the container on every autosave was the primary cause
+                                of the focus-swap/blur jitter: shrinking scrollHeight when a save
+                                resolves makes the browser synchronously clamp scrollTop down, a visible
+                                jump with no coordination from any of our own scroll-preservation code. */}
+                            <div
+                              aria-hidden={!isSavingSteps}
+                              style={{
+                                marginTop: "10px",
+                                textAlign: "right",
+                                fontSize: "11px",
+                                color: "#6b7280",
+                                opacity: isSavingSteps ? 1 : 0,
+                                visibility: isSavingSteps ? "visible" : "hidden",
+                              }}
+                            >
+                              Saving…
+                            </div>
                           </div>
                         ) : (
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
