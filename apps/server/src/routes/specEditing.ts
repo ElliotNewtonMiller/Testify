@@ -229,13 +229,18 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         execution_type: executionType,
       });
 
+      // SYSTEM_ADMIN isn't checked explicitly here -- evaluatePermissions already expands it
+      // to the full registry (see CLAUDE.md's "machine API tokens" entry), so any SYSTEM_ADMIN
+      // holder's permissions array already contains this key.
+      const autoApprove = actor.permissions.includes('SPEC_AUTO_APPROVE');
       const version = await versionRepo.create({
         test_case_id: testCase.id,
         version_number: 1,
-        status: 'DRAFT',
+        status: autoApprove ? 'APPROVED' : 'DRAFT',
         summary: summary ?? null,
         preconditions: preconditions ?? null,
         author_id: actor.id,
+        reviewer_id: autoApprove ? actor.id : null,
         steps: Array.isArray(steps) ? steps : [],
       });
 

@@ -8,10 +8,10 @@ import {
 } from '../src/index.js';
 
 describe('RBAC permission registry', () => {
-  it('has exactly 17 entries, all with unique keys', () => {
-    expect(PERMISSION_REGISTRY).toHaveLength(17);
-    expect(PERMISSION_KEYS).toHaveLength(17);
-    expect(new Set(PERMISSION_KEYS).size).toBe(17);
+  it('has exactly 18 entries, all with unique keys', () => {
+    expect(PERMISSION_REGISTRY).toHaveLength(18);
+    expect(PERMISSION_KEYS).toHaveLength(18);
+    expect(new Set(PERMISSION_KEYS).size).toBe(18);
   });
 
   it('every entry has a non-empty key, description, and module', () => {
@@ -75,6 +75,16 @@ describe('RBAC permission registry', () => {
       for (const key of ['SPEC_CREATE', 'SPEC_EDIT', 'SPEC_APPROVE', 'SPEC_DELETE']) {
         expect(DEFAULT_ROLE_PERMISSIONS[roleName]).not.toContain(key);
       }
+    }
+  });
+
+  it('SPEC_AUTO_APPROVE is registered and granted to the same roles that hold SPEC_APPROVE', () => {
+    expect(PERMISSION_KEYS).toContain('SPEC_AUTO_APPROVE');
+    for (const roleName of ['Admin', 'Test Lead']) {
+      expect(DEFAULT_ROLE_PERMISSIONS[roleName]).toContain('SPEC_AUTO_APPROVE');
+    }
+    for (const roleName of ['Tester', 'Viewer', 'Automation Service']) {
+      expect(DEFAULT_ROLE_PERMISSIONS[roleName]).not.toContain('SPEC_AUTO_APPROVE');
     }
   });
 });

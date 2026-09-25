@@ -18,6 +18,11 @@ export interface SuiteTreeNode {
 export interface VirtualizedSuiteTreeProps {
   suites: SuiteTreeNode[];
   selectedSuiteId?: string | null;
+  /** The suite containing whichever test case is currently focused for execution (the
+   * Queue Grid's active row) -- distinct from selectedSuiteId, which is click-driven and
+   * used for Specification-mode filtering/curation. Purely a visual "you are here" cue in
+   * Execution mode; doesn't affect selection, filtering, or click behavior. */
+  activeSuiteId?: string | null;
   onSelectSuite?: (suiteId: string) => void;
   onToggleExpand?: (suiteId: string, expanded: boolean) => void;
   /** EXECUTION (default) shows the pass/fail progress pill; SPECIFICATION shows the
@@ -57,6 +62,7 @@ const INDENT_PER_LEVEL = 12; // 12px indentation per level
 export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   suites,
   selectedSuiteId,
+  activeSuiteId,
   onSelectSuite,
   onToggleExpand,
   mode = 'EXECUTION',
@@ -171,6 +177,7 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
     >
       {flatNodes.map(({ node, depth }) => {
         const isSelected = node.id === selectedSuiteId;
+        const isActive = !isSelected && Boolean(activeSuiteId) && node.id === activeSuiteId;
         const hasChildren = Boolean(node.children && node.children.length > 0);
         const isExpanded = expandedMap[node.id] ?? node.isExpanded ?? true;
 
@@ -189,11 +196,15 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
               justifyContent: 'space-between',
               paddingLeft: `${indentPx}px`,
               paddingRight: '8px',
-              backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.18)' : 'transparent',
-              borderLeft: isSelected ? '3px solid #3b82f6' : '3px solid transparent',
+              backgroundColor: isSelected
+                ? 'rgba(59, 130, 246, 0.18)'
+                : isActive
+                  ? 'rgba(34, 211, 238, 0.12)'
+                  : 'transparent',
+              borderLeft: isSelected ? '3px solid #3b82f6' : isActive ? '3px solid #22d3ee' : '3px solid transparent',
               borderRadius: '2px',
               fontSize: '12px',
-              color: isSelected ? '#ffffff' : '#d1d5db',
+              color: isSelected || isActive ? '#ffffff' : '#d1d5db',
               cursor: 'pointer',
               userSelect: 'none',
               transition: 'background-color 0.1s ease',
@@ -229,7 +240,7 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
-                  fontWeight: isSelected ? 600 : 400,
+                  fontWeight: isSelected || isActive ? 600 : 400,
                 }}
               >
                 {node.name}

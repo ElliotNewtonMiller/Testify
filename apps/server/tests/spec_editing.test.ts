@@ -124,9 +124,9 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     expect(renamed.parent_suite_id).toBe(seed.suiteId);
   });
 
-  it('create a case auto-generates a sequential external_id and creates a DRAFT v1', async () => {
+  it('create a case auto-generates a sequential external_id and creates an APPROVED v1 for a SPEC_AUTO_APPROVE holder (Admin, by default)', async () => {
     const { app, seed } = serverInstance;
-    const { token } = await loginAsAdmin(app);
+    const { token, userId } = await loginAsAdmin(app);
 
     const res = await app.inject({
       method: 'POST',
@@ -138,8 +138,26 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const body = JSON.parse(res.payload);
     expect(body.test_case.external_id).toMatch(/^SHOP-\d+$/);
     expect(body.version.version_number).toBe(1);
-    expect(body.version.status).toBe('DRAFT');
+    expect(body.version.status).toBe('APPROVED');
+    expect(body.version.reviewer_id).toBe(userId);
     expect(body.version.steps).toHaveLength(1);
+  });
+
+  it('create a case creates a DRAFT v1 for a role without SPEC_AUTO_APPROVE (Tester, by default)', async () => {
+    const { app, seed } = serverInstance;
+    const { token: adminToken } = await loginAsAdmin(app);
+    const { token } = await createAndLoginAs(app, adminToken, 'Tester');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { test_suite_id: seed.suiteId, title: 'Tester Case' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.version.status).toBe('DRAFT');
+    expect(body.version.reviewer_id).toBeNull();
   });
 
   it('editing title/priority on a case whose latest version is APPROVED needs no draft', async () => {

@@ -824,8 +824,24 @@ export default function App() {
   // Execution-mode workspace: parameterized by the selected plan (and optionally build)
   // instead of hardcoded to the seed plan/build like the old /api/v1/workspace endpoint.
   const refreshExecutionWorkspace = useCallback(async () => {
-    if (!selectedPlanId) return;
+    // Bump the sequence guard BEFORE the early-return, not after -- the effect below fires
+    // on selectedProjectId changing even when selectedPlanId hasn't caught up yet (loadPlans
+    // clears it asynchronously), so a project switch can call this once with the *previous*
+    // project's still-current selectedPlanId (a real, valid plan id, so its fetch succeeds)
+    // and then again after selectedPlanId clears to "". If the early-return below didn't bump
+    // the sequence, the first call's in-flight fetch could resolve after the second call has
+    // already (correctly) cleared runsList, silently repopulating it with the old project's
+    // run -- exactly the "switching to a project with no plans leaves a stale Run selected"
+    // bug this guards against.
     const seq = ++executionWorkspaceRequestSeq.current;
+    if (!selectedPlanId) {
+      if (executionWorkspaceRequestSeq.current === seq) {
+        setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
+        setRunsList([]);
+        setSelectedRunId("");
+      }
+      return;
+    }
     try {
       const url = selectedRunId
         ? `/api/v1/test-plans/${selectedPlanId}/cases?build_id=${encodeURIComponent(selectedRunId)}`
@@ -2746,6 +2762,9 @@ export default function App() {
           <VirtualizedSuiteTree
             suites={suiteNodes}
             selectedSuiteId={selectedSuiteId}
+            activeSuiteId={
+              workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
+            }
             onSelectSuite={(suiteId) => {
               setSelectedSuiteId((prev) => (prev === suiteId ? null : suiteId));
               if (workspaceMode === "SPECIFICATION") setSpecSelectedCaseId(null);
