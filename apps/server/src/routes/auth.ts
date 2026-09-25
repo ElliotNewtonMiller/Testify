@@ -29,7 +29,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const globalRole = await roleRepo.getUserGlobalRole(user.id);
     const permissions = await roleRepo.evaluatePermissions(user.id);
 
-    // Sign a real HMAC-SHA256 JWT (15 minute lifetime) -- see packages/core/src/security/jwt.ts.
+    // Sign a real HMAC-SHA256 JWT (1 hour lifetime) -- see packages/core/src/security/jwt.ts.
     const token = signJwt({ sub: user.id, username: user.username }, jwtSecret);
 
     return reply.status(200).send({

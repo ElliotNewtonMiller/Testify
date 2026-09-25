@@ -38,10 +38,13 @@ function computeSignature(signingInput: string, secret: string): string {
 
 /**
  * Signs a JWT with HS256. `payload.sub` should be set by the caller (the user id).
- * `expiresInSeconds` defaults to 15 minutes, matching the previous (insecure) token's
- * lifetime.
+ * `expiresInSeconds` defaults to 1 hour -- the original 15-minute default (matching the
+ * previous insecure token's lifetime) proved too short in practice: Spec-mode editing
+ * sessions are often long stretches of pure client-side typing with zero requests (see
+ * handleAuthExpiry's comment in App.tsx), so a save click would routinely be the first
+ * request issued after the token had already silently expired.
  */
-export function signJwt(payload: Record<string, unknown> & { sub: string }, secret: string, expiresInSeconds = 15 * 60): string {
+export function signJwt(payload: Record<string, unknown> & { sub: string }, secret: string, expiresInSeconds = 60 * 60): string {
   if (!secret) {
     throw new Error('signJwt: secret is required');
   }

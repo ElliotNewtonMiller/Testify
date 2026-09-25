@@ -26,7 +26,8 @@ export interface SpecCaseListGridProps {
   containerHeight?: number;
 }
 
-const ROW_HEIGHT = 32; // Matches TestCaseQueueGrid's row density standard
+const ROW_HEIGHT = 38; // Was 32 (TestCaseQueueGrid's row density standard) -- grown a bit to
+// give the plan-inclusion toggle button below more vertical padding, so it's easier to click.
 const BUFFER_ITEMS = 10;
 
 const VERSION_STATUS_STYLES: Record<string, { bg: string; fg: string; border: string }> = {
@@ -147,7 +148,7 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
         title={title}
         style={{
           flexShrink: 0,
-          padding: '2px 8px',
+          padding: '7px 10px',
           borderRadius: '4px',
           fontSize: '10px',
           fontWeight: 700,

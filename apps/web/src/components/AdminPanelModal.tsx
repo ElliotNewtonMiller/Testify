@@ -2063,10 +2063,10 @@ export function AdminPanelModal({
             <div
               style={{
                 flex: 1,
-                backgroundColor: "#1e293b",
+                backgroundColor: deleteFieldPrompt ? "#78350f" : "#1e293b",
                 padding: "16px",
                 borderRadius: "6px",
-                border: "1px solid #334155",
+                border: `1px solid ${deleteFieldPrompt ? "#92400e" : "#334155"}`,
                 overflowY: "auto",
               }}
             >
@@ -2075,7 +2075,7 @@ export function AdminPanelModal({
                   <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 12px 0", color: "#fbbf24" }}>
                     ⚠️ Confirm Deletion
                   </h3>
-                  <p style={{ fontSize: "12px", color: "#cbd5e1", lineHeight: 1.5 }}>{deleteFieldPrompt.detail}</p>
+                  <p style={{ fontSize: "12px", color: "#fde68a", lineHeight: 1.5 }}>{deleteFieldPrompt.detail}</p>
                   <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
                     <button
                       onClick={() => setDeleteFieldPrompt(null)}

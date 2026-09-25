@@ -241,6 +241,9 @@ export default function App() {
   const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
   // Same shape one level down, for test runs (builds) -- see handleDeleteRunClick.
   const [deleteRunPrompt, setDeleteRunPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
+  // Shown in the same banner slot as deletePlanPrompt/deleteRunPrompt when the "+ Create New
+  // Test Run" button is clicked with no plan selected -- a Run can never exist without one.
+  const [noPlanSetWarning, setNoPlanSetWarning] = useState(false);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -287,12 +290,14 @@ export default function App() {
   ]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("pln_01");
 
-  const [runsList, setRunsList] = useState<EntityItem[]>([
-    { id: "bld_01", name: "Run 2026.09.09-RC1", status: "OPEN" },
-    { id: "bld_02", name: "Nightly Run #142", status: "IN_PROGRESS" },
-    { id: "bld_03", name: "Sprint 44 Final Run", status: "CLOSED" },
-  ]);
-  const [selectedRunId, setSelectedRunId] = useState<string>("bld_01");
+  // No fake seed data here (unlike the historical prj_01/pln_01 placeholders elsewhere,
+  // which get overwritten quickly by the real bootstrap fetch) -- a Run can never exist
+  // without a real Test Plan (builds.test_plan_id is NOT NULL), so starting empty and
+  // relying on refreshExecutionWorkspace's real per-plan fetch (or the clearing effect
+  // below, when there's no plan at all) means the dropdown never shows a run that isn't
+  // genuinely tied to the currently selected plan.
+  const [runsList, setRunsList] = useState<EntityItem[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
 
   // Entity Modal State
   const [entityModalOpen, setEntityModalOpen] = useState<boolean>(false);
@@ -309,6 +314,36 @@ export default function App() {
   // pendingStepFocusIndexRef effect below addStep).
   const stepActionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const pendingStepFocusIndexRef = useRef<number | null>(null);
+  // The Spec-mode case detail pane's own scroll container (Summary/Preconditions/steps all
+  // live inside it) -- see captureStepsScroll/restoreStepsScroll below for why this needs
+  // tracking at all.
+  const specDetailScrollRef = useRef<HTMLDivElement>(null);
+  const preservedStepsScrollTopRef = useRef<number | null>(null);
+
+  // Reordering/removing a step moves or replaces DOM nodes inside specDetailScrollRef.
+  // React's own commit-phase focus/selection restoration (ReactDOM's restoreSelection,
+  // called from resetAfterCommit) tries to preserve the previously-focused element's scroll
+  // position across that kind of DOM change, and under some interaction paths (confirmed via
+  // a scrollTop property trap while testing this) gets it wrong -- moveStep/removeStep
+  // blur the focused Move/Remove button before reordering specifically to give that
+  // mechanism nothing to restore. As a second line of defense (there's also a later commit
+  // when saveSteps' fetch resolves and calls setSpecCaseDetail), this captures the scroll
+  // position once before the action and re-applies it a couple of animation frames after
+  // both the sync reorder and the later async save, i.e. after whatever scroll adjustment
+  // would have already settled.
+  const captureStepsScroll = () => {
+    const el = specDetailScrollRef.current;
+    if (el) preservedStepsScrollTopRef.current = el.scrollTop;
+  };
+  const restoreStepsScroll = () => {
+    const top = preservedStepsScrollTopRef.current;
+    if (top === null) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (specDetailScrollRef.current) specDetailScrollRef.current.scrollTop = top;
+      });
+    });
+  };
 
   // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
   // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
@@ -335,7 +370,7 @@ export default function App() {
   }, []);
 
   // Shared 401 handling for the Spec-mode save handlers below (create/approve/edit-content/
-  // save-steps). Login tokens are short-lived (15 minute JWTs, no refresh mechanism -- see
+  // save-steps). Login tokens are still finite-lived (1 hour JWTs, no refresh mechanism -- see
   // packages/core/src/security/jwt.ts), and unlike verdict submission (a single fast POST),
   // Spec-mode editing is often a long, network-idle drafting session (typing into steps,
   // reordering, etc. is pure client-side state with zero requests) before the user finally
@@ -758,9 +793,19 @@ export default function App() {
         setSelectedPlanId((prev) =>
           mapped.length === 0 ? "" : mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
         );
+      } else {
+        // A non-ok response (e.g. a stale/fake project id from PROJECT's still-mock CREATE
+        // path -- see the "Notable gaps" entry in CLAUDE.md) previously left plansList/
+        // selectedPlanId (and via those, runsList/selectedRunId) untouched, so switching to
+        // a project whose plans-fetch fails kept showing the PREVIOUS project's plan/run --
+        // a live-reproduced instance of "test runs existing independently of test plans".
+        // Clearing here is more correct than showing data that isn't this project's.
+        setPlansList([]);
+        setSelectedPlanId("");
       }
     } catch {
-      // Network error -- keep the existing (fallback) list
+      setPlansList([]);
+      setSelectedPlanId("");
     }
   }, []);
 
@@ -1055,6 +1100,19 @@ export default function App() {
     refreshExecutionWorkspace,
   ]);
 
+  // A Run can never exist without a real Test Plan (builds.test_plan_id is NOT NULL), so
+  // runsList/selectedRunId must never show anything once there's no plan selected -- e.g.
+  // switching to a project with zero plans, not just the plan-delete path (which already
+  // clears these explicitly in applyPlanDeletedLocally). This reactive effect is the single
+  // catch-all for every such path, current and future, rather than relying on each caller to
+  // remember to clear it.
+  useEffect(() => {
+    if (!selectedPlanId) {
+      setRunsList([]);
+      setSelectedRunId("");
+    }
+  }, [selectedPlanId]);
+
   // Lazy per-case detail (steps/preconditions) for whichever case is selected in
   // Specification mode -- kept out of the bulk spec-tree payload to stay light for large
   // projects.
@@ -1306,6 +1364,11 @@ export default function App() {
         setSpecEditError(err.message || "Failed to save steps");
       } finally {
         setIsSavingSteps(false);
+        // This setSpecCaseDetail/setIsSavingSteps commit is the second of the two scroll-
+        // resetting commits described above captureStepsScroll -- restore again here, not
+        // just at the call site, since that first restore alone gets silently overwritten
+        // once this async save actually resolves.
+        restoreStepsScroll();
       }
     },
     [selectedProjectId, specCaseDetail, stepsDraft, handleAuthExpiry],
@@ -1320,17 +1383,29 @@ export default function App() {
   const moveStep = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= stepsDraft.length) return;
+    captureStepsScroll();
+    // The native click already focused this Move up/down button before this handler even
+    // started (mousedown focuses synchronously, ahead of the click event). That focused
+    // button's row is one of the two about to swap position -- blurring it here, before the
+    // state update, means React's own commit-phase focus/selection preservation logic has
+    // nothing focused left to "restore" a scroll position for, which is what was causing the
+    // incorrect reset in the first place (see captureStepsScroll's comment).
+    (document.activeElement as HTMLElement | null)?.blur();
     const next = [...stepsDraft];
     [next[index], next[target]] = [next[target], next[index]];
     setStepsDraft(next);
+    restoreStepsScroll();
     saveSteps(next);
   };
   const updateStepField = (index: number, patch: Partial<Step>) => {
     setStepsDraft((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
   const removeStep = (index: number) => {
+    captureStepsScroll();
+    (document.activeElement as HTMLElement | null)?.blur();
     const next = stepsDraft.filter((_, i) => i !== index);
     setStepsDraft(next);
+    restoreStepsScroll();
     saveSteps(next);
   };
   const addStep = () => {
@@ -2089,7 +2164,7 @@ export default function App() {
               ))}
             </select>
             <button
-              onClick={() => openEntityModal("RUN", "CREATE")}
+              onClick={() => (selectedPlanId ? openEntityModal("RUN", "CREATE") : setNoPlanSetWarning(true))}
               title="Create New Test Run"
               style={{
                 background: "transparent",
@@ -2277,8 +2352,8 @@ export default function App() {
         <div
           style={{
             padding: "10px 16px",
-            borderBottom: "1px solid #1f2937",
-            backgroundColor: "#111827",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
             display: "flex",
             alignItems: "center",
             gap: "12px",
@@ -2287,7 +2362,7 @@ export default function App() {
           <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
             ⚠️ Confirm Deletion
           </div>
-          <div style={{ fontSize: "11px", color: "#cbd5e1", flex: 1 }}>{deletePlanPrompt.detail}</div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deletePlanPrompt.detail}</div>
           <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
             <button
               onClick={() => setDeletePlanPrompt(null)}
@@ -2327,8 +2402,8 @@ export default function App() {
         <div
           style={{
             padding: "10px 16px",
-            borderBottom: "1px solid #1f2937",
-            backgroundColor: "#111827",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
             display: "flex",
             alignItems: "center",
             gap: "12px",
@@ -2337,7 +2412,7 @@ export default function App() {
           <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
             ⚠️ Confirm Deletion
           </div>
-          <div style={{ fontSize: "11px", color: "#cbd5e1", flex: 1 }}>{deleteRunPrompt.detail}</div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deleteRunPrompt.detail}</div>
           <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
             <button
               onClick={() => setDeleteRunPrompt(null)}
@@ -2368,6 +2443,43 @@ export default function App() {
               }}
             >
               Delete Anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {noPlanSetWarning && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ No test plan set
+          </div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
+            Select or create a test plan before creating a test run -- a run always belongs to one.
+          </div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setNoPlanSetWarning(false)}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#334155",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              OK
             </button>
           </div>
         </div>
@@ -2553,14 +2665,14 @@ export default function App() {
             <div
               style={{
                 padding: "10px 12px",
-                borderBottom: "1px solid #1f2937",
-                backgroundColor: "#111827",
+                borderBottom: "1px solid #92400e",
+                backgroundColor: "#78350f",
               }}
             >
               <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
                 ⚠️ Confirm Deletion
               </div>
-              <div style={{ fontSize: "11px", color: "#cbd5e1", marginBottom: "8px", lineHeight: 1.4 }}>
+              <div style={{ fontSize: "11px", color: "#fde68a", marginBottom: "8px", lineHeight: 1.4 }}>
                 {deleteSuitePrompt.detail}
               </div>
               <div style={{ display: "flex", gap: "6px" }}>
@@ -3063,11 +3175,11 @@ export default function App() {
                 </div>
 
                 {deleteCasePrompt && deleteCasePrompt.id === specActiveCase.id && (
-                  <div style={{ padding: "12px 20px", borderBottom: "1px solid #1f2937", backgroundColor: "#111827" }}>
+                  <div style={{ padding: "12px 20px", borderBottom: "1px solid #92400e", backgroundColor: "#78350f" }}>
                     <div style={{ fontSize: "12px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
                       ⚠️ Confirm Deletion
                     </div>
-                    <div style={{ fontSize: "12px", color: "#cbd5e1", marginBottom: "10px", lineHeight: 1.4 }}>
+                    <div style={{ fontSize: "12px", color: "#fde68a", marginBottom: "10px", lineHeight: 1.4 }}>
                       {deleteCasePrompt.detail}
                     </div>
                     <div style={{ display: "flex", gap: "8px" }}>
@@ -3097,7 +3209,7 @@ export default function App() {
                     editable; preconditions/summary/steps below are editable only while
                     the latest version is DRAFT ("Create New Draft" above unlocks this for
                     an APPROVED case). Admin-defined custom fields are always editable. */}
-                <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                <div ref={specDetailScrollRef} style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
                   {(() => {
                     const isDraft = specVersionDetail?.status === "DRAFT";
                     return (
@@ -3256,7 +3368,7 @@ export default function App() {
                                   value={step.action}
                                   onChange={(e) => updateStepField(i, { action: e.target.value })}
                                   onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => saveSteps()}
+                                  onBlur={() => { captureStepsScroll(); saveSteps(); }}
                                   rows={1}
                                   style={{
                                     flex: 1,
@@ -3276,7 +3388,7 @@ export default function App() {
                                   value={step.expected_result}
                                   onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
                                   onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => saveSteps()}
+                                  onBlur={() => { captureStepsScroll(); saveSteps(); }}
                                   rows={1}
                                   style={{
                                     flex: 1,
