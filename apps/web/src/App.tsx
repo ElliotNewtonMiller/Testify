@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useFocusFSM, FocusZone } from "./hooks/useFocusFSM";
 import { useHotkeyEngine, VerdictType } from "./hooks/useHotkeyEngine";
+import { buildExecutionCaseOrder, nextExecutionCaseIndex } from "./utils/executionCaseOrder";
 import { FocusIndicatorBadge } from "./components/FocusIndicatorBadge";
 import {
   TestCaseQueueGrid,
@@ -360,6 +361,7 @@ export default function App() {
   // for the fake seed id) can resolve after a newer one and silently overwrite fresh data.
   const specTreeRequestSeq = useRef(0);
   const executionWorkspaceRequestSeq = useRef(0);
+  const plansRequestSeq = useRef(0);
 
   // Display Toast Notification (moved above the entity/spec handlers below, which reference it)
   const showToast = useCallback((msg: string) => {
@@ -774,12 +776,21 @@ export default function App() {
   }, []);
 
   const loadPlans = useCallback(async (projectId: string) => {
+    // selectedProjectId itself goes through the same fake-seed -> real-id bootstrap sequence
+    // documented above (specTreeRequestSeq), so this effect can fire loadPlans twice in quick
+    // succession (once for the fake seed id, once for the real one) with no guarantee the
+    // fake id's fetch resolves first -- without a sequence guard, a slower-resolving stale
+    // call (even one that legitimately 404s/succeeds for its own now-abandoned project id)
+    // can overwrite the real project's freshly-loaded plansList with stale or empty data.
+    const seq = ++plansRequestSeq.current;
     try {
       const res = await fetch(`/api/v1/projects/${projectId}/plans`, {
         headers: authHeaders(),
       });
+      if (plansRequestSeq.current !== seq) return;
       if (res.ok) {
         const data = await res.json();
+        if (plansRequestSeq.current !== seq) return;
         const mapped: EntityItem[] = (data.plans || []).map((p: any) => ({
           id: p.id,
           name: p.name,
@@ -804,6 +815,7 @@ export default function App() {
         setSelectedPlanId("");
       }
     } catch {
+      if (plansRequestSeq.current !== seq) return;
       setPlansList([]);
       setSelectedPlanId("");
     }
@@ -856,17 +868,21 @@ export default function App() {
           })),
         });
 
-        if (builds.length > 0) {
-          const runItems: EntityItem[] = builds.map((b: any) => ({
-            id: b.id,
-            name: (b.name || "").replace(/^Build\s+/i, "Run "),
-            status: b.status,
-          }));
-          setRunsList(runItems);
-          setSelectedRunId((prev) =>
-            runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
-          );
-        }
+        // Always update runsList/selectedRunId, even when builds is empty -- a plan that
+        // genuinely has zero runs must clear the dropdown, not leave the *previous* plan's
+        // runs showing (the old `if (builds.length > 0)` guard here skipped both setters
+        // entirely on an empty result, which is the same staleness bug already fixed for
+        // loadPlans/the selectedPlanId-empty case, just triggered here by switching to a
+        // *real* plan that has no runs rather than having no plan at all).
+        const runItems: EntityItem[] = builds.map((b: any) => ({
+          id: b.id,
+          name: (b.name || "").replace(/^Build\s+/i, "Run "),
+          status: b.status,
+        }));
+        setRunsList(runItems);
+        setSelectedRunId((prev) =>
+          runItems.length === 0 ? "" : runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
+        );
         return;
       }
     } catch {
@@ -874,6 +890,10 @@ export default function App() {
     }
     if (executionWorkspaceRequestSeq.current === seq) {
       setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
+      // Same staleness concern as above -- a failed fetch shouldn't leave a previous plan's
+      // runs showing under the (now unconfirmed) currently-selected plan.
+      setRunsList([]);
+      setSelectedRunId("");
     }
   }, [selectedPlanId, selectedProjectId, selectedRunId, projectsList]);
 
@@ -1706,9 +1726,12 @@ export default function App() {
       // next case's own note after advancing.
       submitVerdict(pendingVerdictRef.current, notesText);
       notesDirtyRef.current = false;
-      if (workspace && selectedIndex < workspace.cases.length - 1) {
-        setSelectedIndex((idx) => idx + 1);
-      }
+      // Advance by suite-tree order, not raw array order -- finishing the last case in a
+      // folder jumps straight to the first case in the next folder that has one, skipping
+      // empty folders with no special-casing needed; finishing the very last case overall
+      // wraps around to the first case in the first folder instead of just stopping.
+      const nextIdx = nextExecutionCaseIndex(executionCaseOrderByCaseIndex, selectedIndex);
+      if (nextIdx !== null) setSelectedIndex(nextIdx);
     },
     onToggleStepDrawer: () => setShowStepDrawer((prev) => !prev),
     onToggleSuiteExpand: () => {
@@ -1851,6 +1874,14 @@ export default function App() {
     }
     return result;
   }
+
+  // Execution mode's Ctrl+Enter "jump to next folder" advance (see onSubmitNotes below)
+  // needs cases ordered by suite-tree position -- see buildExecutionCaseOrder's own comment
+  // for why workspace.cases' own order can't be used directly.
+  const executionCaseOrderByCaseIndex: number[] =
+    workspaceMode === "EXECUTION" && workspace
+      ? buildExecutionCaseOrder(workspace.cases, flattenSuiteOptions(suiteNodes).map((s) => s.id))
+      : [];
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
   const hasUserManagePermission =
@@ -2463,7 +2494,7 @@ export default function App() {
             ⚠️ No test plan set
           </div>
           <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
-            Select or create a test plan before creating a test run -- a run always belongs to one.
+            Select or create a test plan before creating a test run
           </div>
           <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
             <button

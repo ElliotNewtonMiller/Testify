@@ -128,7 +128,7 @@ export function sendPlanInUseError(
     code: 'PLAN_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Test Plan ${planRef} still contains ${parts.join(', ')}. Are you sure you want to delete the test plan with its builds and links to test cases?`,
+    detail: `Test Plan ${planRef} still contains ${counts.caseLinks} test case${counts.caseLinks === 1 ? '' : 's'}. Are you sure you want to delete the test plan with its test runs and links to test cases?`,
     instance,
     invalid_params: [{ name: 'plan_id', reason: `Contains ${parts.join(', ')}` }],
   });
