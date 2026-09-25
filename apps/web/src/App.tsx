@@ -1461,6 +1461,18 @@ export default function App() {
       const idx = pendingStepFocusIndexRef.current;
       pendingStepFocusIndexRef.current = null;
       stepActionRefs.current[idx]?.focus();
+      // Unlike moveStep/removeStep (which restore the pane's *previous* scroll position --
+      // see captureStepsScroll's comment), a new step is appended at the end of the list, so
+      // "stay at the bottom" means scrolling further down to the new bottom, not restoring
+      // the pre-add scrollTop (which would now fall short of the true bottom by one row's
+      // height and leave the newly-focused row off-screen). Also guards against whatever was
+      // producing the reported upward jump -- captureStepsScroll's comment documents a
+      // similar React focus/commit interaction misplacing scroll on this same pane -- by
+      // deterministically forcing the final scroll position after the DOM settles.
+      requestAnimationFrame(() => {
+        const el = specDetailScrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
     }
   }, [stepsDraft.length]);
 
@@ -3134,7 +3146,7 @@ export default function App() {
                           cursor: isCreatingDraft ? "default" : "pointer",
                         }}
                       >
-                        {isCreatingDraft ? "Creating…" : "Create New Draft"}
+                        {isCreatingDraft ? "Creating…" : "Edit"}
                       </button>
                     )}
                     {specActiveCase.latest_version?.status === "DRAFT" && hasSpecApprovePermission && (
