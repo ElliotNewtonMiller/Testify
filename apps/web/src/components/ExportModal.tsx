@@ -135,6 +135,19 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
     }
   }, [isOpen]);
 
+  // Switching the target project invalidates whatever Plan/Build was selected for the
+  // previous one -- without this, the Plan <select> just shows blank (its value won't match
+  // any option in the new project's plans list) while selectedPlanId silently keeps pointing
+  // at the old, wrong project's plan, so exporting without re-touching that dropdown would
+  // use the stale id. Matches ReportingModal.tsx's identical picker, which already does this.
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedPlanId("");
+    setSelectedBuildId("");
+    setPlans([]);
+    setBuilds([]);
+  }, [isOpen, targetProjectId]);
+
   // Suite picker data -- reuses the existing spec-tree route's suite list rather than
   // inventing a new endpoint, matching ImportWizardModal's self-contained-fetch pattern.
   useEffect(() => {
@@ -166,8 +179,13 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, exportKind, scopeType, targetProjectId]);
 
-  // Build picker data -- only for EXECUTION_RESULTS, once a plan is chosen.
+  // Build picker data -- only for EXECUTION_RESULTS, once a plan is chosen. Resets
+  // selectedBuildId/builds unconditionally first, whenever this effect re-runs for any
+  // reason (plan changed, project changed, kind changed) -- a build is plan-scoped, so a
+  // stale selection from a previous plan must never survive into this one.
   useEffect(() => {
+    setSelectedBuildId("");
+    setBuilds([]);
     if (!(isOpen && exportKind === "EXECUTION_RESULTS" && targetProjectId && selectedPlanId)) return;
     (async () => {
       try {

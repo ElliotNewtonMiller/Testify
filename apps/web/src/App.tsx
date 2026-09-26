@@ -394,7 +394,17 @@ export default function App() {
   // several requests in quick succession. Without this, a slower, now-stale response (e.g.
   // for the fake seed id) can resolve after a newer one and silently overwrite fresh data.
   const specTreeRequestSeq = useRef(0);
-  const executionWorkspaceRequestSeq = useRef(0);
+  // Shared by BOTH refreshExecutionWorkspace and refreshRunsList -- they're two different
+  // ways of populating the same runsList/selectedRunId state (the heavier one, used in
+  // Execution mode, gets builds "for free" alongside the case queue it also fetches; the
+  // lighter one, used in Specification mode, fetches just the builds), and a stale in-flight
+  // call from EITHER one must be able to invalidate the other's write, not just its own --
+  // e.g. switching Spec (plan A) -> Execute (still A) -> a different plan B while still in
+  // Execute mode must not let plan A's now-abandoned Spec-mode fetch resolve later and
+  // silently overwrite plan B's freshly-loaded runs. One seq per logical resource being
+  // protected (runsList/selectedRunId), not one per function, matches how plansRequestSeq/
+  // specTreeRequestSeq are already scoped to the state they guard.
+  const runsListRequestSeq = useRef(0);
   const plansRequestSeq = useRef(0);
 
   // Display Toast Notification (moved above the entity/spec handlers below, which reference it)
@@ -867,9 +877,9 @@ export default function App() {
     // already (correctly) cleared runsList, silently repopulating it with the old project's
     // run -- exactly the "switching to a project with no plans leaves a stale Run selected"
     // bug this guards against.
-    const seq = ++executionWorkspaceRequestSeq.current;
+    const seq = ++runsListRequestSeq.current;
     if (!selectedPlanId) {
-      if (executionWorkspaceRequestSeq.current === seq) {
+      if (runsListRequestSeq.current === seq) {
         setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
         setRunsList([]);
         setSelectedRunId("");
@@ -883,7 +893,7 @@ export default function App() {
       const res = await fetch(url, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        if (executionWorkspaceRequestSeq.current !== seq) return; // a newer request already resolved
+        if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
         const projectEntity = projectsList.find((p) => p.id === selectedProjectId);
         const builds = data.builds || [];
 
@@ -938,7 +948,7 @@ export default function App() {
     } catch {
       // API offline fallback
     }
-    if (executionWorkspaceRequestSeq.current === seq) {
+    if (runsListRequestSeq.current === seq) {
       setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
       // Same staleness concern as above -- a failed fetch shouldn't leave a previous plan's
       // runs showing under the (now unconfirmed) currently-selected plan.
@@ -946,6 +956,62 @@ export default function App() {
       setSelectedRunId("");
     }
   }, [selectedPlanId, selectedProjectId, selectedRunId, projectsList]);
+
+  // Specification mode's lighter counterpart to refreshExecutionWorkspace above -- Spec mode
+  // has no use for the full case/step queue that endpoint also fetches (its own suite/case
+  // data comes from refreshSpecTree instead), but the Run dropdown is part of the always-
+  // rendered shared header, not gated by mode, so it still needs runsList/selectedRunId kept
+  // correct while in Spec mode. Without this, switching Project/Plan while in Spec mode left
+  // the Run dropdown frozen on whatever it last showed in Execution mode -- refreshExecutionWorkspace
+  // was the ONLY code path that ever refreshed it, and the shared effect below only calls that
+  // one in Execution mode. Hits the same lightweight GET .../plans/:planId/builds route
+  // ExportModal already uses for its own Build picker (apps/server/src/routes/exports.ts) --
+  // returns the exact same Build shape refreshExecutionWorkspace already maps into runItems,
+  // just without the expensive case/step join. Shares runsListRequestSeq with
+  // refreshExecutionWorkspace (see that ref's own comment) rather than using its own counter,
+  // so a stale in-flight call from either function can never win over a newer one from either.
+  const refreshRunsList = useCallback(async () => {
+    // Bump before the early-return, for the exact same reason refreshExecutionWorkspace does
+    // (see its own comment) -- a project/plan switch can call this once with a still-current
+    // but about-to-be-abandoned selectedPlanId before it clears asynchronously.
+    const seq = ++runsListRequestSeq.current;
+    if (!selectedPlanId) {
+      if (runsListRequestSeq.current === seq) {
+        setRunsList([]);
+        setSelectedRunId("");
+      }
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`,
+        { headers: authHeaders() },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
+        const builds = data.builds || [];
+        // Same shape/behavior as refreshExecutionWorkspace's own runItems mapping -- an empty
+        // builds array must still positively clear the list, not leave stale data showing.
+        const runItems: EntityItem[] = builds.map((b: any) => ({
+          id: b.id,
+          name: (b.name || "").replace(/^Build\s+/i, "Run "),
+          status: b.status,
+        }));
+        setRunsList(runItems);
+        setSelectedRunId((prev) =>
+          runItems.length === 0 ? "" : runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
+        );
+        return;
+      }
+    } catch {
+      // API offline fallback
+    }
+    if (runsListRequestSeq.current === seq) {
+      setRunsList([]);
+      setSelectedRunId("");
+    }
+  }, [selectedPlanId, selectedProjectId]);
 
   // Specification-mode data: the whole project's suite/case spec, annotated with the
   // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
@@ -1149,17 +1215,22 @@ export default function App() {
   }, [currentUser, selectedProjectId, loadPlans]);
 
   // The actual workspace data fetch: Specification mode always needs the spec tree (it also
-  // drives Pane 1's suite tree in Execution mode -- see suiteNodes below); Execution mode
-  // additionally needs the plan's execution queue.
+  // drives Pane 1's suite tree in BOTH modes -- see suiteNodes below). The Run dropdown's
+  // data is a three-way split: Execution mode needs the full execution queue (which carries
+  // the plan's builds "for free" alongside it), Specification mode has no use for that queue
+  // but still needs the Run dropdown itself kept correct (it's part of the shared header, not
+  // mode-gated), so it gets the lighter builds-only fetch instead -- see refreshRunsList's own
+  // comment for why this split exists.
   useEffect(() => {
     // refreshSpecTree itself now tolerates no plan being selected (see its own comment);
-    // refreshExecutionWorkspace still self-guards on selectedPlanId (Execution mode has
-    // nothing to queue without one), so it's safe to always attempt both here and let each
-    // decide what it can actually do.
+    // refreshExecutionWorkspace/refreshRunsList both self-guard on selectedPlanId, so it's
+    // safe to always attempt all of these here and let each decide what it can actually do.
     if (!currentUser || !selectedProjectId) return;
     refreshSpecTree();
     if (workspaceMode === "EXECUTION") {
       refreshExecutionWorkspace();
+    } else {
+      refreshRunsList();
     }
   }, [
     currentUser,
@@ -1168,6 +1239,7 @@ export default function App() {
     selectedPlanId,
     refreshSpecTree,
     refreshExecutionWorkspace,
+    refreshRunsList,
   ]);
 
   // A Run can never exist without a real Test Plan (builds.test_plan_id is NOT NULL), so
