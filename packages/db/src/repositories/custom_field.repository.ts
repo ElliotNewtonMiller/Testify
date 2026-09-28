@@ -6,6 +6,7 @@ import {
   CUSTOM_FIELD_ENTITY_TYPES,
   parseCustomFieldValue,
   readCustomFieldValue,
+  resolveDefaultValue,
   type CustomFieldType,
   type CustomFieldEntityType,
 } from '@testify/core';
@@ -370,7 +371,7 @@ export class CustomFieldRepository {
             date_value: row.date_value,
             json_value: row.json_value,
           })
-        : null;
+        : resolveDefaultValue(definition.field_type, definition.default_value, { options: definition.options });
       return { definition, value };
     });
   }
@@ -419,7 +420,7 @@ export class CustomFieldRepository {
                 date_value: row.date_value,
                 json_value: row.json_value,
               })
-            : null;
+            : resolveDefaultValue(definition.field_type, definition.default_value, { options: definition.options });
           return { definition, value };
         })
       );

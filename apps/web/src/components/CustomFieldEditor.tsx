@@ -21,6 +21,12 @@ const inputStyle: React.CSSProperties = {
   fontSize: "12px",
 };
 
+function autoGrowTextarea(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 /** Renders a live editor for one custom field value, matching its field_type. Shared by
  * the Spec-mode case detail pane (App.tsx) and SuiteCustomFieldsPanel so the 6-type switch
  * isn't duplicated. Pure props-in/callback-out -- does no fetching of its own. */
@@ -31,13 +37,15 @@ export function CustomFieldEditor({ entry, onChange, disabled, disabledTitle, er
     switch (definition.field_type) {
       case "TEXT":
         return (
-          <input
-            type="text"
+          <textarea
+            ref={(el) => autoGrowTextarea(el)}
             defaultValue={(value as string) ?? ""}
             onBlur={(e) => onChange(e.target.value || null)}
+            onInput={(e) => autoGrowTextarea(e.currentTarget)}
             disabled={disabled}
             title={disabled ? disabledTitle : undefined}
-            style={{ ...inputStyle, opacity: disabled ? 0.6 : 1 }}
+            rows={1}
+            style={{ ...inputStyle, opacity: disabled ? 0.6 : 1, resize: "none", overflow: "hidden" }}
           />
         );
 

@@ -120,6 +120,64 @@ export function parseCustomFieldValue(
   }
 }
 
+/**
+ * Coerces a field definition's free-text `default_value` into the same JS-value shape
+ * readCustomFieldValue() returns for a persisted row, so a default can be surfaced (read
+ * path) or seeded (write path) without a real custom_field_values row existing yet.
+ * Deliberately lenient, unlike parseCustomFieldValue() -- default_value is stored as one
+ * generic plain-text field regardless of field_type (there's a single "Default Value" text
+ * input in the admin UI for every type), so a default that doesn't cleanly coerce for its
+ * type (e.g. a non-numeric NUMBER default) is treated as "no usable default" (null) rather
+ * than thrown as a validation error.
+ */
+export function resolveDefaultValue(
+  fieldType: CustomFieldType,
+  defaultValue: string | null,
+  opts: { options?: Array<{ option_value: string }> } = {}
+): unknown {
+  if (defaultValue === null || defaultValue === '') return null;
+
+  switch (fieldType) {
+    case 'TEXT':
+      return defaultValue;
+
+    case 'SINGLE_SELECT': {
+      const allowed = new Set((opts.options ?? []).map((o) => o.option_value));
+      return allowed.has(defaultValue) ? defaultValue : null;
+    }
+
+    case 'NUMBER': {
+      const num = Number(defaultValue);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    case 'DATE':
+      return Number.isNaN(Date.parse(defaultValue)) ? null : defaultValue;
+
+    case 'CHECKBOX': {
+      const normalized = defaultValue.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
+      return null;
+    }
+
+    case 'MULTI_SELECT': {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(defaultValue);
+      } catch {
+        return null;
+      }
+      if (!Array.isArray(parsed) || !parsed.every((v) => typeof v === 'string')) return null;
+      const allowed = new Set((opts.options ?? []).map((o) => o.option_value));
+      return parsed.every((v) => allowed.has(v)) ? parsed : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
 /** Inverse of parseCustomFieldValue: reads a persisted typed-column row back into the
  * single JS value a consumer (a GET response, the frontend) expects. */
 export function readCustomFieldValue(fieldType: CustomFieldType, row: CustomFieldTypedValue): unknown {

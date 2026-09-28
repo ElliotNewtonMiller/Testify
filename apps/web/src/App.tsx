@@ -265,6 +265,14 @@ export default function App() {
   const [specSelectedCaseId, setSpecSelectedCaseId] = useState<string | null>(
     null,
   );
+  // Mirrors specSelectedCaseId for reads from inside an already-in-flight async closure (see
+  // handleCustomFieldValueChange) -- a blur-triggered custom-field autosave for a case the
+  // user has since navigated away from must not let its late-arriving response patch the
+  // now-different case's displayed values.
+  const specSelectedCaseIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    specSelectedCaseIdRef.current = specSelectedCaseId;
+  }, [specSelectedCaseId]);
   const [specCaseDetail, setSpecCaseDetail] = useState<SpecCaseDetail | null>(
     null,
   );
@@ -1298,6 +1306,13 @@ export default function App() {
       setSpecCaseCustomFieldValues(null);
       return;
     }
+    // Clear synchronously before fetching the new case's values -- the editors below are
+    // uncontrolled (defaultValue-driven, see CustomFieldEditor.tsx), so if they were to stay
+    // mounted showing the PREVIOUS case's still-current values while this fetch is in flight,
+    // a later prop update once the fetch resolves would silently fail to update the already-
+    // mounted DOM input's displayed value. Clearing first means there's nothing to show (or
+    // stale) until the fresh data actually arrives.
+    setSpecCaseCustomFieldValues(null);
     let cancelled = false;
     (async () => {
       try {
@@ -1319,6 +1334,7 @@ export default function App() {
   const handleCustomFieldValueChange = useCallback(
     async (definitionId: string, value: unknown) => {
       if (!specSelectedCaseId) return;
+      const requestCaseId = specSelectedCaseId;
       setSavingCustomFieldId(definitionId);
       setCustomFieldErrorById((prev) => {
         const next = { ...prev };
@@ -1327,7 +1343,7 @@ export default function App() {
       });
       try {
         const res = await fetch(
-          `/api/v1/test-cases/${specSelectedCaseId}/custom-field-values/${definitionId}`,
+          `/api/v1/test-cases/${requestCaseId}/custom-field-values/${definitionId}`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -1338,13 +1354,20 @@ export default function App() {
         if (!res.ok) {
           throw new Error(data.detail || data.error || "Failed to save custom field value");
         }
-        setSpecCaseCustomFieldValues((prev) =>
-          prev
-            ? prev.map((entry) =>
-                entry.definition.id === definitionId ? { ...entry, value: data.value } : entry,
-              )
-            : prev,
-        );
+        // The save genuinely succeeded against requestCaseId's own data regardless -- but if
+        // the user has since navigated to a different case (e.g. a blur-triggered autosave
+        // whose response arrives after the switch), specCaseCustomFieldValues now holds the
+        // NEW case's values, and patching it here would silently overwrite that case's real
+        // value with this now-irrelevant response. Skip the display update in that case.
+        if (specSelectedCaseIdRef.current === requestCaseId) {
+          setSpecCaseCustomFieldValues((prev) =>
+            prev
+              ? prev.map((entry) =>
+                  entry.definition.id === definitionId ? { ...entry, value: data.value } : entry,
+                )
+              : prev,
+          );
+        }
       } catch (err: any) {
         setCustomFieldErrorById((prev) => ({
           ...prev,
@@ -3496,7 +3519,7 @@ export default function App() {
                           <div style={{ marginBottom: "16px" }}>
                             {specCaseCustomFieldValues.map((entry) => (
                               <CustomFieldEditor
-                                key={entry.definition.id}
+                                key={`${specSelectedCaseId}-${entry.definition.id}`}
                                 entry={entry}
                                 onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
                                 disabled={!(isDraft && hasPlanManagePermission)}
