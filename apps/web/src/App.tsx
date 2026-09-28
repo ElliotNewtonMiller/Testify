@@ -3382,9 +3382,13 @@ export default function App() {
                 )}
 
                 {/* CASE DETAILS -- title/priority/execution_type (above) are always
-                    editable; preconditions/summary/steps below are editable only while
-                    the latest version is DRAFT ("Create New Draft" above unlocks this for
-                    an APPROVED case). Admin-defined custom fields are always editable. */}
+                    editable; preconditions/summary/steps/custom fields below are editable
+                    only while the latest version is DRAFT ("Edit" above unlocks this for
+                    an APPROVED case by creating a new draft). Custom field *values* aren't
+                    version-locked server-side (setValue works against any status, by
+                    design -- see CLAUDE.md), but the UI still only offers editing them in
+                    lockstep with everything else in this pane, matching how a locked case
+                    reads as fully read-only rather than partially editable. */}
                 <div ref={specDetailScrollRef} style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
                   {(() => {
                     const isDraft = specVersionDetail?.status === "DRAFT";
@@ -3495,8 +3499,12 @@ export default function App() {
                                 key={entry.definition.id}
                                 entry={entry}
                                 onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
-                                disabled={!hasPlanManagePermission}
-                                disabledTitle="Requires plan management permission"
+                                disabled={!(isDraft && hasPlanManagePermission)}
+                                disabledTitle={
+                                  !isDraft
+                                    ? "Editable only while in Draft -- click Edit to create a new draft"
+                                    : "Requires plan management permission"
+                                }
                                 errorMessage={customFieldErrorById[entry.definition.id] ?? null}
                                 isSaving={savingCustomFieldId === entry.definition.id}
                               />

@@ -2,9 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
-import { TestSuiteRepository, TestCaseRepository, TestCaseVersionRepository, ProjectRepository } from '@testify/db';
+import { TestSuiteRepository, TestCaseRepository, TestCaseVersionRepository, ProjectRepository, CustomFieldRepository } from '@testify/db';
+import { findUnsatisfiedRequiredFields } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
-import { sendCaseVersionLockedError, sendSuiteInUseError, sendCaseInUseError, sendProblemDetails } from '../errors.js';
+import {
+  sendCaseVersionLockedError,
+  sendSuiteInUseError,
+  sendCaseInUseError,
+  sendProblemDetails,
+  sendRequiredCustomFieldsMissingError,
+} from '../errors.js';
 
 /**
  * Create/edit/delete for Test Suites and Test Cases (including versioned content:
@@ -24,6 +31,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   const caseRepo = new TestCaseRepository(db);
   const versionRepo = new TestCaseVersionRepository(db);
   const projectRepo = new ProjectRepository(db);
+  const customFieldRepo = new CustomFieldRepository(db);
 
   async function insertAuditLog(params: {
     actorId: string;
@@ -232,7 +240,19 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       // SYSTEM_ADMIN isn't checked explicitly here -- evaluatePermissions already expands it
       // to the full registry (see CLAUDE.md's "machine API tokens" entry), so any SYSTEM_ADMIN
       // holder's permissions array already contains this key.
-      const autoApprove = actor.permissions.includes('SPEC_AUTO_APPROVE');
+      let autoApprove = actor.permissions.includes('SPEC_AUTO_APPROVE');
+      if (autoApprove) {
+        // A brand-new case has no custom field values yet, so any required TestCase field
+        // with no default_value is unconditionally unsatisfied -- don't auto-approve past a
+        // requirement the case can't possibly meet at creation time. A required field WITH a
+        // default is fine (the default effectively provides the value); an empty `values`
+        // array is exactly the right input for "nothing's been recorded yet" (see
+        // findUnsatisfiedRequiredFields's own comment).
+        const definitions = await customFieldRepo.listVisibleToProject(projectId, 'TestCase');
+        if (findUnsatisfiedRequiredFields(definitions, []).length > 0) {
+          autoApprove = false;
+        }
+      }
       const version = await versionRepo.create({
         test_case_id: testCase.id,
         version_number: 1,
@@ -438,6 +458,22 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
           instance: request.url,
           invalid_params: [{ name: 'version_id', reason: `Status is ${version.status}, not DRAFT` }],
         });
+      }
+
+      // Same rule as the auto-approve-on-create gate above, applied to an explicit approve:
+      // a case can't be approved while a required custom field (no default_value) still has
+      // no value recorded. Values are read project-scoped (global ∪ project-specific
+      // definitions), matching how the case's own custom-field-values routes resolve them.
+      const definitions = await customFieldRepo.listVisibleToProject(projectId, 'TestCase');
+      const values = await customFieldRepo.getValuesForEntity('TestCase', owningCase.id, projectId);
+      const unsatisfied = findUnsatisfiedRequiredFields(definitions, values);
+      if (unsatisfied.length > 0) {
+        return sendRequiredCustomFieldsMissingError(
+          reply,
+          owningCase.id,
+          unsatisfied.map((d) => d.field_label),
+          request.url
+        );
       }
 
       const approved = await versionRepo.updateStatus(versionId, 'APPROVED', actor.id);

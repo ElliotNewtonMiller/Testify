@@ -72,6 +72,23 @@ export function sendCaseVersionNotApprovedError(reply: FastifyReply, testCaseId:
   });
 }
 
+export function sendRequiredCustomFieldsMissingError(
+  reply: FastifyReply,
+  testCaseId: string,
+  missingFieldLabels: string[],
+  instance?: string
+) {
+  return sendProblemDetails(reply, {
+    code: 'REQUIRED_CUSTOM_FIELDS_MISSING',
+    detail: `Test Case (ID: ${testCaseId}) is missing a value for ${missingFieldLabels.length === 1 ? 'a required custom field' : 'required custom fields'}: ${missingFieldLabels.join(', ')}. Provide ${missingFieldLabels.length === 1 ? 'it' : 'them'} before approving.`,
+    instance,
+    invalid_params: missingFieldLabels.map((label) => ({
+      name: 'custom_field_value',
+      reason: `'${label}' is required and has no value or default`,
+    })),
+  });
+}
+
 export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: string, instance?: string) {
   return sendProblemDetails(reply, {
     code: 'CASE_HAS_EXECUTIONS',

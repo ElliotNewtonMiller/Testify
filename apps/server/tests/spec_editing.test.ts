@@ -160,6 +160,88 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     expect(body.version.reviewer_id).toBeNull();
   });
 
+  it('a required TestCase custom field with no default blocks SPEC_AUTO_APPROVE until a value is set', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+
+    const fieldRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { entity_type: 'TestCase', name: 'severity', field_label: 'Severity', field_type: 'TEXT', is_required: true },
+    });
+    expect(fieldRes.statusCode).toBe(201);
+    const definitionId = JSON.parse(fieldRes.payload).definition.id;
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { test_suite_id: seed.suiteId, title: 'Case missing a required field' },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.payload);
+    // Admin holds SPEC_AUTO_APPROVE by default, but the required "Severity" field has no
+    // value yet and no default_value -- auto-approve must not fire past that.
+    expect(created.version.status).toBe('DRAFT');
+
+    const approveAttempt = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${created.version.id}/approve`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(approveAttempt.statusCode).toBe(422);
+    const approveBody = JSON.parse(approveAttempt.payload);
+    expect(approveBody.code).toBe('REQUIRED_CUSTOM_FIELDS_MISSING');
+    expect(approveBody.detail).toContain('Severity');
+
+    const setValueRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${created.test_case.id}/custom-field-values/${definitionId}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { value: 'HIGH' },
+    });
+    expect(setValueRes.statusCode).toBe(200);
+
+    const approveAfterValue = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${created.version.id}/approve`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(approveAfterValue.statusCode).toBe(200);
+    expect(JSON.parse(approveAfterValue.payload).version.status).toBe('APPROVED');
+  });
+
+  it('a required TestCase custom field WITH a default_value does not block SPEC_AUTO_APPROVE or approve', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+
+    const fieldRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        entity_type: 'TestCase',
+        name: 'owner_team',
+        field_label: 'Owner Team',
+        field_type: 'TEXT',
+        is_required: true,
+        default_value: 'QA',
+      },
+    });
+    expect(fieldRes.statusCode).toBe(201);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { test_suite_id: seed.suiteId, title: 'Case with a defaulted required field' },
+    });
+    expect(createRes.statusCode).toBe(201);
+    // A default_value counts as satisfying the requirement, even with no value row yet.
+    expect(JSON.parse(createRes.payload).version.status).toBe('APPROVED');
+  });
+
   it('editing title/priority on a case whose latest version is APPROVED needs no draft', async () => {
     const { app, seed, db } = serverInstance;
     const { token } = await loginAsAdmin(app);

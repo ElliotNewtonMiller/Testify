@@ -66,6 +66,9 @@ export function CustomFieldEditor({ entry, onChange, disabled, disabledTitle, er
         );
 
       case "CHECKBOX": {
+        // No checkmark glyph -- too small to read at 16px. The filled green square/border
+        // is the on/off signal by itself, matching the SPEC_AUTO_APPROVE-adjacent tri-state
+        // indicators elsewhere in this app that also communicate state through fill alone.
         const isOn = value === true;
         return (
           <button
@@ -78,15 +81,10 @@ export function CustomFieldEditor({ entry, onChange, disabled, disabledTitle, er
               borderRadius: "3px",
               border: isOn ? "1px solid #22c55e" : "1px solid #4b5563",
               backgroundColor: isOn ? "#15803d" : "transparent",
-              color: "#fff",
-              fontSize: "10px",
-              lineHeight: "14px",
               cursor: disabled ? "not-allowed" : "pointer",
               opacity: disabled ? 0.6 : 1,
             }}
-          >
-            {isOn ? "✓" : ""}
-          </button>
+          />
         );
       }
 
