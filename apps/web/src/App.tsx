@@ -1878,8 +1878,12 @@ export default function App() {
     },
     onVerdict: (verdict) => {
       submitVerdict(verdict);
+      // Always track the verdict just recorded, not just FAILED/BLOCKED -- a subsequent
+      // note-only Ctrl+Enter (e.g. pressing 's' via hotkey, which doesn't auto-advance,
+      // then typing a note) must resubmit with that same verdict, not a stale/default one.
+      // Only FAILED/BLOCKED additionally auto-focus notes -- Pass/Skip stay quick actions.
+      pendingVerdictRef.current = verdict;
       if (verdict === "FAILED" || verdict === "BLOCKED") {
-        pendingVerdictRef.current = verdict;
         setTimeout(() => {
           if (notesInputRef.current) notesInputRef.current.focus();
         }, 50);
@@ -1920,8 +1924,16 @@ export default function App() {
   useEffect(() => {
     setFailureNotes(activeCase?.latest_notes || "");
     notesDirtyRef.current = false;
+    // A note-only Ctrl+Enter (no verdict hotkey pressed since arriving on this case) should
+    // resubmit whatever verdict the case already has, not silently reassign it -- e.g.
+    // navigating to an already-SKIPPED case and just adding a note must not flip it to
+    // FAILED. Only default to FAILED for a genuinely UNTESTED case, matching the existing
+    // convention that an explain-why note with no verdict chosen yet implies a failure.
+    const existingVerdict = activeCase?.latest_verdict;
     pendingVerdictRef.current =
-      activeCase?.latest_verdict === "BLOCKED" ? "BLOCKED" : "FAILED";
+      existingVerdict && existingVerdict !== "UNTESTED"
+        ? (existingVerdict as VerdictType)
+        : "FAILED";
   }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
 
   if (authChecking) {
@@ -3270,24 +3282,6 @@ export default function App() {
                         {specActiveCase.latest_version.status}
                       </span>
                     )}
-                    {specActiveCase.latest_version?.status === "APPROVED" && hasSpecEditPermission && (
-                      <button
-                        onClick={handleCreateDraft}
-                        disabled={isCreatingDraft}
-                        style={{
-                          fontSize: "11px",
-                          padding: "3px 8px",
-                          borderRadius: "4px",
-                          border: "1px solid #f59e0b",
-                          backgroundColor: "rgba(245, 158, 11, 0.12)",
-                          color: "#fbbf24",
-                          fontWeight: 700,
-                          cursor: isCreatingDraft ? "default" : "pointer",
-                        }}
-                      >
-                        {isCreatingDraft ? "Creating…" : "Edit"}
-                      </button>
-                    )}
                     {specActiveCase.latest_version?.status === "DRAFT" && hasSpecApprovePermission && (
                       <button
                         onClick={handleApproveVersion}
@@ -3309,51 +3303,32 @@ export default function App() {
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                    <button
-                      onClick={() =>
-                        handleToggleCaseInclusion(specActiveCase.id, !specActiveCase.in_plan)
-                      }
-                      disabled={
-                        pendingToggleId === specActiveCase.id ||
-                        !hasPlanManagePermission ||
-                        (!specActiveCase.in_plan && !specActiveCase.linkable)
-                      }
-                      title={
-                        !hasPlanManagePermission
-                          ? "Requires plan management permission"
-                          : !specActiveCase.in_plan && !specActiveCase.linkable
-                            ? "Latest version is not Approved -- this project does not allow linking draft versions to a plan"
-                            : specActiveCase.in_plan
-                              ? "Remove from plan"
-                              : "Add to plan"
-                      }
-                      style={{
-                        flexShrink: 0,
-                        padding: "6px 14px",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        border: specActiveCase.in_plan
-                          ? "1px solid #22c55e"
-                          : "1px solid #334155",
-                        backgroundColor: specActiveCase.in_plan
-                          ? "rgba(34, 197, 94, 0.15)"
-                          : "transparent",
-                        color: specActiveCase.in_plan ? "#4ade80" : "#9ca3af",
-                        cursor:
-                          pendingToggleId === specActiveCase.id ||
-                          !hasPlanManagePermission ||
-                          (!specActiveCase.in_plan && !specActiveCase.linkable)
-                            ? "not-allowed"
-                            : "pointer",
-                      }}
-                    >
-                      {pendingToggleId === specActiveCase.id
-                        ? "…"
-                        : specActiveCase.in_plan
-                          ? "✓ In Plan"
-                          : "+ Add to Plan"}
-                    </button>
+                    {/* The plan-inclusion toggle used to live here ("+ Add to Plan"/"✓ In Plan"),
+                        but every case already has the identical toggle on its own row in the
+                        case list (SpecCaseListGrid's onToggleInclusion/pendingCaseId -- same
+                        handleToggleCaseInclusion/pendingToggleId state) -- removed as a
+                        duplicate, per direct request, and replaced with the Edit action moved
+                        here from up by the version badge, so it sits next to Delete instead. */}
+                    {specActiveCase.latest_version?.status === "APPROVED" && hasSpecEditPermission && (
+                      <button
+                        onClick={handleCreateDraft}
+                        disabled={isCreatingDraft}
+                        title="Create a new draft to edit this case"
+                        style={{
+                          flexShrink: 0,
+                          padding: "6px 14px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          border: "1px solid #f59e0b",
+                          backgroundColor: "rgba(245, 158, 11, 0.12)",
+                          color: "#fbbf24",
+                          cursor: isCreatingDraft ? "default" : "pointer",
+                        }}
+                      >
+                        {isCreatingDraft ? "Creating…" : "Edit"}
+                      </button>
+                    )}
                     {hasSpecDeletePermission && (
                       <button
                         onClick={() => handleDeleteCaseClick(specActiveCase.id)}
@@ -3987,6 +3962,12 @@ export default function App() {
                           "Permission Denied: EXECUTE_RUN required",
                         );
                       submitVerdict("PASSED");
+                      // Covers the case this button doesn't auto-advance from (the last case
+                      // in the list) -- without this, a note-only Ctrl+Enter afterward would
+                      // resubmit whatever stale verdict pendingVerdictRef last held instead of
+                      // PASSED, since staying on the same case means the case-load reset
+                      // effect (keyed on selectedIndex) never re-runs to correct it.
+                      pendingVerdictRef.current = "PASSED";
                       if (selectedIndex < workspace.cases.length - 1)
                         setSelectedIndex((i) => i + 1);
                     }}
@@ -4068,6 +4049,9 @@ export default function App() {
                           "Permission Denied: EXECUTE_RUN required",
                         );
                       submitVerdict("SKIPPED");
+                      // Same reasoning as the Pass button above -- keeps a subsequent
+                      // note-only Ctrl+Enter correct when this is the last case (no advance).
+                      pendingVerdictRef.current = "SKIPPED";
                       if (selectedIndex < workspace.cases.length - 1)
                         setSelectedIndex((i) => i + 1);
                     }}
