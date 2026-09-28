@@ -319,7 +319,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const names = JSON.parse(listRes.payload).definitions.map((d: any) => d.name);
     expect(names).not.toContain('imported_only_field');
   });
-  it('refuses to create or update a required field without a usable default value', async () => {
+  it('refuses to CREATE a required field without a usable default value, but never blocks an UPDATE', async () => {
     const { app } = serverInstance;
     const { token } = await loginAsAdmin(app);
     const auth = { authorization: `Bearer ${token}` };
@@ -331,7 +331,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       payload: { entity_type: 'TestCase', name: 'sev', field_label: 'Severity', field_type: 'TEXT', is_required: true },
     });
     expect(noDefault.statusCode).toBe(422);
-    expect(JSON.parse(noDefault.payload).error).toContain('default value');
+    expect(JSON.parse(noDefault.payload).error).toContain('Creating a required custom field');
 
     const badNumberDefault = await app.inject({
       method: 'POST',
@@ -348,6 +348,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       payload: { entity_type: 'TestCase', name: 'sev', field_label: 'Severity', field_type: 'TEXT', is_required: true, default_value: 'Medium' },
     });
     expect(ok.statusCode).toBe(201);
+    const requiredId = JSON.parse(ok.payload).definition.id;
 
     const optional = await app.inject({
       method: 'POST',
@@ -358,13 +359,14 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     expect(optional.statusCode).toBe(201);
     const optionalId = JSON.parse(optional.payload).definition.id;
 
-    // Making an existing optional field required needs a default too, and clearing the
-    // default of a required field is refused.
+    // Unlike creation, an UPDATE never blocks on the required/default combination: making an
+    // existing optional field required with no default succeeds, and so does clearing an
+    // already-required field's default afterward -- the create-time-only check exists purely
+    // to stop a *brand-new* required field from instantly leaving every existing record with
+    // an empty value; an update can't cause that kind of gap.
     const makeRequired = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true } });
-    expect(makeRequired.statusCode).toBe(422);
-    const makeRequiredWithDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true, default_value: 'x' } });
-    expect(makeRequiredWithDefault.statusCode).toBe(200);
-    const clearDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { default_value: null } });
-    expect(clearDefault.statusCode).toBe(422);
+    expect(makeRequired.statusCode).toBe(200);
+    const clearDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${requiredId}`, headers: auth, payload: { default_value: null } });
+    expect(clearDefault.statusCode).toBe(200);
   });
 });

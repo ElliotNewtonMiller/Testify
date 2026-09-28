@@ -2146,7 +2146,14 @@ export function AdminPanelModal({
                       </label>
                       <select
                         value={fieldType}
-                        onChange={(e) => setFieldType(e.target.value as CustomFieldType)}
+                        onChange={(e) => {
+                          const next = e.target.value as CustomFieldType;
+                          setFieldType(next);
+                          // CHECKBOX fields have no "Required" option (see below) -- clear any
+                          // stale is_required from a previous type selection so it can't be
+                          // silently submitted anyway.
+                          if (next === "CHECKBOX") setFieldIsRequired(false);
+                        }}
                         disabled={!isNewField}
                         style={{
                           width: "100%",
@@ -2213,43 +2220,64 @@ export function AdminPanelModal({
                     />
                   </div>
 
-                  <div style={{ marginBottom: "10px" }}>
-                    <button
-                      onClick={() => setFieldIsRequired((prev) => !prev)}
-                      style={{
-                        padding: "3px 8px",
-                        borderRadius: "4px",
-                        fontSize: "10px",
-                        fontWeight: 700,
-                        border: fieldIsRequired ? "1px solid #22c55e" : "1px solid #4b5563",
-                        backgroundColor: fieldIsRequired ? "rgba(34, 197, 94, 0.15)" : "transparent",
-                        color: fieldIsRequired ? "#4ade80" : "#9ca3af",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {fieldIsRequired ? "✓" : "—"} Required
-                    </button>
-                  </div>
+                  {fieldType !== "CHECKBOX" && (
+                    <div style={{ marginBottom: "10px" }}>
+                      <button
+                        onClick={() => setFieldIsRequired((prev) => !prev)}
+                        style={{
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          border: fieldIsRequired ? "1px solid #22c55e" : "1px solid #4b5563",
+                          backgroundColor: fieldIsRequired ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                          color: fieldIsRequired ? "#4ade80" : "#9ca3af",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {fieldIsRequired ? "✓" : "—"} Required
+                      </button>
+                    </div>
+                  )}
 
                   <div style={{ marginBottom: "10px" }}>
                     <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
                       Default Value
                     </label>
-                    <input
-                      type="text"
-                      value={fieldDefaultValue}
-                      onChange={(e) => setFieldDefaultValue(e.target.value)}
-                      style={{
-                        width: "100%",
-                        boxSizing: "border-box",
-                        padding: "6px 8px",
-                        backgroundColor: "#0f172a",
-                        border: "1px solid #475569",
-                        borderRadius: "4px",
-                        color: "#fff",
-                        fontSize: "12px",
-                      }}
-                    />
+                    {fieldType === "CHECKBOX" ? (
+                      // A CHECKBOX field's default is itself a boolean -- a free-text box asking
+                      // the admin to type "true"/"1" was never a good fit here. Unchecked means
+                      // no default (submitted as null, same as leaving the text box blank for
+                      // every other type); checked means a default of true.
+                      <button
+                        onClick={() => setFieldDefaultValue((prev) => (prev === "true" ? "" : "true"))}
+                        title={fieldDefaultValue === "true" ? "Defaults to checked" : "No default (unchecked)"}
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          borderRadius: "3px",
+                          border: fieldDefaultValue === "true" ? "1px solid #22c55e" : "1px solid #4b5563",
+                          backgroundColor: fieldDefaultValue === "true" ? "#15803d" : "transparent",
+                          cursor: "pointer",
+                        }}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={fieldDefaultValue}
+                        onChange={(e) => setFieldDefaultValue(e.target.value)}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "6px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    )}
                   </div>
 
                   {fieldType === "TEXT" && (
