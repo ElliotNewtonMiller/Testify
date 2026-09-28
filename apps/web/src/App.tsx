@@ -247,7 +247,12 @@ const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
 };
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
+  // Starts as the fallback placeholder, not null -- workspaceMode now defaults to
+  // SPECIFICATION, whose own bootstrap effect never calls refreshExecutionWorkspace() (only
+  // Execution mode does), so a null initial value would leave this permanently unset and the
+  // "Loading..." gate below stuck forever for anyone who starts (or stays) in Spec mode. The
+  // real Execution-mode data still loads normally the moment the user actually switches modes.
+  const [workspace, setWorkspace] = useState<WorkspaceData | null>(DEFAULT_FALLBACK_WORKSPACE);
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [failureNotes, setFailureNotes] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("Connected");
@@ -258,7 +263,7 @@ export default function App() {
 
   // Specification / Execution mode toggle (Pane 1 header) & Specification-mode state
   const [workspaceMode, setWorkspaceMode] = useState<"EXECUTION" | "SPECIFICATION">(
-    "EXECUTION",
+    "SPECIFICATION",
   );
   const [specData, setSpecData] = useState<SpecTreeData | null>(null);
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
