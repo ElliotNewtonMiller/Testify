@@ -109,6 +109,11 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
           options: Array.isArray(options) ? options : undefined,
         });
 
+        // Freeze the default into a real value row for every pre-existing entity right now,
+        // so a later edit to this definition's default_value can't silently rewrite what
+        // already-existing records "had" at creation time -- see the method's own comment.
+        const seededCount = await fieldRepo.seedDefaultValueForAllEntities(definition);
+
         const now = new Date().toISOString();
         await db
           .insertInto('audit_logs')
@@ -119,14 +124,14 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
             action: 'CUSTOM_FIELD_DEFINITION_CREATED',
             resource_type: 'custom_field_definition',
             resource_id: definition.id,
-            diff: JSON.stringify({ entity_type: entityType, name, field_label, field_type }),
+            diff: JSON.stringify({ entity_type: entityType, name, field_label, field_type, seeded_count: seededCount }),
             ip_address: '127.0.0.1',
             user_agent: 'TestifyAdminService',
             created_at: now,
           })
           .execute();
 
-        return reply.status(201).send({ definition });
+        return reply.status(201).send({ definition, seeded_count: seededCount });
       } catch (err: any) {
         if (err.message?.startsWith('UNKNOWN_ENTITY_TYPE') || err.message?.startsWith('UNKNOWN_FIELD_TYPE')) {
           return reply.status(400).send({ error: err.message });

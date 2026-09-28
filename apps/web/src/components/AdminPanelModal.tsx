@@ -775,7 +775,15 @@ export function AdminPanelModal({
       await fetchCustomFields();
       setIsNewField(false);
       setSelectedFieldId(data.definition.id);
-      flashSuccess(wasNewField ? "✓ Custom field created." : "✓ Custom field saved.");
+      // seeded_count is only ever present on a create response -- a default value just got
+      // frozen into a real row for that many pre-existing records (see
+      // CustomFieldRepository.seedDefaultValueForAllEntities), worth surfacing since it's not
+      // otherwise visible anywhere.
+      const seededSuffix =
+        wasNewField && typeof data.seeded_count === "number" && data.seeded_count > 0
+          ? ` Default applied to ${data.seeded_count} existing record${data.seeded_count === 1 ? "" : "s"}.`
+          : "";
+      flashSuccess((wasNewField ? "✓ Custom field created." : "✓ Custom field saved.") + seededSuffix);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to save custom field");
     } finally {

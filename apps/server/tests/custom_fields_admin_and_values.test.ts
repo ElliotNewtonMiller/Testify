@@ -369,4 +369,70 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const clearDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${requiredId}`, headers: auth, payload: { default_value: null } });
     expect(clearDefault.statusCode).toBe(200);
   });
+
+  it('creating a field with a default seeds a real value for every pre-existing case, frozen against later default edits', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'severity', field_label: 'Severity', field_type: 'TEXT', is_required: true, default_value: 'Medium' },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.payload);
+    expect(created.seeded_count).toBe(seed.caseIds.length);
+
+    const caseId = seed.caseIds[0];
+    const valuesRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+      headers: auth,
+    });
+    const values = JSON.parse(valuesRes.payload).values;
+    expect(values.find((v: any) => v.definition.id === created.definition.id).value).toBe('Medium');
+
+    // Editing the field's default afterward must not retroactively change the case's already-
+    // frozen value -- the whole point of seeding real rows at creation time.
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${created.definition.id}`,
+      headers: auth,
+      payload: { default_value: 'High' },
+    });
+    expect(updateRes.statusCode).toBe(200);
+
+    const valuesAfter = JSON.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+          headers: auth,
+        })
+      ).payload,
+    ).values;
+    expect(valuesAfter.find((v: any) => v.definition.id === created.definition.id).value).toBe('Medium');
+
+    // A brand-new case created AFTER the field exists has no pre-existing value to protect --
+    // it still picks up whatever the default is right now (the existing read-time fallback).
+    const newCaseRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      headers: auth,
+      payload: { test_suite_id: seed.suiteId, title: 'New case after field exists' },
+    });
+    const newCaseId = JSON.parse(newCaseRes.payload).test_case.id;
+    const newCaseValues = JSON.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/v1/test-cases/${newCaseId}/custom-field-values`,
+          headers: auth,
+        })
+      ).payload,
+    ).values;
+    expect(newCaseValues.find((v: any) => v.definition.id === created.definition.id).value).toBe('High');
+  });
 });

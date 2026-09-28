@@ -248,6 +248,71 @@ export class CustomFieldRepository {
     return (await this.getDefinition(id, scopedProjectId))!;
   }
 
+  /**
+   * Writes a real custom_field_values row -- seeded from the definition's own default_value
+   * at this exact moment -- for every existing entity (every TestCase or TestSuite the
+   * definition is visible to: every one in the field's own project, or every one across every
+   * project for a global field) the definition doesn't already have a value for. Meant to be
+   * called once, right after createDefinition(), never on an update.
+   *
+   * Why this needs to exist at all: getValuesForEntity()'s read-time fallback to
+   * resolveDefaultValue() (see above) is what makes a brand-new required field's default
+   * actually show up for pre-existing records with no explicit value -- but a *fallback* is
+   * computed fresh from whatever the definition's default_value happens to be right now. If an
+   * admin edits the default later (or even just to fix a typo), every entity that was never
+   * individually touched would silently display the NEW value, retroactively rewriting what
+   * those pre-existing records "had" at the time the field was created. Freezing a real row
+   * for each of them at creation time is exactly what an explicit edit already does for one
+   * entity -- this just does it for all of them at once, one time, so the field's default_value
+   * can keep evolving afterward without disturbing records that already existed before it did.
+   * An entity created *after* the field exists still gets today's read-time fallback, same as
+   * before -- there's no "pre-existing" data for it to protect.
+   *
+   * A no-op (returns 0) when there's no default_value, or when resolveDefaultValue() can't
+   * coerce it for the field's type (nothing sensible to seed either way -- matches
+   * getValuesForEntity's own read-time fallback treating an unusable default as no default).
+   */
+  async seedDefaultValueForAllEntities(definition: CustomFieldDefinition): Promise<number> {
+    if (definition.default_value === null) return 0;
+    const coerced = resolveDefaultValue(definition.field_type, definition.default_value, {
+      options: definition.options,
+    });
+    if (coerced === null) return 0;
+
+    const typedValue = parseCustomFieldValue(definition.field_type, coerced, {
+      validationRegex: definition.validation_regex,
+      options: definition.options,
+    });
+
+    const table: 'test_cases' | 'test_suites' = definition.entity_type === 'TestCase' ? 'test_cases' : 'test_suites';
+    let query = this.db.selectFrom(table).select('id');
+    if (definition.project_id !== null) {
+      query = query.where('project_id', '=', definition.project_id);
+    }
+    const entities = await query.execute();
+    if (entities.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    await this.runInTransaction(async (trx) => {
+      await trx
+        .insertInto('custom_field_values')
+        .values(
+          entities.map((e) => ({
+            id: uuidv7(),
+            custom_field_definition_id: definition.id,
+            entity_type: definition.entity_type,
+            entity_id: e.id,
+            ...typedValue,
+            created_at: now,
+            updated_at: now,
+          }))
+        )
+        .execute();
+    });
+
+    return entities.length;
+  }
+
   async updateDefinition(id: string, input: UpdateCustomFieldDefinitionInput): Promise<CustomFieldDefinition | undefined> {
     const existing = await this.getDefinitionAnyScope(id);
     if (!existing) return undefined;

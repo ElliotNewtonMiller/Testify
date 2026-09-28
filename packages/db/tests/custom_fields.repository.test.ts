@@ -398,4 +398,85 @@ describe('CustomFieldRepository', () => {
       expect(withoutProjectId.get(testCase.id)!.find((e) => e.definition.id === projectField.id)).toBeUndefined();
     });
   });
+
+  describe('seedDefaultValueForAllEntities', () => {
+    it('writes a real row for every pre-existing entity, and later editing the default no longer changes it', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity',
+        field_label: 'Severity',
+        field_type: 'TEXT',
+        is_required: true,
+        default_value: 'Medium',
+      });
+
+      const seeded = await fieldRepo.seedDefaultValueForAllEntities(field);
+      expect(seeded).toBe(1);
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('Medium');
+
+      // Editing the definition's default afterward must not retroactively change the
+      // already-seeded value -- that's the entire point of freezing a real row.
+      await fieldRepo.updateDefinition(field.id, { default_value: 'High' });
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('Medium');
+    });
+
+    it('is a no-op with no default_value, or a default that does not coerce for the field type', async () => {
+      await makeCaseAndSuite();
+      const noDefault = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'optional_field',
+        field_label: 'Optional',
+        field_type: 'TEXT',
+      });
+      expect(await fieldRepo.seedDefaultValueForAllEntities(noDefault)).toBe(0);
+
+      const badDefault = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'bad_number',
+        field_label: 'Bad Number',
+        field_type: 'NUMBER',
+        default_value: 'not-a-number',
+      });
+      expect(await fieldRepo.seedDefaultValueForAllEntities(badDefault)).toBe(0);
+    });
+
+    it('seeds every TestSuite (not just TestCase) when entity_type is TestSuite', async () => {
+      const { suite } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestSuite',
+        name: 'owner_team',
+        field_label: 'Owner Team',
+        field_type: 'TEXT',
+        default_value: 'QA',
+      });
+      expect(await fieldRepo.seedDefaultValueForAllEntities(field)).toBe(1);
+      expect((await fieldRepo.getValuesForEntity('TestSuite', suite.id))[0].value).toBe('QA');
+    });
+
+    it('scopes seeding to the definition\'s own project for a project-scoped field, not every project', async () => {
+      const { project: projectA, testCase: caseA } = await makeCaseAndSuite();
+      const projectB = await projectRepo.create({ name: 'CF Proj B', prefix: 'CFPB' });
+      const suiteB = await suiteRepo.create({ project_id: projectB.id, name: 'CF Suite B' });
+      await caseRepo.create({
+        project_id: projectB.id,
+        test_suite_id: suiteB.id,
+        external_id: 'CFPB-1',
+        title: 'CF Case B',
+        priority: 'HIGH',
+        execution_type: 'MANUAL',
+      });
+
+      const scopedField = await fieldRepo.createDefinition({
+        project_id: projectA.id,
+        entity_type: 'TestCase',
+        name: 'scoped_field',
+        field_label: 'Scoped',
+        field_type: 'TEXT',
+        default_value: 'x',
+      });
+      expect(await fieldRepo.seedDefaultValueForAllEntities(scopedField)).toBe(1);
+      expect((await fieldRepo.getValuesForEntity('TestCase', caseA.id, projectA.id))[0].value).toBe('x');
+    });
+  });
 });
