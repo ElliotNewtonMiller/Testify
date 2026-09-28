@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
+import { CustomFieldRepository } from '@testify/db';
 
 describe('Spec-mode suite/case create/edit/delete', () => {
   let serverInstance: any;
@@ -164,14 +165,16 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
-    const fieldRes = await app.inject({
-      method: 'POST',
-      url: '/api/v1/admin/custom-fields',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { entity_type: 'TestCase', name: 'severity', field_label: 'Severity', field_type: 'TEXT', is_required: true },
+    // The admin API now refuses to create a required field without a default, so build this
+    // (legacy/defense-in-depth) state directly through the repository.
+    const definition = await new CustomFieldRepository(serverInstance.db).createDefinition({
+      entity_type: 'TestCase',
+      name: 'severity',
+      field_label: 'Severity',
+      field_type: 'TEXT',
+      is_required: true,
     });
-    expect(fieldRes.statusCode).toBe(201);
-    const definitionId = JSON.parse(fieldRes.payload).definition.id;
+    const definitionId = definition.id;
 
     const createRes = await app.inject({
       method: 'POST',

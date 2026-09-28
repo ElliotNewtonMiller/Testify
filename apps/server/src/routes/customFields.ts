@@ -2,12 +2,44 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { CustomFieldRepository, TestCaseRepository, TestSuiteRepository } from '@testify/db';
-import { CUSTOM_FIELD_TYPES, CUSTOM_FIELD_ENTITY_TYPES, type CustomFieldEntityType } from '@testify/core';
+import {
+  CUSTOM_FIELD_TYPES,
+  CUSTOM_FIELD_ENTITY_TYPES,
+  resolveDefaultValue,
+  type CustomFieldEntityType,
+  type CustomFieldType,
+} from '@testify/core';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendCustomFieldInUseError, sendProblemDetails } from '../errors.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
   return typeof value === 'string' && (CUSTOM_FIELD_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * A required field must ship with a usable default, so every already-existing case/suite has
+ * a value for it from the moment the field exists (defaults are applied to entities that have
+ * no value row yet -- see CustomFieldRepository.getValuesForEntity). Without one, every
+ * pre-existing record would instantly be missing a required value. Returns the error message
+ * to show, or null when the combination is fine.
+ */
+function requiredFieldDefaultError(
+  isRequired: boolean,
+  fieldType: CustomFieldType,
+  defaultValue: string | null | undefined,
+  options: Array<{ option_value: string }> | undefined
+): string | null {
+  if (!isRequired) return null;
+  if (defaultValue === null || defaultValue === undefined || String(defaultValue).trim() === '') {
+    return (
+      'A required custom field must have a default value. Existing test cases and suites need an initial ' +
+      'value for it, so provide one in the Default Value field (it is applied to every record that has no value yet).'
+    );
+  }
+  if (resolveDefaultValue(fieldType, String(defaultValue), { options }) === null) {
+    return `The default value '${defaultValue}' is not valid for a ${fieldType} field, so existing records would still have no value. Provide a valid default value.`;
+  }
+  return null;
 }
 
 /**
@@ -50,6 +82,16 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       }
       if (!(CUSTOM_FIELD_TYPES as readonly string[]).includes(field_type)) {
         return reply.status(400).send({ error: `field_type must be one of: ${CUSTOM_FIELD_TYPES.join(', ')}` });
+      }
+
+      const requiredError = requiredFieldDefaultError(
+        Boolean(is_required),
+        field_type,
+        default_value,
+        Array.isArray(options) ? options : undefined
+      );
+      if (requiredError) {
+        return reply.status(422).send({ error: requiredError, code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
       }
 
       try {
@@ -101,6 +143,20 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       const activeUser = request.user!;
       const { id } = request.params as { id: string };
       const { name, field_label, is_required, default_value, validation_regex, options } = (request.body as any) || {};
+
+      const existing = await fieldRepo.getDefinition(id);
+      if (!existing) {
+        return reply.status(404).send({ error: 'Custom field not found' });
+      }
+      const requiredError = requiredFieldDefaultError(
+        is_required !== undefined ? Boolean(is_required) : existing.is_required,
+        existing.field_type,
+        default_value !== undefined ? default_value : existing.default_value,
+        Array.isArray(options) ? options : existing.options
+      );
+      if (requiredError) {
+        return reply.status(422).send({ error: requiredError, code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
+      }
 
       try {
         const definition = await fieldRepo.updateDefinition(id, {

@@ -38,7 +38,13 @@ export function CustomFieldEditor({ entry, onChange, disabled, disabledTitle, er
       case "TEXT":
         return (
           <textarea
-            ref={(el) => autoGrowTextarea(el)}
+            ref={(el) => {
+              // Only size on genuine mount -- this inline callback is a fresh identity every
+              // render, so React re-invokes it on every commit, and resetting height to auto
+              // each time briefly collapses the field (shrinking the scroll container's
+              // scrollHeight mid-commit). Live growth is covered by onInput below.
+              if (el && !el.style.height) autoGrowTextarea(el);
+            }}
             defaultValue={(value as string) ?? ""}
             onBlur={(e) => onChange(e.target.value || null)}
             onInput={(e) => autoGrowTextarea(e.currentTarget)}

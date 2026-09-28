@@ -319,4 +319,52 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const names = JSON.parse(listRes.payload).definitions.map((d: any) => d.name);
     expect(names).not.toContain('imported_only_field');
   });
+  it('refuses to create or update a required field without a usable default value', async () => {
+    const { app } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const noDefault = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'sev', field_label: 'Severity', field_type: 'TEXT', is_required: true },
+    });
+    expect(noDefault.statusCode).toBe(422);
+    expect(JSON.parse(noDefault.payload).error).toContain('default value');
+
+    const badNumberDefault = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'n', field_label: 'N', field_type: 'NUMBER', is_required: true, default_value: 'abc' },
+    });
+    expect(badNumberDefault.statusCode).toBe(422);
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'sev', field_label: 'Severity', field_type: 'TEXT', is_required: true, default_value: 'Medium' },
+    });
+    expect(ok.statusCode).toBe(201);
+
+    const optional = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'opt', field_label: 'Optional', field_type: 'TEXT' },
+    });
+    expect(optional.statusCode).toBe(201);
+    const optionalId = JSON.parse(optional.payload).definition.id;
+
+    // Making an existing optional field required needs a default too, and clearing the
+    // default of a required field is refused.
+    const makeRequired = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true } });
+    expect(makeRequired.statusCode).toBe(422);
+    const makeRequiredWithDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true, default_value: 'x' } });
+    expect(makeRequiredWithDefault.statusCode).toBe(200);
+    const clearDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { default_value: null } });
+    expect(clearDefault.statusCode).toBe(422);
+  });
 });

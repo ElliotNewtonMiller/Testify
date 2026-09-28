@@ -140,7 +140,10 @@ type StepsScrollRestoreMode = "restore" | "scrollToBottom";
  * mutation/any restoreSelection adjustment but strictly before the browser paints -- so it's
  * always the last word before the user sees a frame, never a later, visibly-corrective jump.
  */
-function useStepsScrollPreserved(scrollRef: React.RefObject<HTMLDivElement>) {
+function useStepsScrollPreserved(
+  scrollRef: React.RefObject<HTMLDivElement>,
+  endAnchorRef?: React.RefObject<HTMLDivElement>,
+) {
   const preservedTopRef = useRef<number | null>(null);
   const pendingModeRef = useRef<StepsScrollRestoreMode | null>(null);
   const [restoreTick, setRestoreTick] = useState(0);
@@ -170,7 +173,20 @@ function useStepsScrollPreserved(scrollRef: React.RefObject<HTMLDivElement>) {
     const el = scrollRef.current;
     if (!el) return;
     if (mode === "scrollToBottom") {
-      el.scrollTop = el.scrollHeight;
+      // Content (custom fields) now sits BELOW the step list, so the container's own bottom
+      // is no longer the steps' bottom -- scroll just far enough to bring the end-of-steps
+      // anchor into view (never upward), falling back to the true bottom without an anchor.
+      const anchor = endAnchorRef?.current;
+      if (anchor) {
+        const delta = anchor.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom;
+        if (delta > 0) el.scrollTop += delta;
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+      // Keep the captured position in sync with where an append just scrolled to -- the
+      // in-flight autosave triggered by the blur that preceded this add later schedules a
+      // "restore", which would otherwise snap back to the pre-append scrollTop it captured.
+      preservedTopRef.current = el.scrollTop;
     } else if (preservedTopRef.current !== null) {
       el.scrollTop = preservedTopRef.current;
     }
@@ -285,6 +301,10 @@ export default function App() {
   const [specCaseCustomFieldValues, setSpecCaseCustomFieldValues] = useState<
     CustomFieldValueEntry[] | null
   >(null);
+  // Read-only custom field values for the case currently being executed (Execution mode).
+  const [execCaseCustomFieldValues, setExecCaseCustomFieldValues] = useState<
+    CustomFieldValueEntry[] | null
+  >(null);
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null);
   const [customFieldErrorById, setCustomFieldErrorById] = useState<Record<string, string>>({});
   // Suite-level custom fields: which suite (if any) has its fields panel open in
@@ -391,7 +411,8 @@ export default function App() {
   // The Spec-mode case detail pane's own scroll container (Summary/Preconditions/steps all
   // live inside it) -- see useStepsScrollPreserved above for why this needs tracking at all.
   const specDetailScrollRef = useRef<HTMLDivElement>(null);
-  const stepsScroll = useStepsScrollPreserved(specDetailScrollRef);
+  const stepsEndAnchorRef = useRef<HTMLDivElement>(null);
+  const stepsScroll = useStepsScrollPreserved(specDetailScrollRef, stepsEndAnchorRef);
 
   // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
   // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
@@ -1333,6 +1354,32 @@ export default function App() {
       cancelled = true;
     };
   }, [workspaceMode, specSelectedCaseId]);
+
+  // Custom field values for whichever case is active in Execution mode -- shown read-only
+  // under the steps. Same clear-before-fetch discipline as the Spec-mode fetch above (the
+  // editors are uncontrolled, so nothing stale may be mounted while the fetch is in flight).
+  const activeExecCaseId = activeCase?.case_id ?? null;
+  useEffect(() => {
+    if (workspaceMode !== "EXECUTION" || !activeExecCaseId) {
+      setExecCaseCustomFieldValues(null);
+      return;
+    }
+    setExecCaseCustomFieldValues(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/test-cases/${activeExecCaseId}/custom-field-values`, {
+          headers: authHeaders(),
+        });
+        if (!cancelled) setExecCaseCustomFieldValues(res.ok ? (await res.json()).values : null);
+      } catch {
+        if (!cancelled) setExecCaseCustomFieldValues(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceMode, activeExecCaseId]);
 
   // Commits one custom field value edit via PUT, then optimistically patches local state
   // so the field reflects the save without waiting on a full spec-tree/detail refetch.
@@ -3520,26 +3567,6 @@ export default function App() {
                           )}
                         </div>
 
-                        {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
-                          <div style={{ marginBottom: "16px" }}>
-                            {specCaseCustomFieldValues.map((entry) => (
-                              <CustomFieldEditor
-                                key={`${specSelectedCaseId}-${entry.definition.id}`}
-                                entry={entry}
-                                onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
-                                disabled={!(isDraft && hasPlanManagePermission)}
-                                disabledTitle={
-                                  !isDraft
-                                    ? "Editable only while in Draft -- click Edit to create a new draft"
-                                    : "Requires plan management permission"
-                                }
-                                errorMessage={customFieldErrorById[entry.definition.id] ?? null}
-                                isSaving={savingCustomFieldId === entry.definition.id}
-                              />
-                            ))}
-                          </div>
-                        )}
-
                         <div
                           style={{
                             fontSize: "11px",
@@ -3664,6 +3691,7 @@ export default function App() {
                             >
                               + Add Step
                             </button>
+                            <div ref={stepsEndAnchorRef} />
                             {/* Always mounted (not conditionally rendered) so toggling it never changes
                                 specDetailScrollRef's scrollHeight -- a conditionally-mounted version
                                 growing/shrinking the container on every autosave was the primary cause
@@ -3720,6 +3748,26 @@ export default function App() {
                         {!specVersionDetail && (
                           <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
                             Loading step detail…
+                          </div>
+                        )}
+
+                        {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
+                          <div style={{ marginTop: "16px" }}>
+                            {specCaseCustomFieldValues.map((entry) => (
+                              <CustomFieldEditor
+                                key={`${specSelectedCaseId}-${entry.definition.id}`}
+                                entry={entry}
+                                onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
+                                disabled={!(isDraft && hasPlanManagePermission)}
+                                disabledTitle={
+                                  !isDraft
+                                    ? "Editable only while in Draft -- click Edit to create a new draft"
+                                    : "Requires plan management permission"
+                                }
+                                errorMessage={customFieldErrorById[entry.definition.id] ?? null}
+                                isSaving={savingCustomFieldId === entry.definition.id}
+                              />
+                            ))}
                           </div>
                         )}
                       </>
@@ -3894,6 +3942,20 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+
+                {execCaseCustomFieldValues && execCaseCustomFieldValues.length > 0 && (
+                  <div style={{ marginTop: "16px" }}>
+                    {execCaseCustomFieldValues.map((entry) => (
+                      <CustomFieldEditor
+                        key={`${activeExecCaseId}-${entry.definition.id}`}
+                        entry={entry}
+                        onChange={() => {}}
+                        disabled
+                        disabledTitle="Custom fields are read-only during execution -- edit them in Specification mode"
+                      />
+                    ))}
+                  </div>
+                )}
 
                 {/* DETAILED EXECUTION STEP DRAWER */}
                 {showStepDrawer && (
