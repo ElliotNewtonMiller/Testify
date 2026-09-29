@@ -1350,6 +1350,12 @@ export default function App() {
   // Global admin-defined custom field values for whichever case is selected in
   // Specification mode -- fetched alongside specCaseDetail above, same lazy-per-case pattern.
   useEffect(() => {
+    // customFieldErrorById is keyed only by definitionId, not by (case, definitionId) -- the
+    // same field definition is shared across every case, so an error left over from a
+    // rejected edit on the PREVIOUS case would otherwise still show here, against a field
+    // that (on this case) was never touched at all. Clear it on every case switch so an
+    // error message only ever reflects this case's own most recent save attempt.
+    setCustomFieldErrorById({});
     if (workspaceMode !== "SPECIFICATION" || !specSelectedCaseId) {
       setSpecCaseCustomFieldValues(null);
       return;
@@ -1461,6 +1467,10 @@ export default function App() {
   // Specification mode -- backs Pane 3's Suite Details view. Same lazy-per-entity,
   // clear-before-fetch pattern as specCaseCustomFieldValues above.
   useEffect(() => {
+    // Same fix as customFieldErrorById above -- keyed only by definitionId, so it must be
+    // cleared on every suite switch or a rejected edit's error would keep showing against a
+    // different suite's otherwise-untouched field.
+    setSuiteCustomFieldErrorById({});
     if (workspaceMode !== "SPECIFICATION" || !selectedSuiteId) {
       setSuiteCustomFieldValues(null);
       return;
