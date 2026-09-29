@@ -3144,7 +3144,11 @@ export default function App() {
               workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
             }
             onSelectSuite={(suiteId) => {
-              setSelectedSuiteId((prev) => (prev === suiteId ? null : suiteId));
+              // Deliberately not a toggle -- clicking the already-selected suite again must
+              // not deselect it (per direct request). Re-selecting the same suite is still
+              // useful on its own: in Specification mode it switches Pane 3 back to that
+              // suite's details if a case was being viewed instead.
+              setSelectedSuiteId(suiteId);
               if (workspaceMode === "SPECIFICATION") setSpecSelectedCaseId(null);
             }}
             mode={workspaceMode}
