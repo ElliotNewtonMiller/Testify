@@ -34,10 +34,7 @@ function requiredFieldDefaultError(
 ): string | null {
   if (!isRequired) return null;
   if (defaultValue === null || defaultValue === undefined || String(defaultValue).trim() === '') {
-    return (
-      'A required custom field must have a default value. Existing test cases and suites need an initial ' +
-      'value for it, so provide one in the Default Value field.'
-    );
+    return 'A required custom field must have a default value.';
   }
   if (resolveDefaultValue(fieldType, String(defaultValue), { options }) === null) {
     return `The default value '${defaultValue}' is not valid for a ${fieldType} field, so existing records would still have no value. Provide a valid default value.`;

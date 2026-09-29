@@ -525,6 +525,12 @@ Test reverted to match: `custom_fields_admin_and_values.test.ts`'s create/update
 
 `npm test`: 525/528 (a full run's 524/528 the same pass includes the already-documented flaky 1000-item batch timeout tripping this time, see "Fixed: stale Plan/Run dropdown..." above) -- all failures confined to `.claude/worktrees/vigilant-haslett-05b0d0/`, none in this session's own files. `tsc --noEmit` clean on `apps/server`. Verified via curl against the real running dev server: making an existing optional field required with no default now returns `422` again (was `200` the previous day); clearing an existing required field's default now returns `422` again too.
 
+## Shortened the required-default error message (2026-09-29)
+
+Per direct request: `requiredFieldDefaultError`'s no-default message (`apps/server/src/routes/customFields.ts`) trimmed from the two-sentence explanation to just *"A required custom field must have a default value."* -- the server string has no `⚠️` prefix itself; that's added by `AdminPanelModal.tsx`'s existing `⚠️ {errorMessage}` display wrapper, so the requested `"⚠️ A required custom field must have a default value."` renders exactly as asked without needing any frontend change.
+
+No test changes needed -- `custom_fields_admin_and_values.test.ts`'s assertion was already the loose `toContain('default value')`, which still matches. `tsc --noEmit` clean on `apps/server`. Verified live: the Admin Panel shows exactly `⚠️ A required custom field must have a default value.` when creating a required field with no default.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
