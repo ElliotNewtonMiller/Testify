@@ -17,14 +17,14 @@ function isEntityType(value: unknown): value is CustomFieldEntityType {
 }
 
 /**
- * A required field must ship with a usable default AT CREATION TIME, so every already-existing
- * case/suite has a value for it the moment the field exists (defaults are applied to entities
- * that have no value row yet -- see CustomFieldRepository.getValuesForEntity). Deliberately
- * create-only: once a field exists, existing values (or none, for optional fields) are already
- * whatever they are, so there's no equivalent "pre-existing records go empty" risk to block on
- * an update -- an admin removing a required field's default after creation, or flipping an
- * already-existing field to required, is left alone. Returns the error message to show, or
- * null when the combination is fine.
+ * A required field must always ship with a usable default -- on creation, so every already-
+ * existing case/suite has a value for it the moment the field exists (defaults are applied to
+ * entities that have no value row yet -- see CustomFieldRepository.getValuesForEntity), and
+ * just as much on any later update, since removing a required field's default (or flipping an
+ * already-existing field to required with none) would leave every entity that's never been
+ * individually touched with an empty required value from that point on. Enforced identically
+ * on both POST (create) and PUT (update) -- see both route handlers below. Returns the error
+ * message to show, or null when the combination is fine.
  */
 function requiredFieldDefaultError(
   isRequired: boolean,
@@ -35,8 +35,8 @@ function requiredFieldDefaultError(
   if (!isRequired) return null;
   if (defaultValue === null || defaultValue === undefined || String(defaultValue).trim() === '') {
     return (
-      'Creating a required custom field must include a default value. Otherwise preexisting test cases ' +
-      'and suites will have an empty required field. You may remove the default after creation.'
+      'A required custom field must have a default value. Existing test cases and suites need an initial ' +
+      'value for it, so provide one in the Default Value field.'
     );
   }
   if (resolveDefaultValue(fieldType, String(defaultValue), { options }) === null) {
@@ -152,8 +152,20 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       const { id } = request.params as { id: string };
       const { name, field_label, is_required, default_value, validation_regex, options } = (request.body as any) || {};
 
-      // Deliberately no requiredFieldDefaultError check here -- see that function's own
-      // comment: the create-only default requirement doesn't apply to updates.
+      const existing = await fieldRepo.getDefinition(id);
+      if (!existing) {
+        return reply.status(404).send({ error: 'Custom field not found' });
+      }
+      const requiredError = requiredFieldDefaultError(
+        is_required !== undefined ? Boolean(is_required) : existing.is_required,
+        existing.field_type,
+        default_value !== undefined ? default_value : existing.default_value,
+        Array.isArray(options) ? options : existing.options
+      );
+      if (requiredError) {
+        return reply.status(422).send({ error: requiredError, code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
+      }
+
       try {
         const definition = await fieldRepo.updateDefinition(id, {
           name: typeof name === 'string' ? name : undefined,
