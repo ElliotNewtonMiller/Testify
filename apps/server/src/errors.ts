@@ -203,7 +203,7 @@ export function sendCustomFieldInUseError(
     code: 'CUSTOM_FIELD_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Custom field ${fieldRef} has recorded values on ${blockedByValueCount} ${entityWord}. Pass force=true to delete it anyway and permanently discard that data.`,
+    detail: `Custom field ${fieldRef} has recorded values on ${blockedByValueCount} ${entityWord}. Are you sure you want to delete them?`,
     instance,
     invalid_params: [
       {

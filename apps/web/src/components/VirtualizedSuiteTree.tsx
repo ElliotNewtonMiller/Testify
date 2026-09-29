@@ -33,10 +33,6 @@ export interface VirtualizedSuiteTreeProps {
   canManagePlan?: boolean;
   /** Fired when a suite's inclusion indicator is clicked in Specification mode. */
   onToggleSuiteInclusion?: (suiteId: string, action: 'ADD' | 'REMOVE') => void;
-  /** Fired when a suite's "Fields" affordance is clicked in Specification mode, to open
-   * that suite's custom-fields panel. Purely additive -- doesn't change the existing
-   * click-to-filter row selection behavior. */
-  onOpenSuiteFields?: (suiteId: string) => void;
   /** Whether the current user holds SPEC_CREATE/SPEC_EDIT/SPEC_DELETE -- gates the new
    * create-child/rename/delete icon buttons in Specification mode. */
   canCreateSuites?: boolean;
@@ -68,7 +64,6 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   mode = 'EXECUTION',
   canManagePlan = false,
   onToggleSuiteInclusion,
-  onOpenSuiteFields,
   canCreateSuites = false,
   canEditSuites = false,
   canDeleteSuites = false,
@@ -247,35 +242,13 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
               </span>
             </div>
 
-            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator + Fields
-                affordance (Specification mode) */}
+            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator (Specification
+                mode) -- the "✎ Fields" affordance that used to live here was removed:
+                clicking a suite row now shows its details (name + custom fields) in Pane 3,
+                the same place a case's details show, making a separate button redundant. */}
             {mode === 'SPECIFICATION' ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
                 {renderInclusionIndicator(node)}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenSuiteFields?.(node.id);
-                  }}
-                  title="Custom fields for this suite"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '16px',
-                    height: '16px',
-                    marginLeft: '6px',
-                    borderRadius: '3px',
-                    backgroundColor: 'transparent',
-                    border: '1px solid #4b5563',
-                    color: '#9ca3af',
-                    fontSize: '10px',
-                    cursor: 'pointer',
-                    padding: 0,
-                  }}
-                >
-                  ✎
-                </button>
                 {canCreateSuites && (
                   <button
                     onClick={(e) => {

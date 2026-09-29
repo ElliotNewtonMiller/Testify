@@ -22,7 +22,6 @@ import { ExportModal } from "./components/ExportModal";
 import { ReportingModal } from "./components/ReportingModal";
 import { LoginPage } from "./components/LoginPage";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
-import { SuiteCustomFieldsPanel } from "./components/SuiteCustomFieldsPanel";
 import {
   EntityManagementModal,
   EntityItem,
@@ -283,6 +282,13 @@ export default function App() {
   );
   const [specData, setSpecData] = useState<SpecTreeData | null>(null);
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+  // Mirrors selectedSuiteId for reads from inside an already-in-flight async closure (see
+  // handleSuiteCustomFieldValueChange) -- same race this file already guards against for
+  // specSelectedCaseIdRef below, just for the suite-details custom fields instead.
+  const selectedSuiteIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedSuiteIdRef.current = selectedSuiteId;
+  }, [selectedSuiteId]);
   const [specSelectedCaseId, setSpecSelectedCaseId] = useState<string | null>(
     null,
   );
@@ -307,12 +313,17 @@ export default function App() {
   >(null);
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null);
   const [customFieldErrorById, setCustomFieldErrorById] = useState<Record<string, string>>({});
-  // Suite-level custom fields: which suite (if any) has its fields panel open in
-  // Specification mode -- purely additive to the existing click-to-filter suite selection.
-  const [suiteFieldsPanelSuiteId, setSuiteFieldsPanelSuiteId] = useState<string | null>(null);
+  // Suite-level custom field values for whichever suite is selected in Specification mode --
+  // shown/edited in Pane 3's Suite Details view (see specActiveCase/selectedSuiteId below).
+  // Same shape as specCaseCustomFieldValues above: clear-before-fetch discipline (the editors
+  // are uncontrolled) and a savingId/errorById pair per field.
+  const [suiteCustomFieldValues, setSuiteCustomFieldValues] = useState<
+    CustomFieldValueEntry[] | null
+  >(null);
+  const [savingSuiteCustomFieldId, setSavingSuiteCustomFieldId] = useState<string | null>(null);
+  const [suiteCustomFieldErrorById, setSuiteCustomFieldErrorById] = useState<Record<string, string>>({});
 
-  // Suite create/rename form (inline, not a modal) -- mirrors suiteFieldsPanelSuiteId's
-  // "one panel open at a time, purely additive" shape.
+  // Suite create/rename form (inline, not a modal).
   const [suiteFormState, setSuiteFormState] = useState<{
     mode: "CREATE" | "RENAME";
     targetId: string | null; // the suite being renamed (RENAME) or the parent to create under (CREATE, may be null for top-level)
@@ -1432,6 +1443,77 @@ export default function App() {
     [specSelectedCaseId],
   );
 
+  // Global admin-defined custom field values for whichever suite is selected in
+  // Specification mode -- backs Pane 3's Suite Details view. Same lazy-per-entity,
+  // clear-before-fetch pattern as specCaseCustomFieldValues above.
+  useEffect(() => {
+    if (workspaceMode !== "SPECIFICATION" || !selectedSuiteId) {
+      setSuiteCustomFieldValues(null);
+      return;
+    }
+    setSuiteCustomFieldValues(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/test-suites/${selectedSuiteId}/custom-field-values`, {
+          headers: authHeaders(),
+        });
+        if (!cancelled) setSuiteCustomFieldValues(res.ok ? (await res.json()).values : null);
+      } catch {
+        if (!cancelled) setSuiteCustomFieldValues(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceMode, selectedSuiteId]);
+
+  // Commits one suite custom field value edit via PUT -- mirrors handleCustomFieldValueChange
+  // above exactly, including the same stale-response race guard (selectedSuiteIdRef).
+  const handleSuiteCustomFieldValueChange = useCallback(
+    async (definitionId: string, value: unknown) => {
+      if (!selectedSuiteId) return;
+      const requestSuiteId = selectedSuiteId;
+      setSavingSuiteCustomFieldId(definitionId);
+      setSuiteCustomFieldErrorById((prev) => {
+        const next = { ...prev };
+        delete next[definitionId];
+        return next;
+      });
+      try {
+        const res = await fetch(
+          `/api/v1/test-suites/${requestSuiteId}/custom-field-values/${definitionId}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ value }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || data.error || "Failed to save custom field value");
+        }
+        if (selectedSuiteIdRef.current === requestSuiteId) {
+          setSuiteCustomFieldValues((prev) =>
+            prev
+              ? prev.map((entry) =>
+                  entry.definition.id === definitionId ? { ...entry, value: data.value } : entry,
+                )
+              : prev,
+          );
+        }
+      } catch (err: any) {
+        setSuiteCustomFieldErrorById((prev) => ({
+          ...prev,
+          [definitionId]: err.message || "Failed to save",
+        }));
+      } finally {
+        setSavingSuiteCustomFieldId(null);
+      }
+    },
+    [selectedSuiteId],
+  );
+
   // ---- Suite/case create/edit/delete (Specification mode) ----
 
   const handleUpdateCaseField = useCallback(
@@ -1723,6 +1805,35 @@ export default function App() {
       setIsSavingSuiteForm(false);
     }
   }, [suiteFormState, selectedProjectId, refreshSpecTree, showToast]);
+
+  // Renames a suite directly from Pane 3's Suite Details view -- a lighter always-editable
+  // input (onBlur-save, matching the case title editor's pattern) rather than routing through
+  // the fuller rename+move form above (still reachable via the tree's own rename icon, which
+  // also lets you change the parent suite -- this one only ever touches the name).
+  const handleUpdateSuiteName = useCallback(
+    async (suiteId: string, name: string) => {
+      if (!selectedProjectId) return;
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-suites/${suiteId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 401) {
+            handleAuthExpiry();
+            return;
+          }
+          throw new Error(data.error || data.detail || "Failed to rename suite");
+        }
+        await refreshSpecTree();
+      } catch (err: any) {
+        showToast(err.message || "Failed to rename suite");
+      }
+    },
+    [selectedProjectId, refreshSpecTree, showToast, handleAuthExpiry],
+  );
 
   // Suite delete (two-step confirmation)
   const handleDeleteSuiteClick = useCallback(
@@ -2103,16 +2214,20 @@ export default function App() {
 
   const suiteNodes: SuiteTreeNode[] = specData ? buildSuiteNodes(specData.suites) : [];
 
-  function findSuiteName(nodes: SpecSuiteNode[], suiteId: string): string | null {
+  // Backs Pane 3's Suite Details view below -- selectedSuiteId only carries an id, so the
+  // full node (name, case counts) has to be looked up from the nested tree each render.
+  function findSuiteNode(nodes: SpecSuiteNode[], suiteId: string): SpecSuiteNode | null {
     for (const node of nodes) {
-      if (node.id === suiteId) return node.name;
-      const found = findSuiteName(node.children, suiteId);
+      if (node.id === suiteId) return node;
+      const found = findSuiteNode(node.children, suiteId);
       if (found) return found;
     }
     return null;
   }
-  const suiteFieldsPanelSuiteName =
-    (suiteFieldsPanelSuiteId && specData && findSuiteName(specData.suites, suiteFieldsPanelSuiteId)) || "";
+  const specActiveSuite =
+    workspaceMode === "SPECIFICATION" && selectedSuiteId && specData
+      ? findSuiteNode(specData.suites, selectedSuiteId)
+      : null;
 
   // Flat, indented "Parent Suite" <select> option list for the suite create/rename form.
   function flattenSuiteOptions(
@@ -3010,9 +3125,6 @@ export default function App() {
             mode={workspaceMode}
             canManagePlan={hasPlanManagePermission}
             onToggleSuiteInclusion={handleToggleSuiteInclusion}
-            onOpenSuiteFields={(suiteId) =>
-              setSuiteFieldsPanelSuiteId((prev) => (prev === suiteId ? null : suiteId))
-            }
             canCreateSuites={hasSpecCreatePermission}
             canEditSuites={hasSpecEditPermission}
             canDeleteSuites={hasSpecDeletePermission}
@@ -3206,15 +3318,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-          )}
-
-          {workspaceMode === "SPECIFICATION" && suiteFieldsPanelSuiteId && (
-            <SuiteCustomFieldsPanel
-              suiteId={suiteFieldsPanelSuiteId}
-              suiteName={suiteFieldsPanelSuiteName}
-              canManagePlan={hasPlanManagePermission}
-              onClose={() => setSuiteFieldsPanelSuiteId(null)}
-            />
           )}
 
           {workspaceMode === "SPECIFICATION" ? (
@@ -3775,6 +3878,79 @@ export default function App() {
                   })()}
                 </div>
               </>
+            ) : specActiveSuite ? (
+              <>
+                {/* SUITE DETAILS -- name + custom fields. Replaces the case detail view
+                    whenever a suite (not a case) is the current selection; clicking a case
+                    in the list takes priority again (specActiveCase above), matching how
+                    onSelectSuite/onSelectCase never clear each other's underlying id, only
+                    which one this view prefers to show. This is now the only place a
+                    suite's custom field values are shown/edited -- the tree's old "✎ Fields"
+                    button (which opened a separate floating panel) was removed as redundant. */}
+                <div
+                  style={{
+                    padding: "16px 20px",
+                    borderBottom: "1px solid #1f2937",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "16px" }}>📁</span>
+                    <input
+                      key={specActiveSuite.id}
+                      type="text"
+                      defaultValue={specActiveSuite.name}
+                      onBlur={(e) => {
+                        if (e.target.value.trim() && e.target.value !== specActiveSuite.name) {
+                          handleUpdateSuiteName(specActiveSuite.id, e.target.value.trim());
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                      disabled={!hasSpecEditPermission}
+                      title={hasSpecEditPermission ? "Suite name" : "Requires SPEC_EDIT permission"}
+                      style={{
+                        fontSize: "16px",
+                        fontWeight: 700,
+                        color: "#f9fafb",
+                        backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
+                        border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
+                        borderRadius: "4px",
+                        padding: hasSpecEditPermission ? "3px 8px" : "0",
+                        minWidth: "240px",
+                        opacity: hasSpecEditPermission ? 1 : 0.85,
+                      }}
+                    />
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#6b7280" }}>
+                    {specActiveSuite.total_case_count} case{specActiveSuite.total_case_count === 1 ? "" : "s"}
+                    {" · "}
+                    {specActiveSuite.in_plan_count} in plan
+                  </div>
+                </div>
+
+                <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                  {suiteCustomFieldValues && suiteCustomFieldValues.length > 0 ? (
+                    suiteCustomFieldValues.map((entry) => (
+                      <CustomFieldEditor
+                        key={`${specActiveSuite.id}-${entry.definition.id}`}
+                        entry={entry}
+                        onChange={(value) => handleSuiteCustomFieldValueChange(entry.definition.id, value)}
+                        disabled={!hasPlanManagePermission}
+                        disabledTitle="Requires plan management permission"
+                        errorMessage={suiteCustomFieldErrorById[entry.definition.id] ?? null}
+                        isSaving={savingSuiteCustomFieldId === entry.definition.id}
+                      />
+                    ))
+                  ) : suiteCustomFieldValues ? (
+                    <div style={{ fontSize: "12px", color: "#6b7280" }}>
+                      No custom fields defined for Test Suites yet.
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Loading…</div>
+                  )}
+                </div>
+              </>
             ) : (
               <div
                 style={{
@@ -3786,7 +3962,7 @@ export default function App() {
                   fontSize: "13px",
                 }}
               >
-                Select a test case to view its specification.
+                Select a test case or suite to view its details.
               </div>
             )
           ) : activeCase ? (

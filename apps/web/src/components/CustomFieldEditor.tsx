@@ -27,8 +27,8 @@ function autoGrowTextarea(el: HTMLTextAreaElement | null) {
   el.style.height = `${el.scrollHeight}px`;
 }
 
-/** Renders a live editor for one custom field value, matching its field_type. Shared by
- * the Spec-mode case detail pane (App.tsx) and SuiteCustomFieldsPanel so the 6-type switch
+/** Renders a live editor for one custom field value, matching its field_type. Shared by the
+ * Spec-mode case detail pane and Suite Details pane (both in App.tsx) so the 6-type switch
  * isn't duplicated. Pure props-in/callback-out -- does no fetching of its own. */
 export function CustomFieldEditor({ entry, onChange, disabled, disabledTitle, errorMessage, isSaving }: CustomFieldEditorProps) {
   const { definition, value } = entry;
