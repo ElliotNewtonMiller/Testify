@@ -313,15 +313,26 @@ export default function App() {
   >(null);
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null);
   const [customFieldErrorById, setCustomFieldErrorById] = useState<Record<string, string>>({});
+  // Bumped per-definition when a save is rejected (e.g. a required field's value was cleared,
+  // 422 REQUIRED_FIELD_MISSING) -- included in CustomFieldEditor's `key` below so a rejected
+  // edit forces a remount back to the last known-good value (specCaseCustomFieldValues was
+  // never updated on failure, so it's still correct) instead of leaving the uncontrolled
+  // input showing whatever invalid text the user typed, which never actually got saved. Without
+  // this, a required field that a user cleared and failed to save still LOOKS blank even
+  // though the real stored value is untouched -- easy to mistake for "the app let me approve
+  // with an empty required field" when actually the field was quietly still holding its last
+  // real value the whole time.
+  const [customFieldResetKeyById, setCustomFieldResetKeyById] = useState<Record<string, number>>({});
   // Suite-level custom field values for whichever suite is selected in Specification mode --
   // shown/edited in Pane 3's Suite Details view (see specActiveCase/selectedSuiteId below).
   // Same shape as specCaseCustomFieldValues above: clear-before-fetch discipline (the editors
-  // are uncontrolled) and a savingId/errorById pair per field.
+  // are uncontrolled) and a savingId/errorById/resetKeyById set per field.
   const [suiteCustomFieldValues, setSuiteCustomFieldValues] = useState<
     CustomFieldValueEntry[] | null
   >(null);
   const [savingSuiteCustomFieldId, setSavingSuiteCustomFieldId] = useState<string | null>(null);
   const [suiteCustomFieldErrorById, setSuiteCustomFieldErrorById] = useState<Record<string, string>>({});
+  const [suiteCustomFieldResetKeyById, setSuiteCustomFieldResetKeyById] = useState<Record<string, number>>({});
 
   // Suite create/rename form (inline, not a modal).
   const [suiteFormState, setSuiteFormState] = useState<{
@@ -1436,6 +1447,9 @@ export default function App() {
           ...prev,
           [definitionId]: err.message || "Failed to save",
         }));
+        // Force the (uncontrolled) input back to the last known-good value -- see
+        // customFieldResetKeyById's own comment for why this matters.
+        setCustomFieldResetKeyById((prev) => ({ ...prev, [definitionId]: (prev[definitionId] ?? 0) + 1 }));
       } finally {
         setSavingCustomFieldId(null);
       }
@@ -1507,6 +1521,7 @@ export default function App() {
           ...prev,
           [definitionId]: err.message || "Failed to save",
         }));
+        setSuiteCustomFieldResetKeyById((prev) => ({ ...prev, [definitionId]: (prev[definitionId] ?? 0) + 1 }));
       } finally {
         setSavingSuiteCustomFieldId(null);
       }
@@ -3858,7 +3873,7 @@ export default function App() {
                           <div style={{ marginTop: "16px" }}>
                             {specCaseCustomFieldValues.map((entry) => (
                               <CustomFieldEditor
-                                key={`${specSelectedCaseId}-${entry.definition.id}`}
+                                key={`${specSelectedCaseId}-${entry.definition.id}-${customFieldResetKeyById[entry.definition.id] ?? 0}`}
                                 entry={entry}
                                 onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
                                 disabled={!(isDraft && hasPlanManagePermission)}
@@ -3933,7 +3948,7 @@ export default function App() {
                   {suiteCustomFieldValues && suiteCustomFieldValues.length > 0 ? (
                     suiteCustomFieldValues.map((entry) => (
                       <CustomFieldEditor
-                        key={`${specActiveSuite.id}-${entry.definition.id}`}
+                        key={`${specActiveSuite.id}-${entry.definition.id}-${suiteCustomFieldResetKeyById[entry.definition.id] ?? 0}`}
                         entry={entry}
                         onChange={(value) => handleSuiteCustomFieldValueChange(entry.definition.id, value)}
                         disabled={!hasPlanManagePermission}

@@ -29,7 +29,12 @@ const EMPTY_TYPED_VALUE: CustomFieldTypedValue = {
 };
 
 function isEmpty(rawValue: unknown): boolean {
-  return rawValue === null || rawValue === undefined || rawValue === '';
+  // An empty array (a MULTI_SELECT with every option deselected) is just as "nothing here"
+  // as null/undefined/'' -- without this, a required MULTI_SELECT field could be saved with
+  // value: [] (isEmpty(rawValue) would otherwise be false for an array, so the isRequired
+  // check below would never fire), silently bypassing the "required fields can't be blank"
+  // guarantee this function exists to enforce.
+  return rawValue === null || rawValue === undefined || rawValue === '' || (Array.isArray(rawValue) && rawValue.length === 0);
 }
 
 /**

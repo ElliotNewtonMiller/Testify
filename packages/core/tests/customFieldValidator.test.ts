@@ -52,6 +52,21 @@ describe('parseCustomFieldValue', () => {
     expect(() => parseCustomFieldValue('TEXT', '', { isRequired: true })).toThrow('REQUIRED_FIELD_MISSING');
   });
 
+  it('is_required + MULTI_SELECT with every option deselected ([]) also throws REQUIRED_FIELD_MISSING', () => {
+    // An empty array isn't null/undefined/'' -- without treating it as empty too, a required
+    // MULTI_SELECT field could be silently saved with nothing selected, defeating the whole
+    // point of "required" (this is exactly how a user deselecting every pill in
+    // CustomFieldEditor.tsx's MULTI_SELECT control would submit a value).
+    expect(() => parseCustomFieldValue('MULTI_SELECT', [], { isRequired: true, options: [{ option_value: 'RED' }] })).toThrow(
+      'REQUIRED_FIELD_MISSING',
+    );
+    // Same value on a non-required field is fine, and reads back as unset (null), matching
+    // how every other "nothing here" value already reads back -- no meaningful difference
+    // between "zero options selected" and "never touched" for a MULTI_SELECT.
+    const result = parseCustomFieldValue('MULTI_SELECT', [], { isRequired: false });
+    expect(readCustomFieldValue('MULTI_SELECT', result)).toBeNull();
+  });
+
   it('a non-required field accepts an empty/missing value as an all-null typed row', () => {
     const result = parseCustomFieldValue('NUMBER', null, { isRequired: false });
     expect(result).toEqual({ string_value: null, number_value: null, boolean_value: null, date_value: null, json_value: null });
