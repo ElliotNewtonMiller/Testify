@@ -2269,6 +2269,32 @@ export function AdminPanelModal({
                           cursor: "pointer",
                         }}
                       />
+                    ) : fieldType === "DATE" ? (
+                      // A real date picker (not a free-text box) -- gets the same
+                      // "what format?" question CustomFieldEditor.tsx's own DATE control
+                      // already answers, by construction, instead of needing help text to
+                      // explain it (a native date input's own placeholder attribute is
+                      // ignored by every browser, so text guidance has to live outside it).
+                      <>
+                        <input
+                          type="date"
+                          value={fieldDefaultValue}
+                          onChange={(e) => setFieldDefaultValue(e.target.value)}
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            padding: "6px 8px",
+                            backgroundColor: "#0f172a",
+                            border: "1px solid #475569",
+                            borderRadius: "4px",
+                            color: "#fff",
+                            fontSize: "12px",
+                          }}
+                        />
+                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                          Pick a date, or type one as YYYY-MM-DD.
+                        </div>
+                      </>
                     ) : (
                       <input
                         type="text"

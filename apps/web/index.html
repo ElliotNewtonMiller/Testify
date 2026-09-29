@@ -14,6 +14,14 @@
       *, *::before, *::after {
         box-sizing: border-box;
       }
+      /* Every native date input in this app sits on a dark background (see body's own
+         background-color below), but the browser's default calendar-picker glyph renders in
+         black regardless -- near-invisible against it. Inverting makes it white; there's no
+         inline-style equivalent since this targets a pseudo-element. */
+      input[type="date"]::-webkit-calendar-picker-indicator {
+        filter: invert(1);
+        cursor: pointer;
+      }
     </style>
   </head>
   <body
