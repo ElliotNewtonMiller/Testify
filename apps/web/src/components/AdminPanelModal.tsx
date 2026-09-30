@@ -2295,6 +2295,34 @@ export function AdminPanelModal({
                           Pick a date, or type one as YYYY-MM-DD.
                         </div>
                       </>
+                    ) : fieldType === "SINGLE_SELECT" ? (
+                      // A real dropdown built from the Options list below, instead of a free-text
+                      // box asking the admin to retype an option's value by hand -- it always
+                      // reflects whatever's currently in fieldOptions, so adding/renaming/removing
+                      // an option updates this list on every render with no extra wiring.
+                      <select
+                        value={fieldDefaultValue}
+                        onChange={(e) => setFieldDefaultValue(e.target.value)}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "6px 8px",
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "4px",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      >
+                        <option value="">No default</option>
+                        {fieldOptions
+                          .filter((opt) => opt.option_value !== "")
+                          .map((opt) => (
+                            <option key={opt.option_value} value={opt.option_value}>
+                              {opt.option_label}
+                            </option>
+                          ))}
+                      </select>
                     ) : (
                       <input
                         type="text"
@@ -2347,24 +2375,9 @@ export function AdminPanelModal({
                         <div key={i} style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
                           <input
                             type="text"
-                            placeholder="Label"
+                            placeholder="Option"
                             value={opt.option_label}
-                            onChange={(e) => updateFieldOption(i, { option_label: e.target.value })}
-                            style={{
-                              flex: 1,
-                              padding: "5px 8px",
-                              backgroundColor: "#0f172a",
-                              border: "1px solid #475569",
-                              borderRadius: "4px",
-                              color: "#fff",
-                              fontSize: "11px",
-                            }}
-                          />
-                          <input
-                            type="text"
-                            placeholder="Value"
-                            value={opt.option_value}
-                            onChange={(e) => updateFieldOption(i, { option_value: e.target.value })}
+                            onChange={(e) => updateFieldOption(i, { option_label: e.target.value, option_value: e.target.value })}
                             style={{
                               flex: 1,
                               padding: "5px 8px",
