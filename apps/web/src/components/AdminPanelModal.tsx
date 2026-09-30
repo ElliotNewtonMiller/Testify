@@ -757,8 +757,37 @@ export function AdminPanelModal({
     setFieldOptions((prev) => prev.map((o, i) => (i === index ? { ...o, ...patch } : o)));
   };
 
+  // Deleting an option that's currently selected as the field's default must deselect it
+  // there too -- otherwise fieldDefaultValue keeps holding a value that no longer matches
+  // any option, and Save fails with resolveDefaultValue's generic "not valid" error instead
+  // of the default area ever visibly reflecting the removal. The MULTI_SELECT/SINGLE_SELECT
+  // default controls above already hide a stale option from display (they only render pills/
+  // a dropdown option for what's currently in fieldOptions), but that's display-only --
+  // without this, the underlying string is never actually pruned until the admin happens to
+  // toggle some other pill or change the dropdown.
   const removeFieldOption = (index: number) => {
+    const removed = fieldOptions[index];
     setFieldOptions((prev) => prev.filter((_, i) => i !== index));
+    if (!removed) return;
+
+    if (fieldType === "SINGLE_SELECT") {
+      if (fieldDefaultValue === removed.option_value) {
+        setFieldDefaultValue("");
+      }
+    } else if (fieldType === "MULTI_SELECT") {
+      setFieldDefaultValue((prev) => {
+        if (!prev) return prev;
+        try {
+          const parsed = JSON.parse(prev);
+          if (!Array.isArray(parsed)) return prev;
+          const next = parsed.filter((v) => v !== removed.option_value);
+          if (next.length === parsed.length) return prev;
+          return next.length > 0 ? JSON.stringify(next) : "";
+        } catch {
+          return prev;
+        }
+      });
+    }
   };
 
   const handleSaveField = async () => {
