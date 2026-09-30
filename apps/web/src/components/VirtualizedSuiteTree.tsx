@@ -165,89 +165,114 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
         flex: 1,
         width: '100%',
         height: '100%',
-        overflowY: 'auto',
+        // Both axes: a name/subtree too wide for the pane now gets a horizontal scrollbar
+        // instead of truncating/reflowing (see the row styling below) -- per direct request,
+        // resizing this pane should never move where a suite's row content sits.
+        overflow: 'auto',
         backgroundColor: '#0d111c',
         boxSizing: 'border-box',
       }}
     >
-      {flatNodes.map(({ node, depth }) => {
-        const isSelected = node.id === selectedSuiteId;
-        const isActive = !isSelected && Boolean(activeSuiteId) && node.id === activeSuiteId;
-        const hasChildren = Boolean(node.children && node.children.length > 0);
-        const isExpanded = expandedMap[node.id] ?? node.isExpanded ?? true;
+      {/* Sized to the widest row's natural (unwrapped) content, but never smaller than the
+          visible pane (minWidth: 100%). This is what makes every row's own box -- even a
+          short-named sibling -- span the full scrollable width, which the sticky "always
+          visible" action buttons below need in order to clamp correctly to the pane's right
+          edge at any scroll position, not just when scrolled all the way right. */}
+      <div style={{ width: 'fit-content', minWidth: '100%' }}>
+        {flatNodes.map(({ node, depth }) => {
+          const isSelected = node.id === selectedSuiteId;
+          const isActive = !isSelected && Boolean(activeSuiteId) && node.id === activeSuiteId;
+          const hasChildren = Boolean(node.children && node.children.length > 0);
+          const isExpanded = expandedMap[node.id] ?? node.isExpanded ?? true;
 
-        const indentPx = depth * INDENT_PER_LEVEL + 8;
-        const passed = node.passedCount ?? 0;
-        const total = node.totalCount ?? 0;
+          const indentPx = depth * INDENT_PER_LEVEL + 8;
+          const passed = node.passedCount ?? 0;
+          const total = node.totalCount ?? 0;
 
-        return (
-          <div
-            key={node.id}
-            onClick={() => onSelectSuite?.(node.id)}
-            style={{
-              height: `${TREE_ROW_HEIGHT}px`, // Strict 28px Tree Node Row Standard
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingLeft: `${indentPx}px`,
-              paddingRight: '8px',
-              backgroundColor: isSelected
-                ? 'rgba(59, 130, 246, 0.18)'
-                : isActive
-                  ? 'rgba(34, 211, 238, 0.12)'
-                  : 'transparent',
-              borderLeft: isSelected ? '3px solid #3b82f6' : isActive ? '3px solid #22d3ee' : '3px solid transparent',
-              borderRadius: '2px',
-              fontSize: '12px',
-              color: isSelected || isActive ? '#ffffff' : '#d1d5db',
-              cursor: 'pointer',
-              userSelect: 'none',
-              transition: 'background-color 0.1s ease',
-            }}
-          >
-            {/* Folder Toggle Icon + Title */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-              {hasChildren ? (
+          return (
+            <div
+              key={node.id}
+              onClick={() => onSelectSuite?.(node.id)}
+              style={{
+                height: `${TREE_ROW_HEIGHT}px`, // Strict 28px Tree Node Row Standard
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                paddingLeft: `${indentPx}px`,
+                backgroundColor: isSelected
+                  ? 'rgba(59, 130, 246, 0.18)'
+                  : isActive
+                    ? 'rgba(34, 211, 238, 0.12)'
+                    : 'transparent',
+                borderLeft: isSelected ? '3px solid #3b82f6' : isActive ? '3px solid #22d3ee' : '3px solid transparent',
+                borderRadius: '2px',
+                fontSize: '12px',
+                color: isSelected || isActive ? '#ffffff' : '#d1d5db',
+                cursor: 'pointer',
+                userSelect: 'none',
+                transition: 'background-color 0.1s ease',
+              }}
+            >
+              {/* Folder Toggle Icon + Title -- never shrinks or truncates (flexShrink: 0,
+                  no ellipsis/overflow-hidden): a name too long to fit widens the row instead,
+                  same reasoning as the outer container's overflow: auto above. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                {hasChildren ? (
+                  <span
+                    onClick={(e) => toggleSuite(node.id, e)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                      fontSize: '10px',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    {isExpanded ? '▼' : '▶'}
+                  </span>
+                ) : (
+                  <span style={{ width: '16px', height: '16px', display: 'inline-block' }} />
+                )}
+
+                <span style={{ fontSize: '14px', flexShrink: 0 }}>📁</span>
+
                 <span
-                  onClick={(e) => toggleSuite(node.id, e)}
+                  style={{
+                    whiteSpace: 'nowrap',
+                    fontWeight: isSelected || isActive ? 600 : 400,
+                  }}
+                >
+                  {node.name}
+                </span>
+              </div>
+
+              {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator (Specification
+                  mode) -- pinned to the pane's right edge via position: sticky regardless of
+                  horizontal scroll, per direct request ("buttons... should always remain
+                  visible aligned to the right of each suite"). marginLeft: auto gives it its
+                  un-scrolled position at the end of this row's (now full-width) box; the
+                  opaque backgroundColor masks this row's own name text sliding underneath it
+                  as the tree scrolls horizontally. The "✎ Fields" affordance that used to
+                  live here was removed: clicking a suite row now shows its details (name +
+                  custom fields) in Pane 3, the same place a case's details show, making a
+                  separate button redundant. */}
+              {mode === 'SPECIFICATION' ? (
+                <span
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '16px',
-                    height: '16px',
-                    fontSize: '10px',
-                    color: '#9ca3af',
-                    cursor: 'pointer',
-                    userSelect: 'none',
+                    flexShrink: 0,
+                    marginLeft: 'auto',
+                    position: 'sticky',
+                    right: '8px',
+                    backgroundColor: '#0d111c',
+                    paddingLeft: '8px',
                   }}
                 >
-                  {isExpanded ? '▼' : '▶'}
-                </span>
-              ) : (
-                <span style={{ width: '16px', height: '16px', display: 'inline-block' }} />
-              )}
-
-              <span style={{ fontSize: '14px', flexShrink: 0 }}>📁</span>
-
-              <span
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  fontWeight: isSelected || isActive ? 600 : 400,
-                }}
-              >
-                {node.name}
-              </span>
-            </div>
-
-            {/* Progress Pill (Execution mode) or Plan-Inclusion Indicator (Specification
-                mode) -- the "✎ Fields" affordance that used to live here was removed:
-                clicking a suite row now shows its details (name + custom fields) in Pane 3,
-                the same place a case's details show, making a separate button redundant. */}
-            {mode === 'SPECIFICATION' ? (
-              <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
                 {renderInclusionIndicator(node)}
                 {canCreateSuites && (
                   <button
@@ -327,28 +352,31 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
                     🗑️
                   </button>
                 )}
-              </span>
-            ) : (
-              total > 0 && (
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
-                    backgroundColor: 'rgba(31, 41, 55, 0.8)',
-                    padding: '1px 6px',
-                    borderRadius: '9999px',
-                    flexShrink: 0,
-                    marginLeft: '8px',
-                  }}
-                >
-                  {passed}/{total} P
                 </span>
-              )
-            )}
-          </div>
-        );
-      })}
+              ) : (
+                total > 0 && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: passed === total && total > 0 ? '#4ade80' : '#60a5fa',
+                      backgroundColor: 'rgba(31, 41, 55, 0.8)',
+                      padding: '1px 6px',
+                      borderRadius: '9999px',
+                      flexShrink: 0,
+                      marginLeft: 'auto',
+                      position: 'sticky',
+                      right: '8px',
+                    }}
+                  >
+                    {passed}/{total} P
+                  </span>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

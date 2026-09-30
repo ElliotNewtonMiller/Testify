@@ -30,11 +30,14 @@ const ROW_HEIGHT = 38; // Was 32 (TestCaseQueueGrid's row density standard) -- g
 // give the plan-inclusion toggle button below more vertical padding, so it's easier to click.
 const BUFFER_ITEMS = 10;
 
-const VERSION_STATUS_STYLES: Record<string, { bg: string; fg: string; border: string }> = {
-  DRAFT: { bg: '#1f2937', fg: '#9ca3af', border: '#374151' },
-  IN_REVIEW: { bg: '#1e3a5f', fg: '#60a5fa', border: '#2563eb' },
-  APPROVED: { bg: '#052e16', fg: '#4ade80', border: '#22c55e' },
-  DEPRECATED: { bg: '#450a0a', fg: '#f87171', border: '#ef4444' },
+// A solid fill color per version status -- the badge itself is now just a small colored box
+// (see renderVersionBadge below), so only one color per status is needed rather than a
+// bg/fg/border triple.
+const VERSION_STATUS_COLORS: Record<string, string> = {
+  DRAFT: '#9ca3af',
+  IN_REVIEW: '#60a5fa',
+  APPROVED: '#22c55e',
+  DEPRECATED: '#f87171',
 };
 
 /**
@@ -96,34 +99,24 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
   const visibleCases = filteredCases.slice(startIndex, endIndex);
   const offsetY = startIndex * ROW_HEIGHT;
 
+  // Space-efficient status indicator: a small solid-colored box (green = approved, grey =
+  // draft, etc.) instead of a wide text badge -- the status is still available on hover via
+  // the title tooltip, and the ~54px this frees up goes straight to the title column.
   const renderVersionBadge = (item: SpecCaseGridItem) => {
     if (!item.latest_version) {
       return (
-        <span style={{ fontSize: '10px', color: '#6b7280', width: '64px', flexShrink: 0 }}>NO VERSION</span>
+        <span
+          title="No version"
+          style={{ width: '10px', height: '10px', borderRadius: '2px', border: '1px solid #374151', flexShrink: 0 }}
+        />
       );
     }
-    const style = VERSION_STATUS_STYLES[item.latest_version.status] || VERSION_STATUS_STYLES.DRAFT;
+    const color = VERSION_STATUS_COLORS[item.latest_version.status] || VERSION_STATUS_COLORS.DRAFT;
     return (
       <span
         title={`v${item.latest_version.version_number} ${item.latest_version.status}`}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1px 5px',
-          borderRadius: '3px',
-          backgroundColor: style.bg,
-          color: style.fg,
-          border: `1px solid ${style.border}`,
-          fontWeight: 700,
-          fontSize: '9px',
-          flexShrink: 0,
-          width: '64px',
-          textAlign: 'center',
-        }}
-      >
-        {item.latest_version.status}
-      </span>
+        style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: color, flexShrink: 0 }}
+      />
     );
   };
 

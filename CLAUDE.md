@@ -638,6 +638,16 @@ Panes 1 (Suite Tree, `280px`) and 2 (Spec/Execution Queue Grid, `420px`) were ha
 
 No new automated tests (pure client-side layout/interaction, no new backend surface). `tsc --noEmit` clean on `apps/web`.
 
+## Fixed: Suite Tree rows shifted on resize; Spec-mode version badge shrunk to a colored box (2026-09-30)
+
+Two more requests from the same session as the resizable-panes feature above.
+
+- **Suite Tree no longer reflows on resize.** Previously each row used `overflow: hidden`/`textOverflow: ellipsis` to shrink long names as the pane narrowed -- since sibling rows truncate at different points depending on their own name length, this made buttons/indicators land at inconsistent x-positions row to row as the divider was dragged (the reported "suites... not aligned"). `VirtualizedSuiteTree.tsx` now never truncates or wraps a name (`whiteSpace: nowrap`, no ellipsis, `flexShrink: 0` on the name/icon group) -- a name or a deep subtree that doesn't fit widens the row instead, and the container (`overflow: 'auto'`, was `overflowY` only) grows a horizontal scrollbar rather than reflowing anything. Each row is wrapped in an inner `width: 'fit-content'; minWidth: '100%'` sizer so every row's own box spans the full scrollable width (not just its own content's width) -- required for the next part to work correctly for short-named rows too, not just the widest one.
+- **Action buttons/indicators (the plan-inclusion toggle, +/✏️/🗑️, and the Execution-mode pass/fail pill) are now pinned to the pane's right edge via `position: sticky; right: 8px`**, regardless of horizontal scroll position, per direct request ("buttons... should always remain visible"). `marginLeft: 'auto'` gives it its resting position at the end of the (now full-width) row; an opaque `backgroundColor` matching the pane's base color masks the row's own name text sliding underneath it as the tree scrolls horizontally.
+- **Specification pane's version badge is now a small solid-colored box** (10x10px) instead of a wide text pill (`SpecCaseListGrid.tsx`) -- green for `APPROVED`, grey for `DRAFT` (plus blue for `IN_REVIEW`, red for `DEPRECATED`, an empty outlined box for no version yet), matching the exact ask; the full status is still available via the existing hover tooltip. Frees ~54px per row, which goes straight to the case title column.
+
+No new automated tests (pure client-side layout/styling, no new backend surface). `tsc --noEmit` clean on `apps/web`.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
