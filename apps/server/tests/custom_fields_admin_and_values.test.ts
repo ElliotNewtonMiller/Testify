@@ -370,6 +370,94 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     expect(clearDefault.statusCode).toBe(422);
   });
 
+  it('MULTI_SELECT: a required field needs at least one option toggled on as its default, not just a syntactically valid empty array', async () => {
+    const { app } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+    const options = [
+      { option_label: 'A', option_value: 'A' },
+      { option_label: 'B', option_value: 'B' },
+    ];
+
+    const emptyArrayDefault = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'tags_empty', field_label: 'Tags', field_type: 'MULTI_SELECT', is_required: true, default_value: '[]', options },
+    });
+    expect(emptyArrayDefault.statusCode).toBe(422);
+    expect(JSON.parse(emptyArrayDefault.payload).error).toContain('default value');
+
+    const realDefault = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: { entity_type: 'TestCase', name: 'tags_real', field_label: 'Tags', field_type: 'MULTI_SELECT', is_required: true, default_value: '["A"]', options },
+    });
+    expect(realDefault.statusCode).toBe(201);
+    const fieldId = JSON.parse(realDefault.payload).definition.id;
+
+    // Same rule on update: flipping to an empty-array default is blocked too.
+    const clearedViaUpdate = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${fieldId}`,
+      headers: auth,
+      payload: { default_value: '[]' },
+    });
+    expect(clearedViaUpdate.statusCode).toBe(422);
+  });
+
+  it('MULTI_SELECT: making a field required-with-default switches a case that has no options toggled on to that default', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: {
+        entity_type: 'TestCase',
+        name: 'tags_switch',
+        field_label: 'Tags',
+        field_type: 'MULTI_SELECT',
+        options: [
+          { option_label: 'A', option_value: 'A' },
+          { option_label: 'B', option_value: 'B' },
+        ],
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const definitionId = JSON.parse(createRes.payload).definition.id;
+    const caseId = seed.caseIds[0];
+
+    // Explicitly deselect every option while the field is still optional -- a real row with
+    // json_value null, not "never touched".
+    const clearRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      headers: auth,
+      payload: { value: [] },
+    });
+    expect(clearRes.statusCode).toBe(200);
+
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${definitionId}`,
+      headers: auth,
+      payload: { is_required: true, default_value: '["A","B"]' },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    expect(JSON.parse(updateRes.payload).applied_default_count).toBe(1);
+
+    const valuesAfter = JSON.parse(
+      (
+        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+      ).payload,
+    ).values;
+    expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toEqual(['A', 'B']);
+  });
+
   it('creating a field with a default seeds a real value for every pre-existing case, frozen against later default edits', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);

@@ -2347,6 +2347,61 @@ export function AdminPanelModal({
                             </option>
                           ))}
                       </select>
+                    ) : fieldType === "MULTI_SELECT" ? (
+                      // Pill toggles matching CustomFieldEditor.tsx's own MULTI_SELECT control
+                      // exactly, built from the Options list below -- same live-updates-with-
+                      // fieldOptions approach as the SINGLE_SELECT dropdown above. The default is
+                      // stored as the same JSON-array string custom_field_values.json_value
+                      // already uses. A stale option value no longer in fieldOptions (e.g. an
+                      // option was renamed) simply isn't rendered as a pill -- it's dropped the
+                      // next time any pill here is toggled, never silently mutated behind the
+                      // admin's back while they're just editing an option's text.
+                      (() => {
+                        let parsedDefault: string[] = [];
+                        try {
+                          const parsed = JSON.parse(fieldDefaultValue || "[]");
+                          if (Array.isArray(parsed)) {
+                            parsedDefault = parsed.filter((v): v is string => typeof v === "string");
+                          }
+                        } catch {
+                          parsedDefault = [];
+                        }
+                        const allowedValues = new Set(fieldOptions.map((o) => o.option_value));
+                        const selectedDefaults = new Set(parsedDefault.filter((v) => allowedValues.has(v)));
+                        return (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                            {fieldOptions.length === 0 && (
+                              <span style={{ fontSize: "11px", color: "#64748b" }}>Add options below first.</span>
+                            )}
+                            {fieldOptions.map((opt) => {
+                              const isOn = selectedDefaults.has(opt.option_value);
+                              return (
+                                <button
+                                  key={opt.option_value}
+                                  onClick={() => {
+                                    const next = new Set(selectedDefaults);
+                                    if (isOn) next.delete(opt.option_value);
+                                    else next.add(opt.option_value);
+                                    setFieldDefaultValue(next.size > 0 ? JSON.stringify(Array.from(next)) : "");
+                                  }}
+                                  style={{
+                                    padding: "3px 8px",
+                                    borderRadius: "4px",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    border: isOn ? "1px solid #22c55e" : "1px solid #4b5563",
+                                    backgroundColor: isOn ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                                    color: isOn ? "#4ade80" : "#9ca3af",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {isOn ? "✓" : "—"} {opt.option_label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()
                     ) : (
                       <input
                         type="text"

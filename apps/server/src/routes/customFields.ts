@@ -36,8 +36,16 @@ function requiredFieldDefaultError(
   if (defaultValue === null || defaultValue === undefined || String(defaultValue).trim() === '') {
     return 'A required custom field must have a default value.';
   }
-  if (resolveDefaultValue(fieldType, String(defaultValue), { options }) === null) {
+  const resolved = resolveDefaultValue(fieldType, String(defaultValue), { options });
+  if (resolved === null) {
     return `The default value '${defaultValue}' is not valid for a ${fieldType} field, so existing records would still have no value. Provide a valid default value.`;
+  }
+  // resolveDefaultValue happily returns [] for a MULTI_SELECT default of '[]' (a syntactically
+  // valid, but practically empty, JSON array) -- that's not a usable default for a required
+  // field any more than a blank string is, so it needs its own check: at least one option must
+  // actually be toggled on.
+  if (fieldType === 'MULTI_SELECT' && Array.isArray(resolved) && resolved.length === 0) {
+    return 'A required custom field must have a default value.';
   }
   return null;
 }
