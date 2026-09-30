@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { UserProfile } from "./AuthModal";
 
 interface UserItem extends UserProfile {
@@ -168,6 +168,12 @@ export function AdminPanelModal({
   const [fieldDefaultValue, setFieldDefaultValue] = useState<string>("");
   const [fieldValidationRegex, setFieldValidationRegex] = useState<string>("");
   const [fieldOptions, setFieldOptions] = useState<CustomFieldOption[]>([]);
+  // Per-row refs for the Options list's inputs, keyed by index -- lets addFieldOption()
+  // focus the newly-added row once it actually exists in the DOM (the ref doesn't exist
+  // yet during addFieldOption() itself), mirroring App.tsx's stepActionRefs/
+  // pendingStepFocusIndexRef pattern for the step editor's "+ Add Step".
+  const fieldOptionRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const pendingOptionFocusIndexRef = useRef<number | null>(null);
   // Delete-with-confirmation: the first DELETE (no force) doubles as a pre-check -- a 409
   // populates this instead of erroring, and nothing is deleted until "Delete Anyway" fires
   // the second DELETE with force=true. Cancel just clears this, no request sent.
@@ -730,8 +736,22 @@ export function AdminPanelModal({
   const isOptionType = fieldType === "SINGLE_SELECT" || fieldType === "MULTI_SELECT";
 
   const addFieldOption = () => {
-    setFieldOptions((prev) => [...prev, { option_label: "", option_value: "" }]);
+    setFieldOptions((prev) => {
+      pendingOptionFocusIndexRef.current = prev.length;
+      return [...prev, { option_label: "", option_value: "" }];
+    });
   };
+
+  // Focuses the newly-added option row's input once it actually exists in the DOM.
+  // useLayoutEffect (not useEffect) so focus lands before paint, same reasoning as
+  // App.tsx's identical step-editor effect.
+  useLayoutEffect(() => {
+    if (pendingOptionFocusIndexRef.current !== null) {
+      const idx = pendingOptionFocusIndexRef.current;
+      pendingOptionFocusIndexRef.current = null;
+      fieldOptionRefs.current[idx]?.focus();
+    }
+  }, [fieldOptions.length]);
 
   const updateFieldOption = (index: number, patch: Partial<CustomFieldOption>) => {
     setFieldOptions((prev) => prev.map((o, i) => (i === index ? { ...o, ...patch } : o)));
@@ -2374,6 +2394,9 @@ export function AdminPanelModal({
                       {fieldOptions.map((opt, i) => (
                         <div key={i} style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
                           <input
+                            ref={(el) => {
+                              fieldOptionRefs.current[i] = el;
+                            }}
                             type="text"
                             placeholder="Option"
                             value={opt.option_label}
