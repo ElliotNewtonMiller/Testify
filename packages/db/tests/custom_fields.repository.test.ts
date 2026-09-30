@@ -479,4 +479,117 @@ describe('CustomFieldRepository', () => {
       expect((await fieldRepo.getValuesForEntity('TestCase', caseA.id, projectA.id))[0].value).toBe('x');
     });
   });
+
+  describe('applyDefaultToBlankValues', () => {
+    it('switches an explicit blank value to the default once the field is required with a usable default', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity_blank',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      });
+      // Explicitly clear the value while the field is still optional -- a real row with
+      // all-null typed columns, not "no row at all".
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, '');
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBeNull();
+
+      const updated = await fieldRepo.updateDefinition(field.id, { is_required: true, default_value: 'High' });
+      const applied = await fieldRepo.applyDefaultToBlankValues(updated!);
+      expect(applied).toBe(1);
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('High');
+    });
+
+    it('never overwrites an entity that already holds a real, non-blank value; leaves a no-row entity to the live fallback', async () => {
+      const { project, suite, testCase } = await makeCaseAndSuite();
+      const otherCase = await caseRepo.create({
+        project_id: project.id,
+        test_suite_id: suite.id,
+        external_id: 'CFP-2',
+        title: 'CF Case 2',
+        priority: 'HIGH',
+        execution_type: 'MANUAL',
+      });
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity_kept',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, 'Low');
+      // otherCase is left with no row at all on purpose.
+
+      const updated = await fieldRepo.updateDefinition(field.id, { is_required: true, default_value: 'High' });
+      const applied = await fieldRepo.applyDefaultToBlankValues(updated!);
+      expect(applied).toBe(0);
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('Low');
+      // Never got a row written -- it already reads as the default live via the read-time
+      // fallback, exactly like before this method existed.
+      expect((await fieldRepo.getValuesForEntity('TestCase', otherCase.id))[0].value).toBe('High');
+    });
+
+    it('treats an explicit false CHECKBOX value as non-blank, never touched', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'automated_ok',
+        field_label: 'Automated OK',
+        field_type: 'CHECKBOX',
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, false);
+      const updated = await fieldRepo.updateDefinition(field.id, { default_value: 'true' });
+      const applied = await fieldRepo.applyDefaultToBlankValues(updated!);
+      expect(applied).toBe(0);
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe(false);
+    });
+
+    it('treats a MULTI_SELECT value of [] as blank too', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'tags_blank',
+        field_label: 'Tags',
+        field_type: 'MULTI_SELECT',
+        options: [
+          { option_label: 'A', option_value: 'A' },
+          { option_label: 'B', option_value: 'B' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, []);
+      const updated = await fieldRepo.updateDefinition(field.id, { is_required: true, default_value: '["A"]' });
+      const applied = await fieldRepo.applyDefaultToBlankValues(updated!);
+      expect(applied).toBe(1);
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toEqual(['A']);
+    });
+
+    it('is a no-op with no default_value, or a default that does not coerce for the field type', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const noDefault = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'no_default_blank',
+        field_label: 'No Default',
+        field_type: 'TEXT',
+      });
+      await fieldRepo.setValue(noDefault.id, 'TestCase', testCase.id, '');
+      expect(await fieldRepo.applyDefaultToBlankValues(noDefault)).toBe(0);
+
+      const badNumber = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'bad_number_blank',
+        field_label: 'Bad Number',
+        field_type: 'NUMBER',
+        default_value: 'not-a-number',
+      });
+      await fieldRepo.setValue(badNumber.id, 'TestCase', testCase.id, '');
+      expect(await fieldRepo.applyDefaultToBlankValues(badNumber)).toBe(0);
+    });
+  });
 });

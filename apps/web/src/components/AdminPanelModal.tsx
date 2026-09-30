@@ -798,10 +798,14 @@ export function AdminPanelModal({
       // seeded_count is only ever present on a create response -- a default value just got
       // frozen into a real row for that many pre-existing records (see
       // CustomFieldRepository.seedDefaultValueForAllEntities), worth surfacing since it's not
-      // otherwise visible anywhere.
+      // otherwise visible anywhere. applied_default_count is the update-path equivalent --
+      // present whenever the save left the field required with a usable default, counting
+      // any existing explicit-blank value rows that just got switched to that default (see
+      // CustomFieldRepository.applyDefaultToBlankValues).
+      const appliedCount = wasNewField ? data.seeded_count : data.applied_default_count;
       const seededSuffix =
-        wasNewField && typeof data.seeded_count === "number" && data.seeded_count > 0
-          ? ` Default applied to ${data.seeded_count} existing record${data.seeded_count === 1 ? "" : "s"}.`
+        typeof appliedCount === "number" && appliedCount > 0
+          ? ` Default applied to ${appliedCount} existing record${appliedCount === 1 ? "" : "s"}.`
           : "";
       flashSuccess((wasNewField ? "✓ Custom field created." : "✓ Custom field saved.") + seededSuffix);
     } catch (err: any) {

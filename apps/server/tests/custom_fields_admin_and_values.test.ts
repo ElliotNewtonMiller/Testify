@@ -435,4 +435,62 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     ).values;
     expect(newCaseValues.find((v: any) => v.definition.id === created.definition.id).value).toBe('High');
   });
+
+  it('PUT updating a field to required-with-default switches an existing explicit-blank value to that default', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: {
+        entity_type: 'TestCase',
+        name: 'severity_switch',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const definitionId = JSON.parse(createRes.payload).definition.id;
+    const caseId = seed.caseIds[0];
+
+    // Explicitly clear the value while the field is still optional -- a real row with a null
+    // value, not "never touched".
+    const clearRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      headers: auth,
+      payload: { value: '' },
+    });
+    expect(clearRes.statusCode).toBe(200);
+    const clearedValues = JSON.parse(
+      (
+        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+      ).payload,
+    ).values;
+    expect(clearedValues.find((v: any) => v.definition.id === definitionId).value).toBeNull();
+
+    // Flip it to required with a usable default.
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${definitionId}`,
+      headers: auth,
+      payload: { is_required: true, default_value: 'High' },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    expect(JSON.parse(updateRes.payload).applied_default_count).toBe(1);
+
+    const valuesAfter = JSON.parse(
+      (
+        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+      ).payload,
+    ).values;
+    expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toBe('High');
+  });
 });

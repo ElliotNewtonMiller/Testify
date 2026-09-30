@@ -177,6 +177,16 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
           return reply.status(404).send({ error: 'Custom field not found' });
         }
 
+        // If this update leaves the field required with a usable default (already
+        // guaranteed by the requiredFieldDefaultError check above whenever is_required is
+        // true), any existing value row that's explicitly blank -- e.g. cleared out while
+        // the field was still optional -- is no longer a valid state to leave sitting there.
+        // Switch those rows to the default too, not just entities with no row at all (which
+        // already pick up the default live via getValuesForEntity's read-time fallback).
+        const appliedDefaultCount = definition.is_required
+          ? await fieldRepo.applyDefaultToBlankValues(definition)
+          : 0;
+
         const now = new Date().toISOString();
         await db
           .insertInto('audit_logs')
@@ -187,14 +197,14 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
             action: 'CUSTOM_FIELD_DEFINITION_UPDATED',
             resource_type: 'custom_field_definition',
             resource_id: id,
-            diff: JSON.stringify({ name, field_label, is_required, default_value, validation_regex }),
+            diff: JSON.stringify({ name, field_label, is_required, default_value, validation_regex, applied_default_count: appliedDefaultCount }),
             ip_address: '127.0.0.1',
             user_agent: 'TestifyAdminService',
             created_at: now,
           })
           .execute();
 
-        return reply.status(200).send({ definition });
+        return reply.status(200).send({ definition, applied_default_count: appliedDefaultCount });
       } catch (err: any) {
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
           return reply.status(409).send({ error: err.message });

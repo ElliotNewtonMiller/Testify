@@ -313,6 +313,67 @@ export class CustomFieldRepository {
     return entities.length;
   }
 
+  /**
+   * Updates every existing custom_field_values row for `definition` that's currently
+   * "blank" (every typed column null, or -- for MULTI_SELECT -- json_value of '[]', matching
+   * @testify/core's own isEmpty() semantics) to the definition's own default_value. Meant to
+   * be called after updateDefinition() whenever the update leaves a field required with a
+   * usable default.
+   *
+   * Complements seedDefaultValueForAllEntities (create-time only, and only ever touches
+   * entities with NO row at all). A blank row is a different case: the entity was explicitly
+   * edited down to "no value" while the field was still optional (or simply never validated
+   * against a not-yet-required definition) -- once the field becomes required, that blank
+   * value is no longer a valid state to leave sitting in the DB, and a default is the only
+   * sensible resolution for it, the same resolution a brand-new record with no row at all
+   * already gets live via getValuesForEntity's read-time fallback. An entity holding a real,
+   * non-blank value (including an explicit `false` on a CHECKBOX) is never touched here --
+   * this only ever replaces a blank, it never overwrites a deliberate choice.
+   *
+   * A no-op (returns 0) under the same conditions seedDefaultValueForAllEntities treats as
+   * "nothing sensible to write": no default_value, or one that resolveDefaultValue() can't
+   * coerce for the field's type.
+   */
+  async applyDefaultToBlankValues(definition: CustomFieldDefinition): Promise<number> {
+    if (definition.default_value === null) return 0;
+    const coerced = resolveDefaultValue(definition.field_type, definition.default_value, {
+      options: definition.options,
+    });
+    if (coerced === null) return 0;
+
+    const typedValue = parseCustomFieldValue(definition.field_type, coerced, {
+      validationRegex: definition.validation_regex,
+      options: definition.options,
+    });
+
+    const blankRows = await this.db
+      .selectFrom('custom_field_values')
+      .select('id')
+      .where('custom_field_definition_id', '=', definition.id)
+      .where('string_value', 'is', null)
+      .where('number_value', 'is', null)
+      .where('boolean_value', 'is', null)
+      .where('date_value', 'is', null)
+      .where((eb) => eb.or([eb('json_value', 'is', null), eb('json_value', '=', '[]')]))
+      .execute();
+    if (blankRows.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    await this.runInTransaction(async (trx) => {
+      await trx
+        .updateTable('custom_field_values')
+        .set({ ...typedValue, updated_at: now })
+        .where(
+          'id',
+          'in',
+          blankRows.map((r) => r.id)
+        )
+        .execute();
+    });
+
+    return blankRows.length;
+  }
+
   async updateDefinition(id: string, input: UpdateCustomFieldDefinitionInput): Promise<CustomFieldDefinition | undefined> {
     const existing = await this.getDefinitionAnyScope(id);
     if (!existing) return undefined;
