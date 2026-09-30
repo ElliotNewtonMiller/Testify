@@ -458,6 +458,134 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toEqual(['A', 'B']);
   });
 
+  it('MULTI_SELECT: deleting an option a case has selected deselects it there too, instead of permanently blocking further edits', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: {
+        entity_type: 'TestCase',
+        name: 'tags_option_removed',
+        field_label: 'Tags',
+        field_type: 'MULTI_SELECT',
+        options: [
+          { option_label: 'fire', option_value: 'fire' },
+          { option_label: 'water', option_value: 'water' },
+          { option_label: 'air', option_value: 'air' },
+        ],
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const definitionId = JSON.parse(createRes.payload).definition.id;
+    const caseId = seed.caseIds[0];
+
+    const setRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      headers: auth,
+      payload: { value: ['fire', 'water'] },
+    });
+    expect(setRes.statusCode).toBe(200);
+
+    // Delete "water" from the field's options (dropping it from the options list entirely).
+    const removeOptionRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${definitionId}`,
+      headers: auth,
+      payload: {
+        options: [
+          { option_label: 'fire', option_value: 'fire' },
+          { option_label: 'air', option_value: 'air' },
+        ],
+      },
+    });
+    expect(removeOptionRes.statusCode).toBe(200);
+
+    // The case's stored value must already reflect the removal -- "water" dropped, "fire" kept.
+    const valuesAfterRemoval = JSON.parse(
+      (
+        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+      ).payload,
+    ).values;
+    expect(valuesAfterRemoval.find((v: any) => v.definition.id === definitionId).value).toEqual(['fire']);
+
+    // The real regression: before this fix, a later edit that doesn't even touch the stale
+    // selection (here, toggling "air" on alongside the still-valid "fire") would resubmit the
+    // now-deleted "water" and fail with INVALID_FIELD_VALUE. It must succeed now.
+    const laterEditRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      headers: auth,
+      payload: { value: ['fire', 'air'] },
+    });
+    expect(laterEditRes.statusCode).toBe(200);
+  });
+
+  it('SINGLE_SELECT: deleting the option a case has selected clears that value to null, and a required field with a default re-applies it', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/custom-fields',
+      headers: auth,
+      payload: {
+        entity_type: 'TestCase',
+        name: 'severity_option_removed',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        is_required: true,
+        default_value: 'Medium',
+        options: [
+          { option_label: 'Low', option_value: 'Low' },
+          { option_label: 'Medium', option_value: 'Medium' },
+          { option_label: 'High', option_value: 'High' },
+        ],
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const definitionId = JSON.parse(createRes.payload).definition.id;
+    const caseId = seed.caseIds[0];
+
+    const setRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      headers: auth,
+      payload: { value: 'High' },
+    });
+    expect(setRes.statusCode).toBe(200);
+
+    // Delete "High" -- the case's currently-selected option.
+    const removeOptionRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${definitionId}`,
+      headers: auth,
+      payload: {
+        options: [
+          { option_label: 'Low', option_value: 'Low' },
+          { option_label: 'Medium', option_value: 'Medium' },
+        ],
+      },
+    });
+    expect(removeOptionRes.statusCode).toBe(200);
+    // The field is still required with a usable default ("Medium") -- pruning "High" leaves
+    // the case's value blank, and applyDefaultToBlankValues (already run after every update
+    // that leaves the field required) re-applies the default immediately in the same request.
+    expect(JSON.parse(removeOptionRes.payload).applied_default_count).toBe(1);
+
+    const valuesAfter = JSON.parse(
+      (
+        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+      ).payload,
+    ).values;
+    expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toBe('Medium');
+  });
+
   it('creating a field with a default seeds a real value for every pre-existing case, frozen against later default edits', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);

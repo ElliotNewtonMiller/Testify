@@ -592,4 +592,132 @@ describe('CustomFieldRepository', () => {
       expect(await fieldRepo.applyDefaultToBlankValues(badNumber)).toBe(0);
     });
   });
+
+  describe('updateDefinition: removing a selected option deselects it from real entity values', () => {
+    it('SINGLE_SELECT: a case whose value was the removed option is cleared to null', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity_prune',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, 'Low');
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('Low');
+
+      // Save the definition with only "High" left -- "Low" is gone.
+      await fieldRepo.updateDefinition(field.id, { options: [{ option_label: 'High', option_value: 'High' }] });
+
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBeNull();
+    });
+
+    it('SINGLE_SELECT: a case whose value is unaffected keeps it untouched', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity_keep',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, 'High');
+
+      await fieldRepo.updateDefinition(field.id, { options: [{ option_label: 'High', option_value: 'High' }] });
+
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('High');
+    });
+
+    it('MULTI_SELECT: removing one selected option keeps the rest (partial prune)', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'tags_prune_partial',
+        field_label: 'Tags',
+        field_type: 'MULTI_SELECT',
+        options: [
+          { option_label: 'A', option_value: 'A' },
+          { option_label: 'B', option_value: 'B' },
+          { option_label: 'C', option_value: 'C' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, ['A', 'B', 'C']);
+
+      // Drop "B" from the options.
+      await fieldRepo.updateDefinition(field.id, {
+        options: [
+          { option_label: 'A', option_value: 'A' },
+          { option_label: 'C', option_value: 'C' },
+        ],
+      });
+
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toEqual(['A', 'C']);
+    });
+
+    it('MULTI_SELECT: removing every selected option clears the value to null', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'tags_prune_all',
+        field_label: 'Tags',
+        field_type: 'MULTI_SELECT',
+        options: [
+          { option_label: 'A', option_value: 'A' },
+          { option_label: 'B', option_value: 'B' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, ['A']);
+
+      await fieldRepo.updateDefinition(field.id, { options: [{ option_label: 'B', option_value: 'B' }] });
+
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBeNull();
+    });
+
+    it('works for TestSuite values too, and leaves other definitions/entities alone', async () => {
+      const { project, suite } = await makeCaseAndSuite();
+      const otherSuite = await suiteRepo.create({ project_id: project.id, name: 'Other Suite' });
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestSuite',
+        name: 'owner_prune',
+        field_label: 'Owner',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'QA', option_value: 'QA' },
+          { option_label: 'Dev', option_value: 'Dev' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestSuite', suite.id, 'Dev');
+      await fieldRepo.setValue(field.id, 'TestSuite', otherSuite.id, 'QA');
+
+      await fieldRepo.updateDefinition(field.id, { options: [{ option_label: 'QA', option_value: 'QA' }] });
+
+      expect((await fieldRepo.getValuesForEntity('TestSuite', suite.id))[0].value).toBeNull();
+      expect((await fieldRepo.getValuesForEntity('TestSuite', otherSuite.id))[0].value).toBe('QA');
+    });
+
+    it('does nothing when the update does not touch options at all', async () => {
+      const { testCase } = await makeCaseAndSuite();
+      const field = await fieldRepo.createDefinition({
+        entity_type: 'TestCase',
+        name: 'severity_untouched',
+        field_label: 'Severity',
+        field_type: 'SINGLE_SELECT',
+        options: [
+          { option_label: 'High', option_value: 'High' },
+          { option_label: 'Low', option_value: 'Low' },
+        ],
+      });
+      await fieldRepo.setValue(field.id, 'TestCase', testCase.id, 'Low');
+
+      await fieldRepo.updateDefinition(field.id, { field_label: 'Severity Level' });
+
+      expect((await fieldRepo.getValuesForEntity('TestCase', testCase.id))[0].value).toBe('Low');
+    });
+  });
 });

@@ -415,6 +415,58 @@ export class CustomFieldRepository {
             )
             .execute();
         }
+
+        // An option that's currently selected by a real case/suite value and then gets
+        // removed here must be deselected from that value too -- the same principle already
+        // applied to the field's own Default Value editor (AdminPanelModal.tsx's
+        // removeFieldOption). Without this, a case/suite's stored value keeps naming the now-
+        // gone option, and the next edit to that field on that entity -- even one that
+        // doesn't touch the stale selection at all, e.g. toggling a different MULTI_SELECT
+        // pill -- resubmits it and is rejected by parseCustomFieldValue's option-membership
+        // check (`INVALID_FIELD_VALUE: '<value>' is not one of this field's configured
+        // options`), effectively locking that field on that entity until someone edits the
+        // definition again. Only relevant for the two option-bearing types; a no-op query
+        // that touches nothing otherwise.
+        if (existing.field_type === 'SINGLE_SELECT' || existing.field_type === 'MULTI_SELECT') {
+          const allowed = new Set(input.options.map((o) => o.option_value));
+          const valueRows = await trx
+            .selectFrom('custom_field_values')
+            .select(['id', 'string_value', 'json_value'])
+            .where('custom_field_definition_id', '=', id)
+            .execute();
+
+          if (existing.field_type === 'SINGLE_SELECT') {
+            const invalidIds = valueRows.filter((r) => r.string_value !== null && !allowed.has(r.string_value)).map((r) => r.id);
+            if (invalidIds.length > 0) {
+              await trx
+                .updateTable('custom_field_values')
+                .set({ string_value: null, updated_at: now })
+                .where('id', 'in', invalidIds)
+                .execute();
+            }
+          } else {
+            // MULTI_SELECT -- a partial prune (some selected options removed, some still
+            // valid) keeps whatever's left, exactly like the Default Value pill toggle does;
+            // it only clears to null when nothing valid remains.
+            for (const row of valueRows) {
+              if (row.json_value === null) continue;
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(row.json_value);
+              } catch {
+                continue;
+              }
+              if (!Array.isArray(parsed)) continue;
+              const filtered = parsed.filter((v): v is string => typeof v === 'string' && allowed.has(v));
+              if (filtered.length === parsed.length) continue;
+              await trx
+                .updateTable('custom_field_values')
+                .set({ json_value: filtered.length > 0 ? JSON.stringify(filtered) : null, updated_at: now })
+                .where('id', '=', row.id)
+                .execute();
+            }
+          }
+        }
       }
     });
 
