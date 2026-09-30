@@ -276,6 +276,96 @@ export default function App() {
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Resizable 3-pane layout widths (Pane 1: Suite Tree, Pane 2: Spec/Queue Grid). Not
+  // persisted to localStorage -- resets to defaults every session/reload, per direct request.
+  const [suiteTreeWidth, setSuiteTreeWidth] = useState<number>(280);
+  const [queueGridWidth, setQueueGridWidth] = useState<number>(420);
+  const [hoveredDivider, setHoveredDivider] = useState<"tree" | "queue" | null>(null);
+  const [draggingPane, setDraggingPane] = useState<"tree" | "queue" | null>(null);
+
+  const suiteTreeWidthRef = useRef(suiteTreeWidth);
+  useEffect(() => {
+    suiteTreeWidthRef.current = suiteTreeWidth;
+  }, [suiteTreeWidth]);
+  const queueGridWidthRef = useRef(queueGridWidth);
+  useEffect(() => {
+    queueGridWidthRef.current = queueGridWidth;
+  }, [queueGridWidth]);
+
+  const dragStateRef = useRef<{ pane: "tree" | "queue"; startX: number; startWidth: number } | null>(null);
+
+  const SUITE_TREE_MIN = 200;
+  const SUITE_TREE_MAX = 480;
+  const QUEUE_GRID_MIN = 260;
+  const QUEUE_GRID_MAX = 600;
+  const PANE3_MIN_WIDTH = 360; // Pane 3 must always keep at least this much room
+
+  // window-level listeners (added on mousedown, removed on mouseup) rather than an
+  // onMouseMove handler on the divider itself -- a fast drag routinely outruns a 4px-wide
+  // element, so only page-level tracking keeps up with the cursor for the whole drag.
+  const handleDividerMouseMove = useCallback((e: MouseEvent) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    const deltaX = e.clientX - drag.startX;
+    if (drag.pane === "tree") {
+      const max = Math.max(
+        SUITE_TREE_MIN,
+        Math.min(SUITE_TREE_MAX, window.innerWidth - PANE3_MIN_WIDTH - queueGridWidthRef.current),
+      );
+      setSuiteTreeWidth(Math.min(Math.max(drag.startWidth + deltaX, SUITE_TREE_MIN), max));
+    } else {
+      const max = Math.max(
+        QUEUE_GRID_MIN,
+        Math.min(QUEUE_GRID_MAX, window.innerWidth - PANE3_MIN_WIDTH - suiteTreeWidthRef.current),
+      );
+      setQueueGridWidth(Math.min(Math.max(drag.startWidth + deltaX, QUEUE_GRID_MIN), max));
+    }
+  }, []);
+
+  const handleDividerMouseUp = useCallback(() => {
+    dragStateRef.current = null;
+    setDraggingPane(null);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    window.removeEventListener("mousemove", handleDividerMouseMove);
+    window.removeEventListener("mouseup", handleDividerMouseUp);
+  }, [handleDividerMouseMove]);
+
+  const handleDividerMouseDown = useCallback(
+    (pane: "tree" | "queue") => (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragStateRef.current = {
+        pane,
+        startX: e.clientX,
+        startWidth: pane === "tree" ? suiteTreeWidthRef.current : queueGridWidthRef.current,
+      };
+      setDraggingPane(pane);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", handleDividerMouseMove);
+      window.addEventListener("mouseup", handleDividerMouseUp);
+    },
+    [handleDividerMouseMove, handleDividerMouseUp],
+  );
+
+  // Unmount safety net -- removeEventListener on an unregistered listener is a harmless
+  // no-op, so this is safe to run even when no drag is in progress.
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("mousemove", handleDividerMouseMove);
+      window.removeEventListener("mouseup", handleDividerMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [handleDividerMouseMove, handleDividerMouseUp]);
+
+  const dividerStyle = (pane: "tree" | "queue"): React.CSSProperties => ({
+    width: "4px",
+    flexShrink: 0,
+    cursor: "col-resize",
+    backgroundColor: draggingPane === pane || hoveredDivider === pane ? "#3b82f6" : "#1f2937",
+  });
+
   // Specification / Execution mode toggle (Pane 1 header) & Specification-mode state
   const [workspaceMode, setWorkspaceMode] = useState<"EXECUTION" | "SPECIFICATION">(
     "SPECIFICATION",
@@ -2915,9 +3005,8 @@ export default function App() {
         {/* PANE 1: RECURSIVE TREE NAVIGATION (28px NODE DENSITY) */}
         <div
           style={{
-            width: "280px",
+            width: `${suiteTreeWidth}px`,
             backgroundColor: "#0d111c",
-            borderRight: "1px solid #1f2937",
             display: "flex",
             flexDirection: "column",
           }}
@@ -3186,12 +3275,19 @@ export default function App() {
           </div>
         </div>
 
+        {/* DIVIDER: PANE 1 / PANE 2 */}
+        <div
+          onMouseDown={handleDividerMouseDown("tree")}
+          onMouseEnter={() => setHoveredDivider("tree")}
+          onMouseLeave={() => setHoveredDivider(null)}
+          style={dividerStyle("tree")}
+        />
+
         {/* PANE 2: TEST CASE QUEUE GRID (32px ROW DENSITY) */}
         <div
           style={{
-            width: "420px",
+            width: `${queueGridWidth}px`,
             backgroundColor: "#111827",
-            borderRight: "1px solid #1f2937",
             display: "flex",
             flexDirection: "column",
           }}
@@ -3368,6 +3464,14 @@ export default function App() {
             />
           )}
         </div>
+
+        {/* DIVIDER: PANE 2 / PANE 3 */}
+        <div
+          onMouseDown={handleDividerMouseDown("queue")}
+          onMouseEnter={() => setHoveredDivider("queue")}
+          onMouseLeave={() => setHoveredDivider(null)}
+          style={dividerStyle("queue")}
+        />
 
         {/* PANE 3: EXECUTION & DETAIL WORKSPACE (FLUID) */}
         <div
