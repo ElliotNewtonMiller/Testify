@@ -271,7 +271,6 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [failureNotes, setFailureNotes] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("Connected");
-  const [dbVerification, setDbVerification] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1326,23 +1325,9 @@ export default function App() {
     showToast("Signed out successfully.");
   }, [showToast]);
 
-  // Fetch DB verification stats
-  const verifyDatabase = useCallback(async () => {
-    try {
-      const res = await fetch("/api/v1/executions/verify");
-      if (res.ok) {
-        const data = await res.json();
-        setDbVerification(data);
-      }
-    } catch (err) {
-      console.error("Failed to verify DB:", err);
-    }
-  }, []);
-
   useEffect(() => {
     fetchCurrentUser();
-    verifyDatabase();
-  }, [fetchCurrentUser, verifyDatabase]);
+  }, [fetchCurrentUser]);
 
   // Real project list only resolves once authenticated (the endpoint requires a Bearer
   // token) -- (re)load it whenever a session is established, whether from a restored
@@ -2127,7 +2112,6 @@ export default function App() {
           setSyncStatus(
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
-          verifyDatabase();
         } else if (response.status === 401) {
           // Session expired or token invalid -- the server now requires a real, current
           // JWT for this route (EXECUTE_RUN permission). Clear the dead token and drop back
@@ -2146,7 +2130,7 @@ export default function App() {
         setSyncStatus("Network Error");
       }
     },
-    [activeCase, workspace, failureNotes, verifyDatabase],
+    [activeCase, workspace, failureNotes],
   );
 
   // Cases visible in Pane 2 for Specification mode: the whole project, or just the
@@ -2265,7 +2249,6 @@ export default function App() {
           showToast(`Welcome back, ${user.username}!`);
           // No explicit loadWorkspace() call needed here -- the currentUser-keyed effects
           // above pick up the new session and load projects/plans/workspace automatically.
-          verifyDatabase();
         }}
       />
     );
@@ -3250,29 +3233,6 @@ export default function App() {
             onRenameSuite={(suiteId, name, parentId) => openRenameSuiteForm(suiteId, name, parentId)}
             onDeleteSuite={(suiteId) => handleDeleteSuiteClick(suiteId)}
           />
-
-          {/* DB STATS LOG */}
-          <div
-            style={{
-              marginTop: "auto",
-              padding: "12px",
-              borderTop: "1px solid #1f2937",
-              fontSize: "11px",
-              backgroundColor: "#090d16",
-            }}
-          >
-            <div
-              style={{ fontWeight: 600, color: "#9ca3af", marginBottom: "4px" }}
-            >
-              DB VERIFICATION STATS:
-            </div>
-            <div style={{ color: "#10b981" }}>
-              Immutable Executions: {dbVerification?.total_executions || 0}
-            </div>
-            <div style={{ color: "#60a5fa" }}>
-              Audit Logs: {dbVerification?.auditLogs?.length || 0}
-            </div>
-          </div>
         </div>
 
         {/* DIVIDER: PANE 1 / PANE 2 */}

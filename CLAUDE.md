@@ -648,6 +648,14 @@ Two more requests from the same session as the resizable-panes feature above.
 
 No new automated tests (pure client-side layout/styling, no new backend surface). `tsc --noEmit` clean on `apps/web`.
 
+## Removed: the "DB VERIFICATION STATS" footer from the Suite Tree pane (2026-10-01)
+
+Elliot questioned whether this was still needed -- it wasn't. `App.tsx`'s Pane 1 footer showed a raw "Immutable Executions" / "Audit Logs" row count, fetched via `verifyDatabase()` (`GET /api/v1/executions/verify`, no auth, no pagination -- it returns every execution/step/audit-log row in the database) on mount, after every verdict submission, and after login. It was a debug/dev-verification leftover from an early slice with no real end-user purpose, and nothing else in the frontend read `dbVerification`.
+
+Removed the footer JSX, the `dbVerification` state, `verifyDatabase()` itself, and all three call sites (mount effect, `submitVerdict`'s success path, login success) -- a verdict submission no longer fires an extra whole-database-dump fetch just to refresh a count nobody was looking at. The backend route itself (`GET /api/v1/executions/verify`, `apps/server/src/server.ts`) is untouched -- it's still exercised directly by `apps/server/tests/core_loop_e2e.test.ts` to assert the immutable audit trail end-to-end, which is a real, independent use of the same endpoint.
+
+No new automated tests (pure UI removal, the one real consumer of the backend route is an existing test, unaffected). `tsc --noEmit` clean on `apps/web`.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
