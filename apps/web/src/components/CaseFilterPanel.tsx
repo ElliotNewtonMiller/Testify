@@ -171,7 +171,8 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
   // "(no value)" -- offered for custom fields only (built-ins always have a value). It's
   // exclusive with the regular value: picking it clears the value, and picking a regular
   // value (an option pill) switches back out of it.
-  const offersNoValue = (field: CaseFilterField) => field.source !== "builtin";
+  // Not offered for CHECKBOX either, per direct request -- Yes/No is all a checkbox filter shows.
+  const offersNoValue = (field: CaseFilterField) => field.source !== "builtin" && field.kind !== "CHECKBOX";
   const toggleNoValue = (row: CaseFilterRow, field: CaseFilterField) =>
     updateRow(row.id, row.op === "is_empty" ? defaultRowFor(field) : { op: "is_empty", value: null });
   const noValuePill = (row: CaseFilterRow, field: CaseFilterField) => (
