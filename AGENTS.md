@@ -672,6 +672,10 @@ Second follow-up: dropped the "Suite: " label prefix from suite fields in `GET .
 
 Not built: no searching summary/preconditions/step text (decided: ID + title only).
 
+## Changed: DRAFT version indicator is an outline, not a fill (2026-10-01)
+
+Per direct request: in `SpecCaseListGrid.tsx`'s case list, the grey solid DRAFT square was hard to tell apart from APPROVED's solid green at a glance. DRAFT now renders as a 1.5px grey (`#9ca3af`) outline; APPROVED/IN_REVIEW/DEPRECATED stay solid fills, and "no version" stays the dimmer `#374151` outline. Both outlined boxes gained `box-sizing: border-box` so every indicator is exactly 10x10px. `tsc --noEmit` clean on `apps/web`; visual check handed to Elliot.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

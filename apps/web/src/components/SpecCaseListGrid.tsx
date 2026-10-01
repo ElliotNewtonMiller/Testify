@@ -101,15 +101,25 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
       return (
         <span
           title="No version"
-          style={{ width: '10px', height: '10px', borderRadius: '2px', border: '1px solid #374151', flexShrink: 0 }}
+          style={{ width: '10px', height: '10px', borderRadius: '2px', border: '1px solid #374151', boxSizing: 'border-box', flexShrink: 0 }}
         />
       );
     }
     const color = VERSION_STATUS_COLORS[item.latest_version.status] || VERSION_STATUS_COLORS.DRAFT;
+    // DRAFT is an outline rather than a fill so it reads clearly apart from APPROVED's solid
+    // green at a glance. Brighter grey than the dim "no version" outline above.
+    const isDraft = item.latest_version.status === 'DRAFT' || !VERSION_STATUS_COLORS[item.latest_version.status];
     return (
       <span
         title={`v${item.latest_version.version_number} ${item.latest_version.status}`}
-        style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: color, flexShrink: 0 }}
+        style={{
+          width: '10px',
+          height: '10px',
+          borderRadius: '2px',
+          boxSizing: 'border-box',
+          flexShrink: 0,
+          ...(isDraft ? { border: `1.5px solid ${color}` } : { backgroundColor: color }),
+        }}
       />
     );
   };
