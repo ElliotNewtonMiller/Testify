@@ -13,11 +13,14 @@ export interface CaseFilterField {
 
 /** One row in the panel. `field` is "" until a property is picked. Value shape per kind:
  * ENUM/SINGLE_SELECT/MULTI_SELECT: string[] (any_of; MULTI_SELECT may use all_of);
- * TEXT: string; NUMBER/DATE: { min, max } strings; BOOLEAN/CHECKBOX: boolean | null. */
+ * TEXT: string; NUMBER/DATE: { min, max } strings; BOOLEAN/CHECKBOX: boolean | null;
+ * op "is_empty": value ignored. */
 export interface CaseFilterRow {
   id: string;
   field: string;
-  op: "any_of" | "all_of" | "contains" | "range" | "is";
+  /** "is_empty" = the "(no value)" choice -- matches cases where the field was never set
+   * (custom fields only; built-ins always have a value). */
+  op: "any_of" | "all_of" | "contains" | "range" | "is" | "is_empty";
   value: unknown;
 }
 
@@ -53,6 +56,9 @@ export function toApiFilters(
     const field = fieldsByKey.get(row.field);
     if (!field || !isAvailable(field)) continue;
     switch (row.op) {
+      case "is_empty":
+        out.push({ field: row.field, op: "is_empty" });
+        break;
       case "any_of":
       case "all_of":
         if (Array.isArray(row.value) && row.value.length > 0) out.push({ field: row.field, op: row.op, value: row.value });
@@ -162,7 +168,36 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
     { label: "Suite fields", source: "suite_custom_field" },
   ];
 
+  // "(no value)" -- offered for custom fields only (built-ins always have a value). It's
+  // exclusive with the regular value: picking it clears the value, and picking a regular
+  // value (an option pill) switches back out of it.
+  const offersNoValue = (field: CaseFilterField) => field.source !== "builtin";
+  const toggleNoValue = (row: CaseFilterRow, field: CaseFilterField) =>
+    updateRow(row.id, row.op === "is_empty" ? defaultRowFor(field) : { op: "is_empty", value: null });
+  const noValuePill = (row: CaseFilterRow, field: CaseFilterField) => (
+    <button
+      onClick={() => toggleNoValue(row, field)}
+      title="Match cases where this field has no value"
+      style={{ ...pillStyle(row.op === "is_empty"), fontStyle: "italic" }}
+    >
+      {row.op === "is_empty" ? "✓" : "—"} (no value)
+    </button>
+  );
+
   const renderValueControl = (row: CaseFilterRow, field: CaseFilterField) => {
+    // Non-pill controls: while "(no value)" is on, the input is replaced by just the pill.
+    if (row.op === "is_empty" && !["ENUM", "SINGLE_SELECT", "MULTI_SELECT"].includes(field.kind)) {
+      return <div style={{ display: "flex", gap: "4px" }}>{noValuePill(row, field)}</div>;
+    }
+    const withNoValue = (control: React.ReactNode) =>
+      offersNoValue(field) ? (
+        <div style={{ display: "flex", gap: "4px", alignItems: "center", width: "100%" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{control}</div>
+          {noValuePill(row, field)}
+        </div>
+      ) : (
+        control
+      );
     switch (field.kind) {
       case "ENUM":
       case "SINGLE_SELECT":
@@ -179,7 +214,11 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
                     const next = new Set(selected);
                     if (on) next.delete(o.value);
                     else next.add(o.value);
-                    updateRow(row.id, { value: Array.from(next) });
+                    updateRow(row.id, {
+                      value: Array.from(next),
+                      // Picking an option leaves "(no value)" mode.
+                      ...(row.op === "is_empty" ? { op: "any_of" as const } : {}),
+                    });
                   }}
                   style={pillStyle(on)}
                 >
@@ -190,7 +229,8 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
             {(field.options || []).length === 0 && (
               <span style={{ fontSize: "10px", color: "#6b7280" }}>No options defined.</span>
             )}
-            {field.kind === "MULTI_SELECT" && (
+            {offersNoValue(field) && noValuePill(row, field)}
+            {field.kind === "MULTI_SELECT" && row.op !== "is_empty" && (
               <button
                 onClick={() => updateRow(row.id, { op: row.op === "all_of" ? "any_of" : "all_of" })}
                 title="Match cases having ANY of the selected options, or ALL of them"
@@ -203,19 +243,19 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
         );
       }
       case "TEXT":
-        return (
+        return withNoValue(
           <input
             value={(row.value as string) || ""}
             onChange={(e) => updateRow(row.id, { value: e.target.value })}
             placeholder="contains…"
             style={{ ...inputStyle, width: "100%" }}
-          />
+          />,
         );
       case "NUMBER":
       case "DATE": {
         const { min = "", max = "" } = (row.value || {}) as { min?: string; max?: string };
         const type = field.kind === "NUMBER" ? "number" : "date";
-        return (
+        return withNoValue(
           <div style={{ display: "flex", gap: "4px", alignItems: "center", width: "100%" }}>
             <input
               type={type}
@@ -232,12 +272,12 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
               placeholder="max"
               style={{ ...inputStyle, flex: 1 }}
             />
-          </div>
+          </div>,
         );
       }
       case "BOOLEAN":
       case "CHECKBOX":
-        return (
+        return withNoValue(
           <div style={{ display: "flex", gap: "4px" }}>
             {[true, false].map((b) => (
               <button
@@ -248,7 +288,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
                 {b ? "Yes" : "No"}
               </button>
             ))}
-          </div>
+          </div>,
         );
     }
   };
