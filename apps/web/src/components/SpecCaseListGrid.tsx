@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 export interface SpecCaseGridItem {
   id: string; // test_case_id
@@ -17,7 +17,6 @@ export interface SpecCaseListGridProps {
   cases: SpecCaseGridItem[];
   selectedCaseId: string | null;
   onSelectCase: (caseId: string) => void;
-  filterQuery?: string;
   /** Whether the current user holds PLAN_MANAGE -- gates the include/exclude button. */
   canManagePlan: boolean;
   onToggleInclusion: (testCaseId: string, include: boolean) => void;
@@ -50,7 +49,6 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
   cases,
   selectedCaseId,
   onSelectCase,
-  filterQuery = '',
   canManagePlan,
   onToggleInclusion,
   pendingCaseId = null,
@@ -75,13 +73,9 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
     return () => window.removeEventListener('resize', updateHeight);
   }, [containerHeight]);
 
-  const filteredCases = useMemo(() => {
-    if (!filterQuery.trim()) return cases;
-    const q = filterQuery.toLowerCase();
-    return cases.filter(
-      (c) => c.external_id.toLowerCase().includes(q) || c.title.toLowerCase().includes(q)
-    );
-  }, [cases, filterQuery]);
+  // Search/filtering happens once in App.tsx (via the server's case-search route), which
+  // passes the already-narrowed list here.
+  const filteredCases = cases;
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);

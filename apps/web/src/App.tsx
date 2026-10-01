@@ -23,6 +23,14 @@ import { ReportingModal } from "./components/ReportingModal";
 import { LoginPage } from "./components/LoginPage";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
 import {
+  CaseFilterPanel,
+  CaseFilterField,
+  CaseFilterState,
+  EMPTY_CASE_FILTER,
+  isFieldAvailable,
+  toApiFilters,
+} from "./components/CaseFilterPanel";
+import {
   EntityManagementModal,
   EntityItem,
   EntityType,
@@ -66,6 +74,14 @@ interface SpecSuiteNode {
   children: SpecSuiteNode[];
   total_case_count: number;
   in_plan_count: number;
+}
+
+/** Keeps only suites whose id is in `keep` (the case-search response's suite_ids already
+ * includes every ancestor of a match, so the result stays a connected tree). */
+function pruneSuiteTree(nodes: SpecSuiteNode[], keep: Set<string>): SpecSuiteNode[] {
+  return nodes
+    .filter((n) => keep.has(n.id))
+    .map((n) => ({ ...n, children: pruneSuiteTree(n.children, keep) }));
 }
 
 interface SpecTreeData {
@@ -271,7 +287,18 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [failureNotes, setFailureNotes] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("Connected");
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  // Search & filter (Pane 1, under the Execute/Spec toggle). Evaluated only on the server
+  // (POST .../case-search); filterResult holds the matching ids, or null when nothing is
+  // active (show everything). Session-only, not persisted.
+  const [caseFilter, setCaseFilter] = useState<CaseFilterState>(EMPTY_CASE_FILTER);
+  const [caseFilterFields, setCaseFilterFields] = useState<CaseFilterField[]>([]);
+  const [filterResult, setFilterResult] = useState<{ caseIds: Set<string>; suiteIds: Set<string> } | null>(null);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  // Bumped after edits that can change whether a case matches but don't replace specData/
+  // workspace (custom field value saves), so the active filter re-evaluates.
+  const [filterDataTick, setFilterDataTick] = useState(0);
+  const caseSearchRequestSeq = useRef(0);
+  const caseFilterFieldsRequestSeq = useRef(0);
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -559,6 +586,112 @@ export default function App() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3000);
   }, []);
+
+  // ---- Search & filter ----
+  // Field catalog for the "+ Filter" property picker. Re-fetched on project change and
+  // whenever "+ Filter" is clicked (picks up custom fields added since). Rows naming a field
+  // that no longer exists (deleted, or a different project) are dropped once a catalog for
+  // the current project actually arrives -- never on a failed fetch.
+  const loadCaseFilterFields = useCallback(async () => {
+    const seq = ++caseFilterFieldsRequestSeq.current;
+    if (!selectedProjectId) return;
+    try {
+      const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search/fields`, { headers: authHeaders() });
+      if (seq !== caseFilterFieldsRequestSeq.current || !res.ok) return;
+      const data = await res.json();
+      if (seq !== caseFilterFieldsRequestSeq.current) return;
+      const fields: CaseFilterField[] = data.fields || [];
+      setCaseFilterFields(fields);
+      const keys = new Set(fields.map((f) => f.key));
+      setCaseFilter((prev) => {
+        const kept = prev.filters.filter((r) => r.field === "" || keys.has(r.field));
+        return kept.length === prev.filters.length ? prev : { ...prev, filters: kept };
+      });
+    } catch {
+      // Leave the previous catalog in place; the panel still works with what it has.
+    }
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    loadCaseFilterFields();
+  }, [loadCaseFilterFields]);
+
+  const caseFilterFieldsByKey = new Map(caseFilterFields.map((f) => [f.key, f]));
+  const filterContext = {
+    mode: workspaceMode,
+    hasPlan: Boolean(selectedPlanId),
+    hasRun: Boolean(selectedRunId),
+  };
+  const apiCaseFilters = toApiFilters(caseFilter.filters, caseFilterFieldsByKey, (f) =>
+    isFieldAvailable(f, filterContext),
+  );
+  const trimmedCaseQuery = caseFilter.q.trim();
+  const isCaseFilterActive = trimmedCaseQuery !== "" || apiCaseFilters.length > 0;
+  // Stable string key so the effect below only re-runs when the effective request changes,
+  // not on every keystroke that doesn't change it (e.g. trailing spaces, an empty new row).
+  const caseFilterRequestKey = JSON.stringify({ q: trimmedCaseQuery, filters: apiCaseFilters });
+
+  useEffect(() => {
+    // Bumped unconditionally (before any early return) so clearing the filter or switching
+    // context also invalidates any request still in flight -- same discipline as
+    // runsListRequestSeq.
+    const seq = ++caseSearchRequestSeq.current;
+    if (!isCaseFilterActive || !selectedProjectId) {
+      setFilterResult(null);
+      setFilterError(null);
+      return;
+    }
+    const { q, filters } = JSON.parse(caseFilterRequestKey) as {
+      q: string;
+      filters: Array<{ field: string; op: string; value?: unknown }>;
+    };
+    // Only send plan/build when a filter needs them, so a plan/run switch that's still
+    // settling can't 404 an unrelated search.
+    const needsPlan = filters.some((f) => f.field === "in_plan");
+    const needsBuild = filters.some((f) => f.field === "verdict");
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            q,
+            filters,
+            ...(needsPlan && selectedPlanId ? { plan_id: selectedPlanId } : {}),
+            ...(needsBuild && selectedRunId ? { build_id: selectedRunId } : {}),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (seq !== caseSearchRequestSeq.current) return;
+        if (!res.ok) {
+          setFilterError(
+            Array.isArray(data.details) ? data.details.join("; ") : data.error || "Search failed",
+          );
+          return;
+        }
+        setFilterError(null);
+        setFilterResult({
+          caseIds: new Set<string>(data.case_ids || []),
+          suiteIds: new Set<string>(data.suite_ids || []),
+        });
+      } catch {
+        if (seq === caseSearchRequestSeq.current) setFilterError("Search failed: network error");
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+    // specData/workspace identity + filterDataTick: re-evaluate after data changes (a
+    // verdict recorded, a case edited, a custom field value saved) so matches stay current.
+  }, [
+    caseFilterRequestKey,
+    isCaseFilterActive,
+    selectedProjectId,
+    selectedPlanId,
+    selectedRunId,
+    workspaceMode,
+    specData,
+    workspace,
+    filterDataTick,
+  ]);
 
   // Shared 401 handling for the Spec-mode save handlers below (create/approve/edit-content/
   // save-steps). Login tokens are still finite-lived (1 hour JWTs, no refresh mechanism -- see
@@ -1509,6 +1642,7 @@ export default function App() {
         if (!res.ok) {
           throw new Error(data.detail || data.error || "Failed to save custom field value");
         }
+        setFilterDataTick((t) => t + 1);
         // The save genuinely succeeded against requestCaseId's own data regardless -- but if
         // the user has since navigated to a different case (e.g. a blur-triggered autosave
         // whose response arrives after the switch), specCaseCustomFieldValues now holds the
@@ -1592,6 +1726,7 @@ export default function App() {
         if (!res.ok) {
           throw new Error(data.detail || data.error || "Failed to save custom field value");
         }
+        setFilterDataTick((t) => t + 1);
         if (selectedSuiteIdRef.current === requestSuiteId) {
           setSuiteCustomFieldValues((prev) =>
             prev
@@ -2136,8 +2271,27 @@ export default function App() {
   // Cases visible in Pane 2 for Specification mode: the whole project, or just the
   // currently selected suite's direct cases if one is selected in the tree.
   const specCasesForSuite: SpecCaseGridItem[] = specData
-    ? specData.cases.filter((c) => !selectedSuiteId || c.test_suite_id === selectedSuiteId)
+    ? specData.cases.filter(
+        (c) =>
+          (!selectedSuiteId || c.test_suite_id === selectedSuiteId) &&
+          (!filterResult || filterResult.caseIds.has(c.id)),
+      )
     : [];
+
+  // Execution mode: indices into workspace.cases that pass the active search/filter (all of
+  // them when none is active). selectedIndex always stays an index into workspace.cases --
+  // the queue grid and hotkeys work in "visible position" space and map back through this,
+  // so a filtered list can never select the wrong case. The active case may itself be
+  // hidden by a filter (selection is left alone while typing); then no row is highlighted.
+  const visibleCaseIndices: number[] = (workspace?.cases || []).reduce<number[]>((acc, c, i) => {
+    if (!filterResult || filterResult.caseIds.has((c as any).case_id ?? "")) acc.push(i);
+    return acc;
+  }, []);
+  const visibleCaseIndexSet = new Set(visibleCaseIndices);
+  const selectedVisiblePos = visibleCaseIndices.indexOf(selectedIndex);
+  // Next visible case after the active one in queue order (used by the Pass/Skip buttons),
+  // or undefined if it's the last visible one.
+  const nextVisibleCaseIndex = visibleCaseIndices.find((i) => i > selectedIndex);
 
   // Global Hotkey Engine Hook wiring. j/k/[/]//  stay valid in both modes; p/f/b/s
   // (verdict recording) are disabled in Specification mode -- see useHotkeyEngine's
@@ -2148,17 +2302,18 @@ export default function App() {
     caseCount:
       workspaceMode === "SPECIFICATION"
         ? specCasesForSuite.length
-        : workspace?.cases.length || 0,
+        : visibleCaseIndices.length,
     selectedIndex:
       workspaceMode === "SPECIFICATION"
         ? specCasesForSuite.findIndex((c) => c.id === specSelectedCaseId)
-        : selectedIndex,
+        : selectedVisiblePos,
     onSelectIndex: (idx) => {
       if (workspaceMode === "SPECIFICATION") {
         const target = specCasesForSuite[idx];
         if (target) setSpecSelectedCaseId(target.id);
       } else {
-        setSelectedIndex(idx);
+        const target = visibleCaseIndices[idx];
+        if (target !== undefined) setSelectedIndex(target);
       }
     },
     onVerdict: (verdict) => {
@@ -2186,7 +2341,11 @@ export default function App() {
       // folder jumps straight to the first case in the next folder that has one, skipping
       // empty folders with no special-casing needed; finishing the very last case overall
       // wraps around to the first case in the first folder instead of just stopping.
-      const nextIdx = nextExecutionCaseIndex(executionCaseOrderByCaseIndex, selectedIndex);
+      // If the active case is hidden by a search/filter it isn't in the order at all --
+      // jump to the first visible case instead of doing nothing.
+      const nextIdx =
+        nextExecutionCaseIndex(executionCaseOrderByCaseIndex, selectedIndex) ??
+        (executionCaseOrderByCaseIndex.includes(selectedIndex) ? null : executionCaseOrderByCaseIndex[0] ?? null);
       if (nextIdx !== null) setSelectedIndex(nextIdx);
     },
     onToggleStepDrawer: () => setShowStepDrawer((prev) => !prev),
@@ -2310,7 +2469,11 @@ export default function App() {
       };
     });
 
-  const suiteNodes: SuiteTreeNode[] = specData ? buildSuiteNodes(specData.suites) : [];
+  // With a search/filter active the tree only shows suites containing a match (plus their
+  // ancestors, which suite_ids already includes) -- counts stay the suite's real totals.
+  const suiteNodes: SuiteTreeNode[] = specData
+    ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites)
+    : [];
 
   // Backs Pane 3's Suite Details view below -- selectedSuiteId only carries an id, so the
   // full node (name, case counts) has to be looked up from the nested tree each render.
@@ -2347,7 +2510,10 @@ export default function App() {
   // for why workspace.cases' own order can't be used directly.
   const executionCaseOrderByCaseIndex: number[] =
     workspaceMode === "EXECUTION" && workspace
-      ? buildExecutionCaseOrder(workspace.cases, flattenSuiteOptions(suiteNodes).map((s) => s.id))
+      ? buildExecutionCaseOrder(workspace.cases, flattenSuiteOptions(suiteNodes).map((s) => s.id)).filter(
+          // Ctrl+Enter's next-folder jump only ever lands on cases the filter shows.
+          (i) => !filterResult || visibleCaseIndexSet.has(i),
+        )
       : [];
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
@@ -3064,6 +3230,32 @@ export default function App() {
             </div>
           </div>
 
+          <CaseFilterPanel
+            value={caseFilter}
+            onChange={setCaseFilter}
+            fields={caseFilterFields}
+            mode={workspaceMode}
+            hasPlan={Boolean(selectedPlanId)}
+            hasRun={Boolean(selectedRunId)}
+            searchInputRef={searchInputRef}
+            matchCount={
+              filterResult
+                ? workspaceMode === "EXECUTION"
+                  ? visibleCaseIndices.length
+                  : filterResult.caseIds.size
+                : null
+            }
+            totalCount={
+              workspaceMode === "EXECUTION" ? workspace?.cases.length || 0 : specData?.cases.length || 0
+            }
+            onRequestFields={loadCaseFilterFields}
+          />
+          {filterError && (
+            <div style={{ padding: "4px 12px", fontSize: "10px", color: "#f87171", borderBottom: "1px solid #1f2937" }}>
+              {filterError}
+            </div>
+          )}
+
           {workspaceMode === "SPECIFICATION" && suiteFormState && (
             <div
               style={{
@@ -3405,22 +3597,33 @@ export default function App() {
             </div>
           )}
 
+          {filterResult &&
+            (workspaceMode === "SPECIFICATION" ? specCasesForSuite.length === 0 : visibleCaseIndices.length === 0) && (
+              <div style={{ padding: "16px 12px", fontSize: "11px", color: "#6b7280", textAlign: "center" }}>
+                {workspaceMode === "SPECIFICATION" && selectedSuiteId
+                  ? "No cases in this suite match the current search/filters."
+                  : "No cases match the current search/filters."}
+              </div>
+            )}
           {workspaceMode === "SPECIFICATION" ? (
             <SpecCaseListGrid
               cases={specCasesForSuite}
               selectedCaseId={specSelectedCaseId}
               onSelectCase={(caseId) => setSpecSelectedCaseId(caseId)}
-              filterQuery={searchQuery}
               canManagePlan={hasPlanManagePermission}
               onToggleInclusion={handleToggleCaseInclusion}
               pendingCaseId={pendingToggleId}
             />
           ) : (
             <TestCaseQueueGrid
-              cases={workspace.cases}
-              selectedIndex={selectedIndex}
-              onSelectCase={(idx) => setSelectedIndex(idx)}
-              filterQuery={searchQuery}
+              cases={
+                filterResult ? visibleCaseIndices.map((i) => workspace.cases[i]) : workspace.cases
+              }
+              selectedIndex={selectedVisiblePos}
+              onSelectCase={(pos) => {
+                const target = visibleCaseIndices[pos];
+                if (target !== undefined) setSelectedIndex(target);
+              }}
             />
           )}
         </div>
@@ -4335,8 +4538,8 @@ export default function App() {
                       // PASSED, since staying on the same case means the case-load reset
                       // effect (keyed on selectedIndex) never re-runs to correct it.
                       pendingVerdictRef.current = "PASSED";
-                      if (selectedIndex < workspace.cases.length - 1)
-                        setSelectedIndex((i) => i + 1);
+                      if (nextVisibleCaseIndex !== undefined)
+                        setSelectedIndex(nextVisibleCaseIndex);
                     }}
                     style={{
                       backgroundColor: hasExecuteRunPermission
@@ -4419,8 +4622,8 @@ export default function App() {
                       // Same reasoning as the Pass button above -- keeps a subsequent
                       // note-only Ctrl+Enter correct when this is the last case (no advance).
                       pendingVerdictRef.current = "SKIPPED";
-                      if (selectedIndex < workspace.cases.length - 1)
-                        setSelectedIndex((i) => i + 1);
+                      if (nextVisibleCaseIndex !== undefined)
+                        setSelectedIndex(nextVisibleCaseIndex);
                     }}
                     style={{
                       backgroundColor: hasExecuteRunPermission

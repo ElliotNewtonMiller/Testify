@@ -23,6 +23,7 @@ import { registerSpecEditingRoutes } from './routes/specEditing.js';
 import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
+import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { requirePermission } from './middleware/auth.js';
 import { UserRepository } from '@testify/db';
 
@@ -80,6 +81,7 @@ export async function createServer(connectionString?: string) {
   await registerApiTokenRoutes(app, db, jwtSecret);
   await registerExportRoutes(app, db, jwtSecret);
   await registerReportRoutes(app, db, jwtSecret);
+  await registerCaseSearchRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - Hydrates high-density 3-pane layout
   app.get('/api/v1/workspace', async () => {

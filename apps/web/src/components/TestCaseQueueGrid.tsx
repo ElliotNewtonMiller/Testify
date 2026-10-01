@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 export interface TestCaseGridItem {
   plan_case_id: string;
@@ -14,8 +14,9 @@ export interface TestCaseGridItem {
 export interface TestCaseQueueGridProps {
   cases: TestCaseGridItem[];
   selectedIndex: number;
+  /** Index into `cases` (the already-filtered list App passes in); -1 when the active case
+   * is hidden by the current search/filter, so no row is highlighted. */
   onSelectCase: (index: number) => void;
-  filterQuery?: string;
   containerHeight?: number;
 }
 
@@ -32,7 +33,6 @@ export const TestCaseQueueGrid: React.FC<TestCaseQueueGridProps> = ({
   cases,
   selectedIndex,
   onSelectCase,
-  filterQuery = '',
   containerHeight,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -55,14 +55,9 @@ export const TestCaseQueueGrid: React.FC<TestCaseQueueGridProps> = ({
     return () => window.removeEventListener('resize', updateHeight);
   }, [containerHeight]);
 
-  // Filter cases if filterQuery is present
-  const filteredCases = useMemo(() => {
-    if (!filterQuery.trim()) return cases;
-    const q = filterQuery.toLowerCase();
-    return cases.filter(
-      (c) => c.external_id.toLowerCase().includes(q) || c.title.toLowerCase().includes(q)
-    );
-  }, [cases, filterQuery]);
+  // Search/filtering happens once in App.tsx (via the server's case-search route), which
+  // passes the already-narrowed list here -- keeping indices in exactly one coordinate space.
+  const filteredCases = cases;
 
   // Handle scroll for virtual windowing
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -71,7 +66,7 @@ export const TestCaseQueueGrid: React.FC<TestCaseQueueGridProps> = ({
 
   // Keep selected item visible in viewport when selectedIndex changes
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || selectedIndex < 0) return;
     const targetScrollTop = selectedIndex * ROW_HEIGHT;
     const viewportHeight = computedHeight;
     const currentScrollTop = containerRef.current.scrollTop;
