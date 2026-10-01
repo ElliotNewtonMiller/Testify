@@ -24,6 +24,9 @@ function matchesValue(filter: NormalizedCaseFilter, v: unknown): boolean {
     case 'contains':
       return typeof v === 'string' && v.toLowerCase().includes(filter.value as string);
     case 'is':
+      // A CHECKBOX that was never set (or was unticked -- the editor stores that as no value)
+      // shows as an empty box, so it counts as "No" here, matching what the user sees.
+      if (filter.kind === 'CHECKBOX') return (v === true) === filter.value;
       return v === filter.value;
     case 'eq':
       return !isEmptyValue(v) && v === filter.value;
@@ -49,6 +52,10 @@ function matchesFilter(record: CaseFilterRecord, filter: NormalizedCaseFilter): 
   // its own suite OR any ancestor satisfies the filter, so a value set on a parent folder
   // applies to everything under it; "is empty" means no suite in the chain has a value.
   const chain = Array.isArray(v) ? v : [];
+  // CHECKBOX is the exception: only the case's own suite counts. An unticked box is stored as
+  // no value, so "unticked here but ticked on a parent" can't be told apart from "never set"
+  // -- inheriting would make a suite the user just unticked still match "Yes".
+  if (filter.kind === 'CHECKBOX') return matchesValue(filter, chain[0] ?? null);
   if (filter.op === 'is_empty') return chain.every(isEmptyValue);
   return chain.some((sv) => matchesValue(filter, sv));
 }

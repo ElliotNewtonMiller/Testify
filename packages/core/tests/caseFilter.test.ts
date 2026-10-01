@@ -114,10 +114,25 @@ describe('matchesCase', () => {
     expect(match({ filters: [{ field: 'cf:num', op: 'lte', value: 100 }] }, record({ 'cf:num': null }))).toBe(false);
   });
 
-  it('CHECKBOX is: an explicit false is a real value, not empty', () => {
+  it('CHECKBOX is: an unset box counts as "No" (it displays unticked); is_empty still tells them apart', () => {
     expect(match({ filters: [{ field: 'cf:check', op: 'is', value: false }] }, record({ 'cf:check': false }))).toBe(true);
-    expect(match({ filters: [{ field: 'cf:check', op: 'is', value: false }] }, record({ 'cf:check': null }))).toBe(false);
+    expect(match({ filters: [{ field: 'cf:check', op: 'is', value: false }] }, record({ 'cf:check': null }))).toBe(true);
+    expect(match({ filters: [{ field: 'cf:check', op: 'is', value: true }] }, record({ 'cf:check': null }))).toBe(false);
     expect(match({ filters: [{ field: 'cf:check', op: 'is_empty' }] }, record({ 'cf:check': false }))).toBe(false);
+  });
+
+  it('suite_cf: CHECKBOX only looks at the case\'s own suite, not ancestors', () => {
+    const fieldsWithSuiteCheck = new Map(fields);
+    fieldsWithSuiteCheck.set('suite_cf:flag', { key: 'suite_cf:flag', label: 'Flag', kind: 'CHECKBOX', source: 'suite_custom_field' });
+    const run = (value: boolean, chain: unknown[]) => {
+      const v = validateCaseFilterRequest({ filters: [{ field: 'suite_cf:flag', op: 'is', value }] }, fieldsWithSuiteCheck);
+      if (!v.ok) throw new Error(v.errors.join('; '));
+      return matchesCase(record({ 'suite_cf:flag': chain }), v.request);
+    };
+    // Unticked child under a ticked parent: "No", not "Yes".
+    expect(run(false, [null, true])).toBe(true);
+    expect(run(true, [null, true])).toBe(false);
+    expect(run(true, [true, null])).toBe(true);
   });
 
   it('is_empty / is_not_empty treat null, "" and [] as empty', () => {

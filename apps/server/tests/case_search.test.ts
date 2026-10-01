@@ -159,6 +159,42 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
     expect(res.body.suite_ids.sort()).toEqual([parent.id, child.id].sort());
   });
 
+  it('suite CHECKBOX: an unticked (unset) box matches "No", only the own suite counts, and empty suites still appear', async () => {
+    const { app, seed, db } = serverInstance;
+    const token = await loginAsAdmin(app);
+    const suiteRepo = new TestSuiteRepository(db);
+    const caseRepo = new TestCaseRepository(db);
+    const cfRepo = new CustomFieldRepository(db);
+
+    const parent = await suiteRepo.create({ project_id: seed.projectId, name: 'Ticked parent' });
+    const child = await suiteRepo.create({ project_id: seed.projectId, parent_suite_id: parent.id, name: 'Unticked child' });
+    const empty = await suiteRepo.create({ project_id: seed.projectId, name: 'Empty unticked' });
+    const parentCase = await caseRepo.create({ project_id: seed.projectId, test_suite_id: parent.id, external_id: 'CHK-1', title: 'In parent' });
+    const childCase = await caseRepo.create({ project_id: seed.projectId, test_suite_id: child.id, external_id: 'CHK-2', title: 'In child' });
+
+    const def = await cfRepo.createDefinition({ entity_type: 'TestSuite', name: 'flag', field_label: 'Flag', field_type: 'CHECKBOX' });
+    await cfRepo.setValue(def.id, 'TestSuite', parent.id, true);
+
+    const yes = await search(app, token, seed.projectId, { filters: [{ field: `suite_cf:${def.id}`, op: 'is', value: true }] });
+    expect(yes.body.case_ids).toEqual([parentCase.id]);
+    expect(yes.body.suite_ids).toEqual([parent.id]);
+
+    const no = await search(app, token, seed.projectId, { filters: [{ field: `suite_cf:${def.id}`, op: 'is', value: false }] });
+    expect(no.body.case_ids).toContain(childCase.id);
+    expect(no.body.case_ids).not.toContain(parentCase.id);
+    // The child's ancestor stays so the tree is navigable; the empty suite appears on its own.
+    expect(no.body.suite_ids).toEqual(expect.arrayContaining([child.id, parent.id, empty.id]));
+
+    const catalog = await app.inject({
+      method: 'GET',
+      url: `/api/v1/projects/${seed.projectId}/case-search/fields`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const field = JSON.parse(catalog.payload).fields.find((f: any) => f.key === `suite_cf:${def.id}`);
+    expect(field.label).toBe('Flag');
+    expect(field.source).toBe('suite_custom_field');
+  });
+
   it('rejects in_plan without plan_id, verdict without build_id, unknown fields, and cross-project plan/build ids', async () => {
     const { app, seed, db } = serverInstance;
     const token = await loginAsAdmin(app);

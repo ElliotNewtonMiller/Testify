@@ -43,7 +43,9 @@ function mergeValues(known: string[], present: Iterable<string>) {
  * GET  /api/v1/projects/:projectId/case-search/fields -- catalog of filterable properties.
  * POST /api/v1/projects/:projectId/case-search        -- { q?, filters?, plan_id?, build_id? }
  *      -> { case_ids, suite_ids, total_cases }. suite_ids is every suite containing a match
- *      plus all of its ancestors (what a tree view needs to stay navigable).
+ *      plus all of its ancestors (what a tree view needs to stay navigable); when only suite
+ *      filters are active, suites that match on their own values are included too, even if
+ *      they hold no cases.
  *
  * Nested under :projectId and gated on SPEC_VIEW, same as reports.ts, so project-scoped
  * overrides and machine API tokens resolve correctly. Fixed number of queries per request
@@ -117,7 +119,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
     for (const def of suiteDefs) {
       fields.push({
         key: `suite_cf:${def.id}`,
-        label: `Suite: ${def.field_label}`,
+        label: def.field_label, // `source` already says it's a suite field (the UI groups by it)
         kind: def.field_type,
         source: 'suite_custom_field',
         ...(def.options.length > 0
@@ -258,6 +260,25 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
         if (matchesCase(record, filterRequest)) {
           matchedCaseIds.push(c.id);
           for (const sid of chain) matchedSuiteIds.add(sid);
+        }
+      }
+
+      // When every filter is a suite filter (and there's no text search), a suite that itself
+      // satisfies them is shown even if it has no cases -- otherwise e.g. an empty suite with
+      // its box unticked would vanish under "No" just because the tree is built from cases.
+      const suiteOnly = !filterRequest.q && filterRequest.filters.length > 0 && filterRequest.filters.every((f) => f.inherited);
+      if (suiteOnly) {
+        for (const suiteId of parentBySuite.keys()) {
+          if (matchedSuiteIds.has(suiteId)) continue;
+          const chain = ancestry(suiteId);
+          const values: Record<string, unknown> = {};
+          for (const f of filterRequest.filters) {
+            const defId = f.field.slice('suite_cf:'.length);
+            values[f.field] = chain.map((sid) => suiteValueMaps.get(sid)?.get(defId) ?? null);
+          }
+          if (matchesCase({ external_id: '', title: '', values }, filterRequest)) {
+            for (const sid of chain) matchedSuiteIds.add(sid);
+          }
         }
       }
 
