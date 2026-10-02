@@ -676,6 +676,17 @@ Not built: no searching summary/preconditions/step text (decided: ID + title onl
 
 Per direct request: in `SpecCaseListGrid.tsx`'s case list, the grey solid DRAFT square was hard to tell apart from APPROVED's solid green at a glance. DRAFT now renders as a 1.5px grey (`#9ca3af`) outline; APPROVED/IN_REVIEW/DEPRECATED stay solid fills, and "no version" stays the dimmer `#374151` outline. Both outlined boxes gained `box-sizing: border-box` so every indicator is exactly 10x10px. `tsc --noEmit` clean on `apps/web`; visual check handed to Elliot.
 
+## Changed: approving a draft re-pins ACTIVE plans to it, so Execute mode shows the last approved version (2026-10-01)
+
+Elliot reported draft changes showing in Execute mode. Reproduced via the API rather than assumed: a plan's case content (summary/preconditions/steps) was already pinned per plan (`test_plan_cases.test_case_version_id`), and Execute mode kept showing approved v1 while v2 was a draft. What Elliot actually saw (confirmed on retest) were the **unversioned** fields -- the title (deliberately unversioned, editable any time) and custom field values -- not version content. The real gap found alongside: approving a draft never moved any plan's pin, so Execute mode kept showing v1 forever, never the new approved version (`TestPlanRepository.updateCaseVersionPin` existed but nothing called it).
+
+- New `TestPlanRepository.repinCaseInActivePlans(caseId, versionId)`: one UPDATE moving every pin of that case in an **ACTIVE** plan onto the given version. LOCKED/ARCHIVED plans keep their pin. Executions are untouched -- they reference the plan-case row and the old version's steps, which are never deleted.
+- `POST .../test-case-versions/:versionId/approve` (`specEditing.ts`) now runs the status change and the re-pin in one transaction, and returns `repinned_plan_count` (also in the `CASE_VERSION_APPROVED` audit diff). Auto-approve-on-create needs nothing (a brand-new case isn't in any plan yet).
+
+**Open question raised with Elliot, not changed:** custom field values are unversioned on the backend (by the original custom-fields design) but the Spec-mode UI only lets you edit them while the case is a DRAFT, implying they go through review -- they don't: they go live in every plan immediately, survive an abandoned draft, and aren't recorded on executions. Either the UI should allow editing them any time (honest about being unversioned), or they need real per-version storage.
+
+New test: `apps/server/tests/spec_editing.test.ts` (+1 -- draft v2 doesn't leak into Execute mode, approving re-pins the ACTIVE plan to v2 with v2's summary/steps, a LOCKED plan stays on v1). `npm test`: 563/567 -- the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/` plus a load-related timeout in `batch_and_xml.test.ts` that passes 22/22 in isolation. `tsc --noEmit` clean on `packages/db`/`apps/server`.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

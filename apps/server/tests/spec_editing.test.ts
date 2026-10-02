@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
-import { CustomFieldRepository } from '@testify/db';
+import { CustomFieldRepository, TestPlanRepository } from '@testify/db';
 
 describe('Spec-mode suite/case create/edit/delete', () => {
   let serverInstance: any;
@@ -399,5 +399,61 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(forcedRes.statusCode).toBe(204);
+  });
+
+  it('approving a draft re-pins ACTIVE plans to it (Execute mode shows the last approved version); LOCKED plans keep theirs', async () => {
+    const { app, seed, db } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const h = { authorization: `Bearer ${token}` };
+    const P = seed.projectId;
+
+    // Admin holds SPEC_AUTO_APPROVE, so v1 is created APPROVED.
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${P}/test-cases`,
+      headers: h,
+      payload: { test_suite_id: seed.suiteId, title: 'Repin', summary: 'v1 summary', steps: [{ step_number: 1, action: 'v1 action', expected_result: 'ok' }] },
+    });
+    expect(created.statusCode).toBe(201);
+    const caseId = JSON.parse(created.payload).test_case.id;
+
+    const planRepo = new TestPlanRepository(db);
+    const lockedPlan = await planRepo.create({ project_id: P, name: 'Frozen plan' });
+    for (const planId of [seed.planId, lockedPlan.id]) {
+      const add = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${planId}/cases`, headers: h, payload: { test_case_id: caseId } });
+      expect(add.statusCode).toBe(201);
+    }
+    await planRepo.update(lockedPlan.id, { status: 'LOCKED' });
+
+    const execView = async (planId: string) => {
+      const res = await app.inject({ method: 'GET', url: `/api/v1/test-plans/${planId}/cases`, headers: h });
+      return JSON.parse(res.payload).cases.find((c: any) => c.case_id === caseId);
+    };
+
+    const draft = await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`, headers: h, payload: {} });
+    const draftId = JSON.parse(draft.payload).version.id;
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/projects/${P}/test-case-versions/${draftId}`,
+      headers: h,
+      payload: { summary: 'v2 summary', steps: [{ step_number: 1, action: 'v2 action', expected_result: 'ok' }] },
+    });
+
+    // While v2 is a draft, Execute mode still shows approved v1.
+    const during = await execView(seed.planId);
+    expect(during.version_number).toBe(1);
+    expect(during.summary).toBe('v1 summary');
+
+    const approve = await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-case-versions/${draftId}/approve`, headers: h });
+    expect(approve.statusCode).toBe(200);
+    expect(JSON.parse(approve.payload).repinned_plan_count).toBe(1);
+
+    const after = await execView(seed.planId);
+    expect(after.version_number).toBe(2);
+    expect(after.summary).toBe('v2 summary');
+    expect(after.steps.map((s: any) => s.action)).toEqual(['v2 action']);
+
+    const frozen = await execView(lockedPlan.id);
+    expect(frozen.version_number).toBe(1);
   });
 });

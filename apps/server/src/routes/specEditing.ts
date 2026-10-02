@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
-import { TestSuiteRepository, TestCaseRepository, TestCaseVersionRepository, ProjectRepository, CustomFieldRepository } from '@testify/db';
+import { TestSuiteRepository, TestCaseRepository, TestCaseVersionRepository, ProjectRepository, CustomFieldRepository, TestPlanRepository } from '@testify/db';
 import { findUnsatisfiedRequiredFields } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
 import {
@@ -476,7 +476,15 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         );
       }
 
-      const approved = await versionRepo.updateStatus(versionId, 'APPROVED', actor.id);
+      // Approve and re-pin together: every ACTIVE plan containing this case moves onto the
+      // newly approved version, so Execute mode shows the last approved version rather than
+      // whichever one the case happened to have when it was linked. LOCKED/ARCHIVED plans
+      // keep their pin (see TestPlanRepository.repinCaseInActivePlans).
+      const { approved, repinnedPlanCount } = await db.transaction().execute(async (trx) => {
+        const approved = await new TestCaseVersionRepository(trx).updateStatus(versionId, 'APPROVED', actor.id);
+        const repinnedPlanCount = await new TestPlanRepository(trx).repinCaseInActivePlans(version.test_case_id, versionId);
+        return { approved, repinnedPlanCount };
+      });
 
       await insertAuditLog({
         actorId: actor.id,
@@ -484,10 +492,10 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         resourceType: 'test_case_version',
         resourceId: versionId,
         projectId,
-        diff: { test_case_id: version.test_case_id },
+        diff: { test_case_id: version.test_case_id, repinned_plan_count: repinnedPlanCount },
       });
 
-      return reply.status(200).send({ version: approved });
+      return reply.status(200).send({ version: approved, repinned_plan_count: repinnedPlanCount });
     }
   );
 }

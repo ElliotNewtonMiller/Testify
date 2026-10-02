@@ -215,6 +215,28 @@ export class TestPlanRepository {
       .executeTakeFirst();
   }
 
+  /**
+   * Moves every ACTIVE plan that contains `testCaseId` onto `newTestCaseVersionId` -- called
+   * when a version is approved, so Execute mode always shows the case's last approved
+   * version. LOCKED/ARCHIVED plans keep whatever version they had (a frozen plan must not
+   * change underneath its recorded results). Existing executions are untouched: they
+   * reference the plan-case row and the old version's steps, which are never deleted.
+   * Returns the number of plans re-pinned.
+   */
+  async repinCaseInActivePlans(testCaseId: string, newTestCaseVersionId: string): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.db
+      .updateTable('test_plan_cases')
+      .set({ test_case_version_id: newTestCaseVersionId, updated_at: now })
+      .where('test_case_id', '=', testCaseId)
+      .where('test_case_version_id', '!=', newTestCaseVersionId)
+      .where('test_plan_id', 'in', (eb) =>
+        eb.selectFrom('test_plans').select('id').where('status', '=', 'ACTIVE')
+      )
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n);
+  }
+
   async updateCaseVersionPin(
     testPlanId: string,
     testCaseId: string,
