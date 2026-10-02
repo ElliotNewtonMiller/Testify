@@ -3658,16 +3658,21 @@ export default function App() {
                     justifyContent: "space-between",
                   }}
                 >
+                  {/* Row 1: id + title, the title stretching all the way to the action
+                      buttons. Row 2 (always its own line): priority, execution type, version
+                      badge, Approve. */}
                   <div
                     style={{
+                      flex: 1,
+                      minWidth: 0,
+                      marginRight: "12px",
                       display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      marginBottom: "8px",
-                      flexWrap: "wrap",
+                      flexDirection: "column",
+                      gap: "8px",
                     }}
                   >
-                    <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb", flexShrink: 0 }}>
                       {specActiveCase.external_id}
                     </span>
                     <input
@@ -3691,10 +3696,13 @@ export default function App() {
                         border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
                         borderRadius: "4px",
                         padding: hasSpecEditPermission ? "3px 8px" : "0",
-                        minWidth: "200px",
+                        flex: 1,
+                        minWidth: 0,
                         opacity: hasSpecEditPermission ? 1 : 0.85,
                       }}
                     />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                     <select
                       value={specActiveCase.priority}
                       onChange={(e) => handleUpdateCaseField("priority", e.target.value)}
@@ -3774,6 +3782,7 @@ export default function App() {
                         {isApprovingVersion ? "Approving…" : "✓ Approve"}
                       </button>
                     )}
+                  </div>
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
@@ -4213,7 +4222,8 @@ export default function App() {
                         border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
                         borderRadius: "4px",
                         padding: hasSpecEditPermission ? "3px 8px" : "0",
-                        minWidth: "240px",
+                        flex: 1,
+                        minWidth: 0,
                         opacity: hasSpecEditPermission ? 1 : 0.85,
                       }}
                     />

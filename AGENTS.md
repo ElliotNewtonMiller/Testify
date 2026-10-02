@@ -687,6 +687,10 @@ Elliot reported draft changes showing in Execute mode. Reproduced via the API ra
 
 New test: `apps/server/tests/spec_editing.test.ts` (+1 -- draft v2 doesn't leak into Execute mode, approving re-pins the ACTIVE plan to v2 with v2's summary/steps, a LOCKED plan stays on v1). `npm test`: 563/567 -- the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/` plus a load-related timeout in `batch_and_xml.test.ts` that passes 22/22 in isolation. `tsc --noEmit` clean on `packages/db`/`apps/server`.
 
+## Changed: case/suite title fields fill their row; case priority/type moved to their own line (2026-10-01)
+
+Per direct request, `App.tsx`'s Spec-mode detail pane. The case header's left block is now two rows: row 1 is the external id plus the title input, which stretches (`flex: 1; minWidth: 0`) all the way to the right-hand action buttons (Edit/Delete) instead of sitting at a fixed `minWidth: 200px`; row 2 is always its own line, holding priority, execution type, the version badge, and Approve. The Suite Details name input likewise stretches across its whole row (was `minWidth: 240px`). Layout only. `tsc --noEmit` clean on `apps/web`; visual check handed to Elliot.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
