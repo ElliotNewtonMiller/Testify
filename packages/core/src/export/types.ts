@@ -19,7 +19,7 @@ export interface ExportableStep {
 export interface ExportableCaseVersion {
   id: string;
   version_number: number;
-  status: string; // 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED'
+  status: string; // 'DRAFT' | 'APPROVED' | 'DEPRECATED'
   summary: string | null;
   preconditions: string | null;
 }

@@ -22,7 +22,7 @@ export interface CreateTestCaseVersionInput {
   id?: string;
   test_case_id: string;
   version_number: number;
-  status?: 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED';
+  status?: 'DRAFT' | 'APPROVED' | 'DEPRECATED';
   summary?: string | null;
   preconditions?: string | null;
   author_id: string;
@@ -31,7 +31,7 @@ export interface CreateTestCaseVersionInput {
 }
 
 export interface UpdateTestCaseVersionInput {
-  status?: 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED';
+  status?: 'DRAFT' | 'APPROVED' | 'DEPRECATED';
   summary?: string | null;
   preconditions?: string | null;
   reviewer_id?: string | null;
@@ -219,7 +219,7 @@ export class TestCaseVersionRepository {
 
   async updateStatus(
     id: string,
-    status: 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED',
+    status: 'DRAFT' | 'APPROVED' | 'DEPRECATED',
     reviewerId?: string | null
   ): Promise<TestCaseVersionWithSteps | undefined> {
     const now = new Date().toISOString();

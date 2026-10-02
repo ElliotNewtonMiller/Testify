@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
-import { CustomFieldRepository, TestPlanRepository } from '@testify/db';
+import { CustomFieldRepository, TestPlanRepository, ProjectRepository } from '@testify/db';
 
 describe('Spec-mode suite/case create/edit/delete', () => {
   let serverInstance: any;
@@ -455,5 +455,75 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const frozen = await execView(lockedPlan.id);
     expect(frozen.version_number).toBe(1);
+  });
+
+  describe('deprecate / restore', () => {
+    async function setup() {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+      const h = { authorization: `Bearer ${token}` };
+      const P = seed.projectId;
+      const created = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${P}/test-cases`,
+        headers: h,
+        payload: { test_suite_id: seed.suiteId, title: 'Lifecycle', steps: [{ step_number: 1, action: 'a', expected_result: 'b' }] },
+      });
+      const body = JSON.parse(created.payload);
+      return { app, seed, token, h, P, caseId: body.test_case.id as string, v1Id: body.version.id as string };
+    }
+    const post = (app: any, h: any, url: string) => app.inject({ method: 'POST', url, headers: h, payload: {} });
+
+    it('round-trips APPROVED -> DEPRECATED -> APPROVED, blocks editing while deprecated, and hides it from spec-tree by default', async () => {
+      const { app, h, P, caseId, v1Id, seed } = await setup();
+
+      const dep = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      expect(dep.statusCode).toBe(200);
+      expect(JSON.parse(dep.payload).version.status).toBe('DEPRECATED');
+
+      const draft = await post(app, h, `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`);
+      expect(draft.statusCode).toBe(409);
+
+      const treeDefault = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/projects/${P}/spec-tree`, headers: h })).payload);
+      expect(treeDefault.cases.map((c: any) => c.id)).not.toContain(caseId);
+      const treeAll = JSON.parse(
+        (await app.inject({ method: 'GET', url: `/api/v1/projects/${P}/spec-tree?include_deprecated=true`, headers: h })).payload
+      );
+      expect(treeAll.cases.map((c: any) => c.id)).toContain(caseId);
+      const countOf = (tree: any) => tree.suites.find((s: any) => s.id === seed.suiteId).total_case_count;
+      expect(countOf(treeAll)).toBe(countOf(treeDefault) + 1);
+
+      // Not restorable twice / not deprecatable twice.
+      expect((await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`)).statusCode).toBe(422);
+      const restore = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/restore`);
+      expect(restore.statusCode).toBe(200);
+      expect(JSON.parse(restore.payload).version.status).toBe('APPROVED');
+      expect((await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/restore`)).statusCode).toBe(422);
+    });
+
+    it('rejects deprecating a draft or a non-latest version, and requires SPEC_APPROVE', async () => {
+      const { app, h, P, caseId, v1Id, token } = await setup();
+
+      const draft = await post(app, h, `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`);
+      const v2Id = JSON.parse(draft.payload).version.id;
+      const depDraft = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v2Id}/deprecate`);
+      expect(depDraft.statusCode).toBe(422);
+      expect(JSON.parse(depDraft.payload).code).toBe('VERSION_NOT_APPROVED');
+      const depOld = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      expect(depOld.statusCode).toBe(422);
+      expect(JSON.parse(depOld.payload).code).toBe('VERSION_NOT_LATEST');
+
+      const tester = await createAndLoginAs(app, token, 'Tester');
+      const forbidden = await post(app, { authorization: `Bearer ${tester.token}` }, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      expect(forbidden.statusCode).toBe(403);
+    });
+
+    it('a deprecated case cannot be linked to a plan, even when draft linking is allowed', async () => {
+      const { app, h, P, caseId, v1Id, seed } = await setup();
+      await new ProjectRepository(serverInstance.db).update(P, { settings: JSON.stringify({ allow_draft_plan_linking: true }) });
+      await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      const add = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${seed.planId}/cases`, headers: h, payload: { test_case_id: caseId } });
+      expect(add.statusCode).toBe(422);
+    });
   });
 });

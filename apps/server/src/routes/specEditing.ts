@@ -371,6 +371,10 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       if (latest && latest.status === 'DRAFT') {
         return reply.status(409).send({ error: 'Latest version is already a DRAFT -- nothing to fork' });
       }
+      // A new draft would silently un-deprecate the case -- it has to be restored first.
+      if (latest && latest.status === 'DEPRECATED') {
+        return reply.status(409).send({ error: 'This test case is deprecated -- restore it before editing' });
+      }
 
       try {
         const version = await versionRepo.createDraftFromLatest(caseId, actor.id);
@@ -498,4 +502,70 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       return reply.status(200).send({ version: approved, repinned_plan_count: repinnedPlanCount });
     }
   );
+
+  // Deprecate (APPROVED -> DEPRECATED) and Restore (DEPRECATED -> APPROVED). Both act only on
+  // a case's LATEST version and are gated on SPEC_APPROVE, like approve. A DRAFT can't be
+  // deprecated -- otherwise Restore would turn never-reviewed content into APPROVED. Plans
+  // that already contain a deprecated case keep it (with its history); it just can't be newly
+  // linked (see resolveCaseLinkability) and is hidden from the spec-tree by default.
+  for (const transition of [
+    { path: 'deprecate', from: 'APPROVED', to: 'DEPRECATED', action: 'CASE_VERSION_DEPRECATED' },
+    { path: 'restore', from: 'DEPRECATED', to: 'APPROVED', action: 'CASE_VERSION_RESTORED' },
+  ] as const) {
+    app.post(
+      `/api/v1/projects/:projectId/test-case-versions/:versionId/${transition.path}`,
+      { preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
+      async (request, reply) => {
+        const actor = request.user!;
+        const { projectId, versionId } = request.params as { projectId: string; versionId: string };
+
+        const version = await versionRepo.findById(versionId);
+        if (!version) {
+          return reply.status(404).send({ error: 'Test case version not found' });
+        }
+        const owningCase = await caseRepo.findById(version.test_case_id);
+        if (!owningCase || owningCase.project_id !== projectId) {
+          return reply.status(404).send({ error: 'Test case version not found in this project' });
+        }
+        const latest = await versionRepo.findLatestVersion(owningCase.id);
+        if (!latest || latest.id !== versionId) {
+          return sendProblemDetails(reply, {
+            code: 'VERSION_NOT_LATEST',
+            detail: `Test Case Version (ID: ${versionId}) is not the case's latest version; only the latest version can be ${transition.to === 'DEPRECATED' ? 'deprecated' : 'restored'}.`,
+            instance: request.url,
+            invalid_params: [{ name: 'version_id', reason: 'Not the latest version' }],
+          });
+        }
+        if (version.status !== transition.from) {
+          return sendProblemDetails(reply, {
+            code: transition.from === 'APPROVED' ? 'VERSION_NOT_APPROVED' : 'VERSION_NOT_DEPRECATED',
+            detail: `Test Case Version (ID: ${versionId}) is ${version.status}, not ${transition.from}, so it cannot be ${transition.to === 'DEPRECATED' ? 'deprecated' : 'restored'}.`,
+            instance: request.url,
+            invalid_params: [{ name: 'version_id', reason: `Status is ${version.status}, not ${transition.from}` }],
+          });
+        }
+
+        const updated = await db.transaction().execute(async (trx) => {
+          const result = await new TestCaseVersionRepository(trx).updateStatus(versionId, transition.to);
+          // Restoring makes this the case's approved version again -- keep active plans on it
+          // (normally already the case; harmless no-op then).
+          if (transition.to === 'APPROVED') {
+            await new TestPlanRepository(trx).repinCaseInActivePlans(owningCase.id, versionId);
+          }
+          return result;
+        });
+
+        await insertAuditLog({
+          actorId: actor.id,
+          action: transition.action,
+          resourceType: 'test_case_version',
+          resourceId: versionId,
+          projectId,
+          diff: { test_case_id: owningCase.id, from: transition.from, to: transition.to },
+        });
+
+        return reply.status(200).send({ version: updated });
+      }
+    );
+  }
 }

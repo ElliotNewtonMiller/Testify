@@ -137,6 +137,9 @@ export interface CaseFilterPanelProps {
   /** Called when "+ Filter" is clicked, so the field catalog can be refreshed (picks up
    * custom fields added in the Admin Panel since the project loaded). */
   onRequestFields?: () => void;
+  /** Spec mode only: whether deprecated cases are listed (they're hidden by default). */
+  showDeprecated?: boolean;
+  onToggleShowDeprecated?: () => void;
 }
 
 export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
@@ -150,6 +153,8 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
   matchCount,
   totalCount,
   onRequestFields,
+  showDeprecated = false,
+  onToggleShowDeprecated,
 }) => {
   const fieldsByKey = new Map(fields.map((f) => [f.key, f]));
   const ctx = { mode, hasPlan, hasRun };
@@ -382,6 +387,15 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
         >
           + Filter
         </button>
+        {mode === "SPECIFICATION" && onToggleShowDeprecated && (
+          <button
+            onClick={onToggleShowDeprecated}
+            title="Deprecated test cases are hidden from the list unless this is on"
+            style={pillStyle(showDeprecated)}
+          >
+            {showDeprecated ? "✓" : "—"} Show deprecated
+          </button>
+        )}
         {matchCount !== null && (
           <span style={{ color: "#9ca3af" }}>
             {matchCount} of {totalCount} cases

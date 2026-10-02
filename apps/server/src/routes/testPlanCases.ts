@@ -54,6 +54,11 @@ export async function resolveCaseLinkability(
   if (latestVersion.status === 'APPROVED') {
     return { linkable: true, latestVersion };
   }
+  // A deprecated case is retired -- never newly linkable, even when the project allows
+  // linking drafts (that setting is about unreviewed work, not retired cases).
+  if (latestVersion.status === 'DEPRECATED') {
+    return { linkable: false, latestVersion };
+  }
 
   const projectRepo = new ProjectRepository(db);
   const project = await projectRepo.findById(projectId);
@@ -105,25 +110,34 @@ export async function registerTestPlanCaseRoutes(
   const executionRepo = new ExecutionRepository(db);
   const buildRepo = new BuildRepository(db);
 
-  // GET /api/v1/projects/:projectId/spec-tree?plan_id=... -- drives Specification mode's
-  // whole 3-pane view in one fetch: nested suite tree (with plan-inclusion counts) + a
-  // lightweight case list (no steps -- see the latest-version endpoint below for detail).
+  // GET /api/v1/projects/:projectId/spec-tree?plan_id=...&include_deprecated=true -- drives
+  // Specification mode's whole 3-pane view in one fetch: nested suite tree (with
+  // plan-inclusion counts) + a lightweight case list (no steps -- see the latest-version
+  // endpoint below for detail). Cases whose latest version is DEPRECATED are omitted (from
+  // both the list and the tree counts) unless include_deprecated=true.
   app.get('/api/v1/projects/:projectId/spec-tree', async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
     const { projectId } = request.params as { projectId: string };
-    const { plan_id: planId } = request.query as { plan_id?: string };
+    const { plan_id: planId, include_deprecated: includeDeprecatedParam } = request.query as {
+      plan_id?: string;
+      include_deprecated?: string;
+    };
+    const includeDeprecated = includeDeprecatedParam === 'true' || includeDeprecatedParam === '1';
 
     const project = await projectRepo.findById(projectId);
     if (!project) {
       return reply.status(404).send({ error: 'Project not found' });
     }
 
-    const [tree, casesWithVersions] = await Promise.all([
+    const [tree, allCasesWithVersions] = await Promise.all([
       suiteRepo.getTree(projectId),
       caseRepo.findByProjectWithLatestVersion(projectId),
     ]);
+    const casesWithVersions = includeDeprecated
+      ? allCasesWithVersions
+      : allCasesWithVersions.filter((c) => c.latest_version?.status !== 'DEPRECATED');
 
     const allowDraft = parseAllowDraftPlanLinking(project.settings);
 

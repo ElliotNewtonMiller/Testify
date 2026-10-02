@@ -20,7 +20,7 @@ import { requirePermission } from '../middleware/auth.js';
 
 const PRIORITY_VALUES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const EXECUTION_TYPE_VALUES = ['MANUAL', 'AUTOMATED'];
-const VERSION_STATUS_VALUES = ['DRAFT', 'IN_REVIEW', 'APPROVED', 'DEPRECATED'];
+const VERSION_STATUS_VALUES = ['DRAFT', 'APPROVED', 'DEPRECATED'];
 const VERDICT_VALUES = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'UNTESTED'];
 
 function toOptions(values: string[]) {

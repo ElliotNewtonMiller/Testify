@@ -367,7 +367,7 @@ describe('Repositories', () => {
     await versionRepo.create({
       test_case_id: caseDraft.id,
       version_number: 2,
-      status: 'IN_REVIEW',
+      status: 'DEPRECATED',
       author_id: 'user_01',
     });
 
@@ -377,7 +377,7 @@ describe('Repositories', () => {
     const draftResult = withVersions.find((c) => c.id === caseDraft.id);
     expect(approvedResult?.latest_version?.status).toBe('APPROVED');
     expect(approvedResult?.latest_version?.version_number).toBe(1);
-    expect(draftResult?.latest_version?.status).toBe('IN_REVIEW');
+    expect(draftResult?.latest_version?.status).toBe('DEPRECATED');
     expect(draftResult?.latest_version?.version_number).toBe(2);
 
     const casesInA = await caseRepo.findBySuiteIds([suiteA.id]);

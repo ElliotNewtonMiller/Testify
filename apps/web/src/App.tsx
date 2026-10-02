@@ -298,6 +298,9 @@ export default function App() {
   // workspace (custom field value saves), so the active filter re-evaluates.
   const [filterDataTick, setFilterDataTick] = useState(0);
   const caseSearchRequestSeq = useRef(0);
+  // Spec mode: deprecated cases are hidden from the case list (and tree counts) unless this is
+  // on -- passed to GET .../spec-tree as include_deprecated. Session-only.
+  const [showDeprecated, setShowDeprecated] = useState(false);
   const caseFilterFieldsRequestSeq = useRef(0);
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -490,6 +493,7 @@ export default function App() {
   const [stepsDraft, setStepsDraft] = useState<Step[]>([]);
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
   const [isApprovingVersion, setIsApprovingVersion] = useState(false);
+  const [isTransitioningVersion, setIsTransitioningVersion] = useState(false);
   const [isSavingSteps, setIsSavingSteps] = useState(false);
   const [specEditError, setSpecEditError] = useState<string | null>(null);
 
@@ -1303,16 +1307,18 @@ export default function App() {
     if (!selectedProjectId) return;
     const seq = ++specTreeRequestSeq.current;
     try {
-      const url = selectedPlanId
-        ? `/api/v1/projects/${selectedProjectId}/spec-tree?plan_id=${selectedPlanId}`
-        : `/api/v1/projects/${selectedProjectId}/spec-tree`;
+      const params = new URLSearchParams();
+      if (selectedPlanId) params.set("plan_id", selectedPlanId);
+      if (showDeprecated) params.set("include_deprecated", "true");
+      const qs = params.toString();
+      const url = `/api/v1/projects/${selectedProjectId}/spec-tree${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { headers: authHeaders() });
       const data = res.ok ? await res.json() : null;
       if (specTreeRequestSeq.current === seq) setSpecData(data);
     } catch {
       if (specTreeRequestSeq.current === seq) setSpecData(null);
     }
-  }, [selectedProjectId, selectedPlanId]);
+  }, [selectedProjectId, selectedPlanId, showDeprecated]);
 
   // Per-case/suite plan-inclusion toggles (Specification mode). Both call the new
   // apps/server/src/routes/testPlanCases.ts endpoints, then refresh the spec tree so
@@ -1828,6 +1834,43 @@ export default function App() {
       setIsApprovingVersion(false);
     }
   }, [selectedProjectId, specCaseDetail, refreshSpecTree, handleAuthExpiry]);
+
+  // Deprecate (APPROVED -> DEPRECATED) / Restore (DEPRECATED -> APPROVED) -- the lifecycle
+  // button's other two states (see the case header). Same fetch/error/refresh shape as
+  // handleApproveVersion.
+  const handleVersionTransition = useCallback(
+    async (transition: "deprecate" | "restore") => {
+      if (!selectedProjectId || !specCaseDetail?.version) return;
+      setIsTransitioningVersion(true);
+      setSpecEditError(null);
+      try {
+        const res = await fetch(
+          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}/${transition}`,
+          { method: "POST", headers: authHeaders() },
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 401) {
+            handleAuthExpiry();
+            return;
+          }
+          throw new Error(data.detail || data.error || `Failed to ${transition}`);
+        }
+        setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
+        await refreshSpecTree();
+        // With "Show deprecated" off the case just left the list (and this pane) -- say where
+        // it went rather than having it silently vanish.
+        if (transition === "deprecate" && !showDeprecated) {
+          showToast('Test case deprecated. Turn on "Show deprecated" to see or restore it.');
+        }
+      } catch (err: any) {
+        setSpecEditError(err.message || `Failed to ${transition}`);
+      } finally {
+        setIsTransitioningVersion(false);
+      }
+    },
+    [selectedProjectId, specCaseDetail, refreshSpecTree, handleAuthExpiry, showDeprecated, showToast],
+  );
 
   const handleSaveVersionContent = useCallback(
     async (field: "summary" | "preconditions", value: string) => {
@@ -3249,6 +3292,8 @@ export default function App() {
               workspaceMode === "EXECUTION" ? workspace?.cases.length || 0 : specData?.cases.length || 0
             }
             onRequestFields={loadCaseFilterFields}
+            showDeprecated={showDeprecated}
+            onToggleShowDeprecated={() => setShowDeprecated((v) => !v)}
           />
           {filterError && (
             <div style={{ padding: "4px 12px", fontSize: "10px", color: "#f87171", borderBottom: "1px solid #1f2937" }}>
@@ -3782,6 +3827,37 @@ export default function App() {
                         {isApprovingVersion ? "Approving…" : "✓ Approve"}
                       </button>
                     )}
+                    {/* The rest of the lifecycle button: Approved -> Deprecate (muted red
+                        outline, so it doesn't read as a primary action), Deprecated -> Restore. */}
+                    {(specActiveCase.latest_version?.status === "APPROVED" ||
+                      specActiveCase.latest_version?.status === "DEPRECATED") &&
+                      hasSpecApprovePermission &&
+                      (() => {
+                        const isDeprecated = specActiveCase.latest_version?.status === "DEPRECATED";
+                        return (
+                          <button
+                            onClick={() => handleVersionTransition(isDeprecated ? "restore" : "deprecate")}
+                            disabled={isTransitioningVersion}
+                            title={
+                              isDeprecated
+                                ? "Restore this test case to Approved"
+                                : "Retire this test case: it's hidden from the Spec list and can't be added to plans"
+                            }
+                            style={{
+                              fontSize: "11px",
+                              padding: "3px 8px",
+                              borderRadius: "4px",
+                              border: isDeprecated ? "1px solid #6b7280" : "1px solid #7f1d1d",
+                              backgroundColor: "transparent",
+                              color: isDeprecated ? "#d1d5db" : "#f87171",
+                              fontWeight: 700,
+                              cursor: isTransitioningVersion ? "default" : "pointer",
+                            }}
+                          >
+                            {isTransitioningVersion ? "…" : isDeprecated ? "↺ Restore" : "Deprecate"}
+                          </button>
+                        );
+                      })()}
                   </div>
                   </div>
 
@@ -4169,7 +4245,9 @@ export default function App() {
                                 disabled={!(isDraft && hasPlanManagePermission)}
                                 disabledTitle={
                                   !isDraft
-                                    ? "Editable only while in Draft -- click Edit to create a new draft"
+                                    ? specVersionDetail?.status === "DEPRECATED"
+                                      ? "This test case is deprecated -- restore it to edit"
+                                      : "Editable only while in Draft -- click Edit to create a new draft"
                                     : "Requires plan management permission"
                                 }
                                 errorMessage={customFieldErrorById[entry.definition.id] ?? null}

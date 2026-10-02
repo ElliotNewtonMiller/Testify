@@ -34,9 +34,7 @@ const BUFFER_ITEMS = 10;
 // bg/fg/border triple.
 const VERSION_STATUS_COLORS: Record<string, string> = {
   DRAFT: '#9ca3af',
-  IN_REVIEW: '#60a5fa',
   APPROVED: '#22c55e',
-  DEPRECATED: '#f87171',
 };
 
 /**
@@ -102,6 +100,16 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
         <span
           title="No version"
           style={{ width: '10px', height: '10px', borderRadius: '2px', border: '1px solid #374151', boxSizing: 'border-box', flexShrink: 0 }}
+        />
+      );
+    }
+    // Deprecated cases (only listed when "Show deprecated" is on) get no box at all -- an
+    // invisible same-size placeholder keeps the id/title columns aligned with other rows.
+    if (item.latest_version.status === 'DEPRECATED') {
+      return (
+        <span
+          title={`v${item.latest_version.version_number} DEPRECATED`}
+          style={{ width: '10px', height: '10px', flexShrink: 0 }}
         />
       );
     }
@@ -187,6 +195,7 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
         >
           {visibleCases.map((c, idx) => {
             const isSelected = c.id === selectedCaseId;
+            const isDeprecated = c.latest_version?.status === 'DEPRECATED';
             return (
               <div
                 key={c.id || `${c.external_id}-${startIndex + idx}`}
@@ -205,6 +214,7 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
                   fontSize: '12px',
                   userSelect: 'none',
                   transition: 'background-color 0.1s ease',
+                  opacity: isDeprecated ? 0.5 : 1,
                 }}
               >
                 {renderVersionBadge(c)}

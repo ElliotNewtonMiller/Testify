@@ -40,7 +40,7 @@ export interface TestCaseVersionsTable {
   id: string;
   test_case_id: string;
   version_number: number;
-  status: Generated<string>; // 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'DEPRECATED'
+  status: Generated<string>; // 'DRAFT' | 'APPROVED' | 'DEPRECATED' (IN_REVIEW was dropped 2026-10-01 -- never written)
   summary: string | null;
   preconditions: string | null;
   author_id: string;
