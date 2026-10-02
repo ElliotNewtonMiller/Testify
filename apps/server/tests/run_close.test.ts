@@ -27,7 +27,7 @@ describe('Closing a run: manual close/reopen and auto-close when every case has 
       .execute();
   }
 
-  it('auto-closes once the last case gets a result, then refuses further results until reopened', async () => {
+  it('auto-closes the first time every case has a result, refuses results until reopened, and never auto-closes again after a reopen', async () => {
     const { app, seed, db } = serverInstance;
     const token = await login(app);
     const h = { authorization: `Bearer ${token}` };
@@ -83,6 +83,10 @@ describe('Closing a run: manual close/reopen and auto-close when every case has 
       payload: { build_id: seed.buildId, test_plan_case_id: rows[0].plan_case_id, verdict: 'BLOCKED' },
     });
     expect(again.statusCode).toBe(201);
+    // Every case still has a result, but the run already auto-closed once -- it stays open.
+    expect(JSON.parse(again.payload).build_status).toBe('OPEN');
+    const auditAfter = await db.selectFrom('audit_logs').selectAll().where('action', '=', 'BUILD_AUTO_CLOSED').execute();
+    expect(auditAfter).toHaveLength(1);
   });
 
   it('a manually closed run blocks results; a Tester (no BUILD_MANAGE) cannot open or close it', async () => {

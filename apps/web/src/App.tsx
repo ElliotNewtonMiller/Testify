@@ -2250,6 +2250,16 @@ export default function App() {
   const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
   const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
   const RUN_CLOSED_MESSAGE = "This run is closed. Open it to record results.";
+  // No run in the plan (or none selected) -- there's nothing to record a result against.
+  const NO_RUN_MESSAGE = "Create a test run to record test execution.";
+  const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
+  // Why results can't be recorded right now (null = they can). Drives the verdict buttons,
+  // Notes, the hotkey block, and submitVerdict's own guard.
+  const verdictBlockReason: string | null = isRunMissing
+    ? NO_RUN_MESSAGE
+    : isRunClosed
+      ? RUN_CLOSED_MESSAGE
+      : null;
 
   const submitVerdict = useCallback(
     async (
@@ -2259,8 +2269,8 @@ export default function App() {
     ) => {
       const targetCase = targetCaseOverride || activeCase;
       if (!targetCase || !workspace) return;
-      if (isRunClosed) {
-        showToast(RUN_CLOSED_MESSAGE);
+      if (verdictBlockReason) {
+        showToast(verdictBlockReason);
         return;
       }
 
@@ -2298,7 +2308,7 @@ export default function App() {
             // The run selected in the dropdown -- workspace.build is always the plan's newest
             // run, so using it recorded results against the wrong run whenever an older
             // run was selected.
-            build_id: selectedRunId || workspace.build.id,
+            build_id: selectedRunId,
             test_plan_case_id: targetCase.plan_case_id,
             verdict,
             status: "COMPLETED",
@@ -2312,12 +2322,11 @@ export default function App() {
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
           const data = await response.json().catch(() => ({}));
-          const recordedRunId = selectedRunId || workspace.build.id;
+          const recordedRunId = selectedRunId;
           if (data.build_status === "CLOSED") {
             setRunsList((prev) =>
               prev.map((r) => (r.id === recordedRunId ? { ...r, status: "CLOSED" } : r)),
             );
-            showToast("Every test case has a result, so the run was closed.");
           }
         } else if (response.status === 401) {
           // Session expired or token invalid -- the server now requires a real, current
@@ -2337,7 +2346,7 @@ export default function App() {
         setSyncStatus("Network Error");
       }
     },
-    [activeCase, workspace, failureNotes, isRunClosed, selectedRunId, showToast],
+    [activeCase, workspace, failureNotes, verdictBlockReason, selectedRunId, showToast],
   );
 
   // Close Run / Open Run (Execute mode, next to "+ Filter"). BUILD_MANAGE-gated, same as
@@ -2468,7 +2477,7 @@ export default function App() {
       if (searchInputRef.current) searchInputRef.current.focus();
     },
     onPermissionDeniedToast: (msg) => showToast(msg),
-    blockVerdictsReason: isRunClosed ? RUN_CLOSED_MESSAGE : undefined,
+    blockVerdictsReason: verdictBlockReason ?? undefined,
     notesInputRef,
   });
 
@@ -2964,7 +2973,7 @@ export default function App() {
               {runsList.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
-                  {r.status === "CLOSED" ? " [CLOSE]" : ""}
+                  {r.status === "CLOSED" ? " [CLOSED]" : ""}
                 </option>
               ))}
             </select>
@@ -3250,6 +3259,25 @@ export default function App() {
               Delete Anyway
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Execute mode with no run to record against -- results are blocked until one exists. */}
+      {isRunMissing && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ No test run
+          </div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{NO_RUN_MESSAGE}</div>
         </div>
       )}
 
@@ -4721,8 +4749,8 @@ export default function App() {
                   <textarea
                     ref={notesInputRef}
                     value={failureNotes}
-                    disabled={isRunClosed}
-                    title={isRunClosed ? RUN_CLOSED_MESSAGE : undefined}
+                    disabled={Boolean(verdictBlockReason)}
+                    title={verdictBlockReason ?? undefined}
                     onChange={(e) => {
                       setFailureNotes(e.target.value);
                       notesDirtyRef.current = true;
@@ -4774,12 +4802,12 @@ export default function App() {
               >
                 {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
                 <div
-                  style={{ display: "flex", gap: "10px", opacity: isRunClosed ? 0.4 : 1 }}
-                  title={isRunClosed ? RUN_CLOSED_MESSAGE : undefined}
+                  style={{ display: "flex", gap: "10px", opacity: verdictBlockReason ? 0.4 : 1 }}
+                  title={verdictBlockReason ?? undefined}
                 >
                   <button
                     onClick={() => {
-                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
+                      if (verdictBlockReason) return showToast(verdictBlockReason);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4813,7 +4841,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
+                      if (verdictBlockReason) return showToast(verdictBlockReason);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4841,7 +4869,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
+                      if (verdictBlockReason) return showToast(verdictBlockReason);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4869,7 +4897,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
+                      if (verdictBlockReason) return showToast(verdictBlockReason);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",

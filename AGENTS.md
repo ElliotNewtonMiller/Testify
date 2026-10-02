@@ -725,6 +725,17 @@ Per direct request. The server already refused executions on a `CLOSED` build (`
 
 New tests: `apps/server/tests/run_close.test.ts` (2 -- batch-all-but-one stays OPEN, the last single result auto-closes with an audit row, further results 422, reopen allows recording again; a manually closed run blocks results and a Tester gets 403 opening/closing). `npm test`: 569/572 (the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/`). `tsc --noEmit` clean on all four workspaces; UI verification handed to Elliot.
 
+## Changed: auto-close is once-only; "[CLOSED]" suffix; results blocked when there's no run (2026-10-02)
+
+Follow-ups to the entry directly above, per direct request:
+
+- **Auto-close fires only the first time a run becomes complete.** `autoCloseBuildIfComplete` (`apps/server/src/buildAutoClose.ts`) now skips if a `BUILD_AUTO_CLOSED` audit row already exists for the build -- a run that auto-closed and was then reopened to change a result is never auto-closed again. The immutable audit row doubles as the once-only marker, so no schema change was needed. (Supersedes the previous entry's "reopening a complete run and recording again closes it again" note.)
+- **Dropdown suffix is `[CLOSED]`**, not `[CLOSE]`.
+- **No run, no results**: in Execute mode with no run selected (the plan has none), a yellow warning banner (the same amber style as "No test plan set") reads "Create a test run to record test execution.", and recording is blocked the same way a closed run is -- `App.tsx`'s new `verdictBlockReason` (`NO_RUN_MESSAGE` or `RUN_CLOSED_MESSAGE`) now drives the verdict buttons, Notes, `submitVerdict`, and the hotkey engine's `blockVerdictsReason`. `submitVerdict` posts `selectedRunId` only, dropping the `workspace.build.id` fallback (which was a fake placeholder id when no run existed).
+- **Removed the "run was closed" toast** on auto-close; the dropdown entry still flips to `[CLOSED]`.
+
+`apps/server/tests/run_close.test.ts` extended: after reopening a run that already auto-closed, recording another result leaves it `OPEN` and no second audit row is written. `tsc --noEmit` clean on `apps/web`/`apps/server`.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

@@ -4,10 +4,12 @@ import type { Database } from '@testify/db';
 import { BuildRepository } from '@testify/db';
 
 /**
- * "When all the test cases have results, the run automatically closes." Called after an
- * execution is recorded (single and batch routes). Closes the build when every case in its
- * plan has a result in it, writes a BUILD_AUTO_CLOSED audit row when that happens, and
- * returns the build's resulting status so the caller can tell the client.
+ * The run closes automatically the FIRST time every case in its plan has a result. Called
+ * after an execution is recorded (single and batch routes). Writes a BUILD_AUTO_CLOSED audit
+ * row when it fires, and that row is also what makes it once-only: a run that has already
+ * auto-closed (and was then reopened to change a result) is never auto-closed again. Audit
+ * rows are immutable, so this can't be reset by accident. Returns the build's resulting
+ * status so the caller can tell the client.
  */
 export async function autoCloseBuildIfComplete(
   db: Kysely<Database>,
@@ -15,7 +17,14 @@ export async function autoCloseBuildIfComplete(
   actor: { id: string; type: 'USER' | 'SERVICE_ACCOUNT' }
 ): Promise<'OPEN' | 'CLOSED'> {
   const buildRepo = new BuildRepository(db);
-  const closed = await buildRepo.closeIfComplete(buildId);
+  const alreadyAutoClosed = await db
+    .selectFrom('audit_logs')
+    .select('id')
+    .where('action', '=', 'BUILD_AUTO_CLOSED')
+    .where('resource_type', '=', 'build')
+    .where('resource_id', '=', buildId)
+    .executeTakeFirst();
+  const closed = alreadyAutoClosed ? false : await buildRepo.closeIfComplete(buildId);
   if (closed) {
     const info = await db
       .selectFrom('builds')
