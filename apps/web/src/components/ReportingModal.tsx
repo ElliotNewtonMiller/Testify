@@ -404,7 +404,11 @@ export function ReportingModal({ isOpen, onClose, currentUser, projects, default
                       ))}
                     </Pie>
                     <Legend wrapperStyle={{ fontSize: "11px", color: "#e2e8f0" }} />
-                    <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", fontSize: "11px" }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "#f8fafc", border: "1px solid #cbd5e1", fontSize: "11px" }}
+                      itemStyle={{ color: "#0f172a" }}
+                      labelStyle={{ color: "#0f172a" }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               )}
@@ -428,6 +432,7 @@ export function ReportingModal({ isOpen, onClose, currentUser, projects, default
                     <YAxis domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} tick={{ fontSize: 10, fill: "#94a3b8" }} />
                     <Tooltip
                       contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", fontSize: "11px" }}
+                      cursor={{ fill: "rgba(148, 163, 184, 0.08)" }}
                       formatter={(value: number) => `${Math.round(value * 100)}%`}
                     />
                     <Bar dataKey="pass_rate" name="Pass rate" fill="#0ea5e9" radius={[3, 3, 0, 0]} />
@@ -452,7 +457,13 @@ export function ReportingModal({ isOpen, onClose, currentUser, projects, default
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                     <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
                     <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                    <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", fontSize: "11px" }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", fontSize: "11px" }}
+                      cursor={{ fill: "rgba(148, 163, 184, 0.08)" }}
+                      // Items default to their bar's fill -- "Not in plan" is #334155, unreadable
+                      // on this panel -- so every row uses the "In plan" color instead.
+                      itemStyle={{ color: "#0ea5e9" }}
+                    />
                     <Legend wrapperStyle={{ fontSize: "11px", color: "#e2e8f0" }} />
                     <Bar dataKey="in_plan" stackId="a" name="In plan" fill="#0ea5e9" />
                     <Bar dataKey="not_in_plan" stackId="a" name="Not in plan" fill="#334155" />
