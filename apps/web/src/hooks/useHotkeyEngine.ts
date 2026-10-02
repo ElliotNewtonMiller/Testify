@@ -21,6 +21,9 @@ export interface HotkeyEngineOptions {
   onToggleSuiteExpand?: (collapse?: boolean) => void;
   onFocusSearch?: () => void;
   onPermissionDeniedToast?: (message: string) => void;
+  /** When set, verdict hotkeys (p/f/b/s) and Ctrl+Enter are blocked and this message is
+   * shown instead (e.g. the selected run is closed). j/k navigation still works. */
+  blockVerdictsReason?: string;
   notesInputRef?: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   targetTargetWindow?: Window;
 }
@@ -44,6 +47,7 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
     onToggleSuiteExpand,
     onFocusSearch,
     onPermissionDeniedToast,
+    blockVerdictsReason,
     notesInputRef,
   } = options;
 
@@ -63,6 +67,10 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
         event.preventDefault();
         if (mode === 'SPECIFICATION') {
           onPermissionDeniedToast?.('Verdict hotkeys are unavailable in Specification mode');
+          return;
+        }
+        if (blockVerdictsReason) {
+          onPermissionDeniedToast?.(blockVerdictsReason);
           return;
         }
         if (!fsm.canExecute) {
@@ -170,6 +178,10 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
         onPermissionDeniedToast?.('Verdict hotkeys are unavailable in Specification mode');
         return;
       }
+      if (blockVerdictsReason) {
+        onPermissionDeniedToast?.(blockVerdictsReason);
+        return;
+      }
 
       // RBAC Permission Checks
       if (!fsm.canExecute) {
@@ -249,6 +261,7 @@ export function useHotkeyEngine(options: HotkeyEngineOptions) {
       options.onToggleSuiteExpand,
       options.onFocusSearch,
       options.onPermissionDeniedToast,
+      options.blockVerdictsReason,
       options.notesInputRef,
     ]
   );

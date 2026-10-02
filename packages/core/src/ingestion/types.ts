@@ -201,4 +201,7 @@ export interface BatchExecutionResponse {
     duration_ms: number;
   };
   results: BatchExecutionSingleResult[];
+  /** The run's status after this batch -- CLOSED if it just auto-closed because every case
+   * in the plan now has a result. */
+  build_status?: 'OPEN' | 'CLOSED';
 }

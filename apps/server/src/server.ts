@@ -25,6 +25,7 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { requirePermission } from './middleware/auth.js';
+import { autoCloseBuildIfComplete } from './buildAutoClose.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
@@ -276,11 +277,18 @@ export async function createServer(connectionString?: string) {
       })
       .execute();
 
+    // 5. Auto-close the run once every case in its plan has a result.
+    const buildStatus = await autoCloseBuildIfComplete(db, body.build_id, {
+      id: actorId,
+      type: request.user!.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+    });
+
     return reply.status(201).send({
       id: execId,
       verdict: body.verdict,
       status: body.status || 'COMPLETED',
       created_at: now,
+      build_status: buildStatus,
     });
   });
 

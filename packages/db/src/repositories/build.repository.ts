@@ -76,6 +76,36 @@ export class BuildRepository {
     return this.findById(id);
   }
 
+  /**
+   * Closes the build if every case in its plan now has at least one recorded execution in
+   * it ("all test cases have results"). Returns true only when this call closed it -- false
+   * if it was already CLOSED, the plan has no cases, or some case is still untested.
+   */
+  async closeIfComplete(id: string): Promise<boolean> {
+    const build = await this.findById(id);
+    if (!build || build.status === 'CLOSED') return false;
+
+    const total = await this.db
+      .selectFrom('test_plan_cases')
+      .select((eb) => eb.fn.countAll().as('n'))
+      .where('test_plan_id', '=', build.test_plan_id)
+      .executeTakeFirst();
+    const totalCases = Number(total?.n ?? 0);
+    if (totalCases === 0) return false;
+
+    const covered = await this.db
+      .selectFrom('executions')
+      .innerJoin('test_plan_cases', 'test_plan_cases.id', 'executions.test_plan_case_id')
+      .select((eb) => eb.fn.count('executions.test_plan_case_id').distinct().as('n'))
+      .where('executions.build_id', '=', id)
+      .where('test_plan_cases.test_plan_id', '=', build.test_plan_id)
+      .executeTakeFirst();
+    if (Number(covered?.n ?? 0) < totalCases) return false;
+
+    await this.updateStatus(id, 'CLOSED');
+    return true;
+  }
+
   async update(id: string, input: UpdateBuildInput): Promise<Build | undefined> {
     const now = new Date().toISOString();
     const updateData: BuildUpdate = {

@@ -140,6 +140,8 @@ export interface CaseFilterPanelProps {
   /** Spec mode only: whether deprecated cases are listed (they're hidden by default). */
   showDeprecated?: boolean;
   onToggleShowDeprecated?: () => void;
+  /** Execute mode only: the Close Run / Open Run button shown next to "+ Filter". */
+  runControl?: { closed: boolean; canToggle: boolean; pending: boolean; onToggle: () => void };
 }
 
 export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
@@ -155,6 +157,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
   onRequestFields,
   showDeprecated = false,
   onToggleShowDeprecated,
+  runControl,
 }) => {
   const fieldsByKey = new Map(fields.map((f) => [f.key, f]));
   const ctx = { mode, hasPlan, hasRun };
@@ -387,6 +390,32 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
         >
           + Filter
         </button>
+        {mode === "EXECUTION" && runControl && (
+          <button
+            onClick={runControl.onToggle}
+            disabled={!runControl.canToggle || runControl.pending}
+            title={
+              !runControl.canToggle
+                ? "Requires run management permission (BUILD_MANAGE)"
+                : runControl.closed
+                  ? "Reopen this run so results can be recorded again"
+                  : "Close this run -- no results can be recorded until it's reopened"
+            }
+            style={{
+              background: "transparent",
+              border: runControl.closed ? "1px solid #166534" : "1px solid #7f1d1d",
+              borderRadius: "4px",
+              color: !runControl.canToggle ? "#4b5563" : runControl.closed ? "#4ade80" : "#f87171",
+              fontSize: "10px",
+              fontWeight: 700,
+              padding: "2px 8px",
+              cursor: !runControl.canToggle || runControl.pending ? "not-allowed" : "pointer",
+              opacity: runControl.pending ? 0.5 : 1,
+            }}
+          >
+            {runControl.pending ? "…" : runControl.closed ? "Open Run" : "Close Run"}
+          </button>
+        )}
         {mode === "SPECIFICATION" && onToggleShowDeprecated && (
           <button
             onClick={onToggleShowDeprecated}

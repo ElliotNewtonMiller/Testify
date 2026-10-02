@@ -713,6 +713,18 @@ Per direct request, `apps/web/src/App.tsx`. New `execSuiteFilterId` state, delib
 
 No new automated tests (client-side selection/navigation, consistent with how this area has been verified). `tsc --noEmit` clean on `apps/web`; web tests 56/56. Manual verification handed to Elliot.
 
+## Added: Close Run / Open Run, auto-close when every case has a result; fixed verdicts going to the wrong run (2026-10-02)
+
+Per direct request. The server already refused executions on a `CLOSED` build (`server.ts`'s single route and `batchExecution.ts`, 422 `BUILD_CLOSED`) and already had `PUT .../plans/:planId/builds/:buildId` (`BUILD_MANAGE`) to change a run's status -- what was missing was any way to close one from Execute mode, auto-closing, and honoring "closed" in the UI.
+
+- **Auto-close**: new `BuildRepository.closeIfComplete(buildId)` closes the build once every case in its plan has at least one execution in it (no-op if already closed or the plan has no cases). New `apps/server/src/buildAutoClose.ts` (`autoCloseBuildIfComplete`) runs it after both execution routes record, writes a `BUILD_AUTO_CLOSED` audit row when it fires, and both responses now carry `build_status` (`BatchExecutionResponse.build_status` added in `packages/core`). Reopening an already-complete run and recording another result closes it again straight away -- that's the rule as stated ("when all the test cases have results, the run closes").
+- **UI** (`App.tsx`, `CaseFilterPanel.tsx`): a "Close Run"/"Open Run" button next to "+ Filter", Execute mode only, gated on `BUILD_MANAGE` (`hasBuildManagePermission`; disabled with a tooltip otherwise), calling the existing PUT route. While the selected run is `CLOSED` (`isRunClosed`): `submitVerdict` refuses with a toast, the four verdict buttons are dimmed and guarded, the Notes field is disabled, and the hotkey engine blocks `p/f/b/s` and Ctrl+Enter via a new `useHotkeyEngine` option `blockVerdictsReason` (j/k still work). When a recorded result auto-closes the run, the dropdown entry flips to closed and a toast says so.
+- **Run dropdown label**: no more `[OPEN]`; only a closed run gets a suffix, `[CLOSE]` (Elliot's exact wording).
+- **Fixed a real bug found while wiring this**: `submitVerdict` posted `build_id: workspace.build.id`, but `refreshExecutionWorkspace` always sets `workspace.build` to `builds[0]` (the plan's newest run) regardless of the dropdown -- so with an older run selected, results were displayed for that run but **recorded against the newest one**. It now posts `selectedRunId` (falling back to `workspace.build.id`).
+- **Noticed, not changed**: `submitVerdict` sends `execution_duration_ms: Math.floor(Math.random() * 800) + 200` -- a fabricated duration, the same data-quality problem the reporting entry fixed server-side (2026-09-21), reintroduced from the client. Reporting's "slowest tests" are therefore random for UI-recorded results. Flagged to Elliot.
+
+New tests: `apps/server/tests/run_close.test.ts` (2 -- batch-all-but-one stays OPEN, the last single result auto-closes with an audit row, further results 422, reopen allows recording again; a manually closed run blocks results and a Tester gets 403 opening/closing). `npm test`: 569/572 (the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/`). `tsc --noEmit` clean on all four workspaces; UI verification handed to Elliot.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

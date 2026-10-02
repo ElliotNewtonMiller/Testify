@@ -5,6 +5,7 @@ import type { Database } from '@testify/db';
 import { sendPlanLockedError, sendBuildClosedError, sendTokenProjectMismatchError } from '../errors.js';
 import { resolveCaseLinkability } from './testPlanCases.js';
 import { authenticateRequest } from '../middleware/auth.js';
+import { autoCloseBuildIfComplete } from '../buildAutoClose.js';
 import type {
   BatchExecutionRequest,
   BatchExecutionResponse,
@@ -344,6 +345,12 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           created_at: now,
         })
         .execute();
+
+      // Auto-close the run once every case in its plan has a result.
+      responsePayload.build_status = await autoCloseBuildIfComplete(db, buildId, {
+        id: user.id,
+        type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+      });
 
       const httpStatus = failedCount > 0 && !allOrNothing ? 207 : 201;
       return reply.status(httpStatus).send(responsePayload);

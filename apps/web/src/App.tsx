@@ -534,6 +534,7 @@ export default function App() {
   // below, when there's no plan at all) means the dropdown never shows a run that isn't
   // genuinely tied to the currently selected plan.
   const [runsList, setRunsList] = useState<EntityItem[]>([]);
+  const [isTogglingRun, setIsTogglingRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string>("");
 
   // Entity Modal State
@@ -2243,6 +2244,13 @@ export default function App() {
   }, [deleteCasePrompt, selectedProjectId, specSelectedCaseId, refreshSpecTree, showToast]);
 
   // Execute verdict submission (Optimistic UI + Background API)
+  // A CLOSED run is read-only: no verdicts, no notes (the server also refuses them with
+  // 422 BUILD_CLOSED). A run closes manually via the Close Run button, or automatically once
+  // every case in the plan has a result.
+  const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
+  const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
+  const RUN_CLOSED_MESSAGE = "This run is closed. Open it to record results.";
+
   const submitVerdict = useCallback(
     async (
       verdict: VerdictType,
@@ -2251,6 +2259,10 @@ export default function App() {
     ) => {
       const targetCase = targetCaseOverride || activeCase;
       if (!targetCase || !workspace) return;
+      if (isRunClosed) {
+        showToast(RUN_CLOSED_MESSAGE);
+        return;
+      }
 
       // Whatever's in the Notes field gets saved regardless of verdict -- it's a general
       // "execution details or notes" field (see its placeholder), not failure-only, so a
@@ -2283,7 +2295,10 @@ export default function App() {
             ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
           },
           body: JSON.stringify({
-            build_id: workspace.build.id,
+            // The run selected in the dropdown -- workspace.build is always the plan's newest
+            // run, so using it recorded results against the wrong run whenever an older
+            // run was selected.
+            build_id: selectedRunId || workspace.build.id,
             test_plan_case_id: targetCase.plan_case_id,
             verdict,
             status: "COMPLETED",
@@ -2296,6 +2311,14 @@ export default function App() {
           setSyncStatus(
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
+          const data = await response.json().catch(() => ({}));
+          const recordedRunId = selectedRunId || workspace.build.id;
+          if (data.build_status === "CLOSED") {
+            setRunsList((prev) =>
+              prev.map((r) => (r.id === recordedRunId ? { ...r, status: "CLOSED" } : r)),
+            );
+            showToast("Every test case has a result, so the run was closed.");
+          }
         } else if (response.status === 401) {
           // Session expired or token invalid -- the server now requires a real, current
           // JWT for this route (EXECUTE_RUN permission). Clear the dead token and drop back
@@ -2314,8 +2337,40 @@ export default function App() {
         setSyncStatus("Network Error");
       }
     },
-    [activeCase, workspace, failureNotes],
+    [activeCase, workspace, failureNotes, isRunClosed, selectedRunId, showToast],
   );
+
+  // Close Run / Open Run (Execute mode, next to "+ Filter"). BUILD_MANAGE-gated, same as
+  // every other run edit (PUT .../plans/:planId/builds/:buildId).
+  const handleToggleRunClosed = useCallback(async () => {
+    if (!selectedProjectId || !selectedPlanId || !selectedRunId || !selectedRun) return;
+    const nextStatus = selectedRun.status === "CLOSED" ? "OPEN" : "CLOSED";
+    setIsTogglingRun(true);
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${selectedRunId}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          handleAuthExpiry();
+          return;
+        }
+        throw new Error(data.detail || data.error || "Failed to update the run");
+      }
+      setRunsList((prev) => prev.map((r) => (r.id === selectedRunId ? { ...r, status: nextStatus } : r)));
+      showToast(nextStatus === "CLOSED" ? "Run closed." : "Run opened.");
+    } catch (err: any) {
+      showToast(err.message || "Failed to update the run");
+    } finally {
+      setIsTogglingRun(false);
+    }
+  }, [selectedProjectId, selectedPlanId, selectedRunId, selectedRun, showToast, handleAuthExpiry]);
 
   // Cases visible in Pane 2 for Specification mode: the whole project, or just the
   // currently selected suite's direct cases if one is selected in the tree.
@@ -2413,6 +2468,7 @@ export default function App() {
       if (searchInputRef.current) searchInputRef.current.focus();
     },
     onPermissionDeniedToast: (msg) => showToast(msg),
+    blockVerdictsReason: isRunClosed ? RUN_CLOSED_MESSAGE : undefined,
     notesInputRef,
   });
 
@@ -2598,6 +2654,9 @@ export default function App() {
     queueCaseIndices.find((i) => i > selectedIndex) ?? crossSuiteNextCaseIndex;
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
+  const hasBuildManagePermission =
+    userPermissions.includes("BUILD_MANAGE") ||
+    userPermissions.includes("SYSTEM_ADMIN");
   const hasUserManagePermission =
     userPermissions.includes("USER_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
@@ -2904,7 +2963,8 @@ export default function App() {
             >
               {runsList.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name} [{r.status}]
+                  {r.name}
+                  {r.status === "CLOSED" ? " [CLOSE]" : ""}
                 </option>
               ))}
             </select>
@@ -3332,6 +3392,16 @@ export default function App() {
             onRequestFields={loadCaseFilterFields}
             showDeprecated={showDeprecated}
             onToggleShowDeprecated={() => setShowDeprecated((v) => !v)}
+            runControl={
+              workspaceMode === "EXECUTION" && selectedRun
+                ? {
+                    closed: selectedRun.status === "CLOSED",
+                    canToggle: hasBuildManagePermission,
+                    pending: isTogglingRun,
+                    onToggle: handleToggleRunClosed,
+                  }
+                : undefined
+            }
           />
           {filterError && (
             <div style={{ padding: "4px 12px", fontSize: "10px", color: "#f87171", borderBottom: "1px solid #1f2937" }}>
@@ -4651,6 +4721,8 @@ export default function App() {
                   <textarea
                     ref={notesInputRef}
                     value={failureNotes}
+                    disabled={isRunClosed}
+                    title={isRunClosed ? RUN_CLOSED_MESSAGE : undefined}
                     onChange={(e) => {
                       setFailureNotes(e.target.value);
                       notesDirtyRef.current = true;
@@ -4700,10 +4772,14 @@ export default function App() {
                   padding: "0 20px",
                 }}
               >
-                {/* HOTKEY VERDICT BUTTONS */}
-                <div style={{ display: "flex", gap: "10px" }}>
+                {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
+                <div
+                  style={{ display: "flex", gap: "10px", opacity: isRunClosed ? 0.4 : 1 }}
+                  title={isRunClosed ? RUN_CLOSED_MESSAGE : undefined}
+                >
                   <button
                     onClick={() => {
+                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4737,6 +4813,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
+                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4764,6 +4841,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
+                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
@@ -4791,6 +4869,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
+                      if (isRunClosed) return showToast(RUN_CLOSED_MESSAGE);
                       if (!fsm.canExecute)
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
