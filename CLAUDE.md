@@ -703,6 +703,16 @@ Elliot asked how to set a case to "In Review" or "Deprecated"; there was no way 
 
 New tests: `apps/server/tests/spec_editing.test.ts` (+3 -- full round trip incl. 409 on editing while deprecated and spec-tree hiding/counts with and without `include_deprecated`; draft/non-latest 422s and a Tester's 403; not linkable even with draft linking allowed). `packages/db/tests/repositories.test.ts` switched its one `IN_REVIEW` fixture to `DEPRECATED`. `npm test`: 567/570 (the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/`). `tsc --noEmit` clean on all four workspaces; UI verification handed to Elliot.
 
+## Added: selecting a suite in Execute mode narrows the queue to that suite (2026-10-01)
+
+Per direct request, `apps/web/src/App.tsx`. New `execSuiteFilterId` state, deliberately separate from Spec mode's `selectedSuiteId` (which also drives Pane 3's Suite Details), so browsing suites in one mode never silently narrows the other. In Execute mode, clicking a suite lists only that suite's own cases (direct cases, same rule as Spec mode's list); clicking it again -- or the new "📁 <suite> ✕" chip in the queue header -- shows everything again. Selecting a suite whose cases don't include the active case jumps to that suite's first case. Reset on project switch.
+
+- `queueCaseIndices` (search/filter result narrowed to the suite) is what the grid and `j/k` now work against; the search/filter-only `visibleCaseIndices` and suite-tree-order `executionCaseOrderByCaseIndex` are unchanged.
+- **Finishing a suite flows into the next one**: new `advanceToCase(target)` moves the active case and, when the queue is narrowed and the target is in a different suite, moves the suite selection with it. Used by Ctrl+Enter (already suite-order), the Pass/Skip buttons (`nextVisibleCaseIndex` now falls back to `crossSuiteNextCaseIndex` -- the next case in suite-tree order outside the current suite), and the `p`/`s` hotkeys via a new `useHotkeyEngine` option `onAdvancePastEnd`, called instead of doing nothing when a rapid verdict lands on the list's last case.
+- Empty-state message when a selected suite has none of its cases in the plan.
+
+No new automated tests (client-side selection/navigation, consistent with how this area has been verified). `tsc --noEmit` clean on `apps/web`; web tests 56/56. Manual verification handed to Elliot.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

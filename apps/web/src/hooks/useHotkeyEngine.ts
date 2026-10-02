@@ -13,6 +13,10 @@ export interface HotkeyEngineOptions {
   onSelectIndex: (index: number) => void;
   onVerdict: (verdict: VerdictType, notes?: string) => void;
   onSubmitNotes?: (notes: string) => void;
+  /** Called instead of advancing when a rapid verdict (p/s) is recorded on the LAST case in
+   * the list -- lets the caller move on past the visible list (e.g. into the next suite when
+   * the queue is narrowed to one suite). */
+  onAdvancePastEnd?: () => void;
   onToggleStepDrawer?: () => void;
   onToggleSuiteExpand?: (collapse?: boolean) => void;
   onFocusSearch?: () => void;
@@ -35,6 +39,7 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
     onSelectIndex,
     onVerdict,
     onSubmitNotes,
+    onAdvancePastEnd,
     onToggleStepDrawer,
     onToggleSuiteExpand,
     onFocusSearch,
@@ -182,6 +187,8 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
           onVerdict('PASSED');
           if (caseCount > 0 && selectedIndex < caseCount - 1) {
             onSelectIndex(selectedIndex + 1);
+          } else {
+            onAdvancePastEnd?.();
           }
           break;
 
@@ -212,6 +219,8 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
           onVerdict('SKIPPED');
           if (caseCount > 0 && selectedIndex < caseCount - 1) {
             onSelectIndex(selectedIndex + 1);
+          } else {
+            onAdvancePastEnd?.();
           }
           break;
       }
@@ -235,6 +244,7 @@ export function useHotkeyEngine(options: HotkeyEngineOptions) {
       options.onSelectIndex,
       options.onVerdict,
       options.onSubmitNotes,
+      options.onAdvancePastEnd,
       options.onToggleStepDrawer,
       options.onToggleSuiteExpand,
       options.onFocusSearch,

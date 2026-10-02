@@ -401,6 +401,11 @@ export default function App() {
   );
   const [specData, setSpecData] = useState<SpecTreeData | null>(null);
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+  // Execute mode's own suite selection -- narrows the queue grid to that suite's cases. Kept
+  // separate from selectedSuiteId (Spec mode's, which also drives Pane 3's Suite Details) so
+  // browsing suites in Spec mode never silently narrows the execution queue, or vice versa.
+  // Clicking the selected suite again (or the ✕ in the queue header) clears it.
+  const [execSuiteFilterId, setExecSuiteFilterId] = useState<string | null>(null);
   // Mirrors selectedSuiteId for reads from inside an already-in-flight async closure (see
   // handleSuiteCustomFieldValueChange) -- same race this file already guards against for
   // specSelectedCaseIdRef below, just for the suite-details custom fields instead.
@@ -1060,6 +1065,7 @@ export default function App() {
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
     setSelectedSuiteId(null);
+    setExecSuiteFilterId(null);
     setSpecSelectedCaseId(null);
     const target = projectsList.find((p) => p.id === projectId);
     if (target) showToast(`Switched to Project: ${target.name}`);
@@ -2331,10 +2337,14 @@ export default function App() {
     return acc;
   }, []);
   const visibleCaseIndexSet = new Set(visibleCaseIndices);
-  const selectedVisiblePos = visibleCaseIndices.indexOf(selectedIndex);
-  // Next visible case after the active one in queue order (used by the Pass/Skip buttons),
-  // or undefined if it's the last visible one.
-  const nextVisibleCaseIndex = visibleCaseIndices.find((i) => i > selectedIndex);
+  // What the queue grid actually lists: the search/filter result, further narrowed to the
+  // selected suite's own cases when one is selected in Execute mode. j/k and the grid work in
+  // this list's positions; advancing after a verdict can step past its end into the next
+  // suite (see advanceToCase / crossSuiteNextCaseIndex below).
+  const queueCaseIndices: number[] = execSuiteFilterId
+    ? visibleCaseIndices.filter((i) => workspace?.cases[i]?.test_suite_id === execSuiteFilterId)
+    : visibleCaseIndices;
+  const selectedVisiblePos = queueCaseIndices.indexOf(selectedIndex);
 
   // Global Hotkey Engine Hook wiring. j/k/[/]//  stay valid in both modes; p/f/b/s
   // (verdict recording) are disabled in Specification mode -- see useHotkeyEngine's
@@ -2345,7 +2355,7 @@ export default function App() {
     caseCount:
       workspaceMode === "SPECIFICATION"
         ? specCasesForSuite.length
-        : visibleCaseIndices.length,
+        : queueCaseIndices.length,
     selectedIndex:
       workspaceMode === "SPECIFICATION"
         ? specCasesForSuite.findIndex((c) => c.id === specSelectedCaseId)
@@ -2355,7 +2365,7 @@ export default function App() {
         const target = specCasesForSuite[idx];
         if (target) setSpecSelectedCaseId(target.id);
       } else {
-        const target = visibleCaseIndices[idx];
+        const target = queueCaseIndices[idx];
         if (target !== undefined) setSelectedIndex(target);
       }
     },
@@ -2389,7 +2399,11 @@ export default function App() {
       const nextIdx =
         nextExecutionCaseIndex(executionCaseOrderByCaseIndex, selectedIndex) ??
         (executionCaseOrderByCaseIndex.includes(selectedIndex) ? null : executionCaseOrderByCaseIndex[0] ?? null);
-      if (nextIdx !== null) setSelectedIndex(nextIdx);
+      if (nextIdx !== null) advanceToCase(nextIdx);
+    },
+    // 'p'/'s' on the last case of a suite-narrowed queue: move into the next suite.
+    onAdvancePastEnd: () => {
+      if (crossSuiteNextCaseIndex !== undefined) advanceToCase(crossSuiteNextCaseIndex);
     },
     onToggleStepDrawer: () => setShowStepDrawer((prev) => !prev),
     onToggleSuiteExpand: () => {
@@ -2558,6 +2572,30 @@ export default function App() {
           (i) => !filterResult || visibleCaseIndexSet.has(i),
         )
       : [];
+
+  // Moves the active case; when the queue is narrowed to one suite and the target lives in a
+  // different suite, the suite selection follows it, so the newly active case is always in
+  // the visible list (finishing a suite's last case flows on into the next suite).
+  const advanceToCase = (target: number) => {
+    setSelectedIndex(target);
+    const targetSuiteId = workspace?.cases[target]?.test_suite_id;
+    if (execSuiteFilterId && targetSuiteId && targetSuiteId !== execSuiteFilterId) {
+      setExecSuiteFilterId(targetSuiteId);
+    }
+  };
+  // The next case after the active one in suite-tree order that's in a DIFFERENT suite --
+  // only meaningful while the queue is narrowed to one suite (otherwise undefined).
+  const crossSuiteNextCaseIndex: number | undefined = (() => {
+    if (!execSuiteFilterId) return undefined;
+    const pos = executionCaseOrderByCaseIndex.indexOf(selectedIndex);
+    return executionCaseOrderByCaseIndex
+      .slice(pos + 1)
+      .find((i) => workspace?.cases[i]?.test_suite_id !== execSuiteFilterId);
+  })();
+  // Next case for the Pass/Skip buttons: the next one in the visible queue, or -- at the end
+  // of a suite-narrowed queue -- the first case of the next suite.
+  const nextVisibleCaseIndex: number | undefined =
+    queueCaseIndices.find((i) => i > selectedIndex) ?? crossSuiteNextCaseIndex;
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
   const hasUserManagePermission =
@@ -3448,17 +3486,32 @@ export default function App() {
 
           <VirtualizedSuiteTree
             suites={suiteNodes}
-            selectedSuiteId={selectedSuiteId}
+            selectedSuiteId={workspaceMode === "EXECUTION" ? execSuiteFilterId : selectedSuiteId}
             activeSuiteId={
               workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
             }
             onSelectSuite={(suiteId) => {
-              // Deliberately not a toggle -- clicking the already-selected suite again must
-              // not deselect it (per direct request). Re-selecting the same suite is still
-              // useful on its own: in Specification mode it switches Pane 3 back to that
-              // suite's details if a case was being viewed instead.
+              if (workspaceMode === "EXECUTION") {
+                // Execute mode: narrows the queue to this suite's cases; clicking the selected
+                // suite again shows everything again. If the active case isn't in the suite,
+                // jump to the suite's first case so the active case is always listed.
+                if (execSuiteFilterId === suiteId) {
+                  setExecSuiteFilterId(null);
+                  return;
+                }
+                setExecSuiteFilterId(suiteId);
+                const inSuite = visibleCaseIndices.filter(
+                  (i) => workspace?.cases[i]?.test_suite_id === suiteId,
+                );
+                if (inSuite.length > 0 && !inSuite.includes(selectedIndex)) setSelectedIndex(inSuite[0]);
+                return;
+              }
+              // Spec mode: deliberately not a toggle -- clicking the already-selected suite
+              // again must not deselect it (per direct request). Re-selecting the same suite is
+              // still useful on its own: it switches Pane 3 back to that suite's details if a
+              // case was being viewed instead.
               setSelectedSuiteId(suiteId);
-              if (workspaceMode === "SPECIFICATION") setSpecSelectedCaseId(null);
+              setSpecSelectedCaseId(null);
             }}
             mode={workspaceMode}
             canManagePlan={hasPlanManagePermission}
@@ -3534,9 +3587,36 @@ export default function App() {
                 )}
               </span>
             ) : (
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+              {execSuiteFilterId && (
+                <button
+                  onClick={() => setExecSuiteFilterId(null)}
+                  title="Showing one suite's cases -- click to show all cases again"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    maxWidth: "160px",
+                    border: "1px solid #1e3a8a",
+                    borderRadius: "4px",
+                    padding: "1px 6px",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    backgroundColor: "rgba(59, 130, 246, 0.12)",
+                    color: "#93c5fd",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    📁 {specData ? findSuiteNode(specData.suites, execSuiteFilterId)?.name ?? "Suite" : "Suite"}
+                  </span>
+                  <span>✕</span>
+                </button>
+              )}
+              <span style={{ fontSize: "11px", color: "#9ca3af", whiteSpace: "nowrap" }}>
                 <span style={{ color: "#10b981" }}>{passedCount} Pass</span> |{" "}
                 <span style={{ color: "#ef4444" }}>{failedCount} Fail</span>
+              </span>
               </span>
             )}
           </div>
@@ -3642,12 +3722,19 @@ export default function App() {
             </div>
           )}
 
-          {filterResult &&
-            (workspaceMode === "SPECIFICATION" ? specCasesForSuite.length === 0 : visibleCaseIndices.length === 0) && (
+          {(workspaceMode === "SPECIFICATION"
+            ? filterResult && specCasesForSuite.length === 0
+            : (filterResult || execSuiteFilterId) && queueCaseIndices.length === 0) && (
               <div style={{ padding: "16px 12px", fontSize: "11px", color: "#6b7280", textAlign: "center" }}>
-                {workspaceMode === "SPECIFICATION" && selectedSuiteId
-                  ? "No cases in this suite match the current search/filters."
-                  : "No cases match the current search/filters."}
+                {workspaceMode === "SPECIFICATION"
+                  ? selectedSuiteId
+                    ? "No cases in this suite match the current search/filters."
+                    : "No cases match the current search/filters."
+                  : execSuiteFilterId
+                    ? filterResult
+                      ? "No cases in this suite match the current search/filters."
+                      : "None of this suite's cases are in this test plan."
+                    : "No cases match the current search/filters."}
               </div>
             )}
           {workspaceMode === "SPECIFICATION" ? (
@@ -3662,11 +3749,13 @@ export default function App() {
           ) : (
             <TestCaseQueueGrid
               cases={
-                filterResult ? visibleCaseIndices.map((i) => workspace.cases[i]) : workspace.cases
+                filterResult || execSuiteFilterId
+                  ? queueCaseIndices.map((i) => workspace.cases[i])
+                  : workspace.cases
               }
               selectedIndex={selectedVisiblePos}
               onSelectCase={(pos) => {
-                const target = visibleCaseIndices[pos];
+                const target = queueCaseIndices[pos];
                 if (target !== undefined) setSelectedIndex(target);
               }}
             />
@@ -4627,7 +4716,7 @@ export default function App() {
                       // effect (keyed on selectedIndex) never re-runs to correct it.
                       pendingVerdictRef.current = "PASSED";
                       if (nextVisibleCaseIndex !== undefined)
-                        setSelectedIndex(nextVisibleCaseIndex);
+                        advanceToCase(nextVisibleCaseIndex);
                     }}
                     style={{
                       backgroundColor: hasExecuteRunPermission
@@ -4711,7 +4800,7 @@ export default function App() {
                       // note-only Ctrl+Enter correct when this is the last case (no advance).
                       pendingVerdictRef.current = "SKIPPED";
                       if (nextVisibleCaseIndex !== undefined)
-                        setSelectedIndex(nextVisibleCaseIndex);
+                        advanceToCase(nextVisibleCaseIndex);
                     }}
                     style={{
                       backgroundColor: hasExecuteRunPermission
