@@ -241,6 +241,26 @@ describe('Reporting: verdict breakdown, trend, coverage, test-health', () => {
       expect(row.execution_duration_ms).not.toBe(450);
     });
 
+    it('POST /api/v1/executions (manual) ignores a supplied duration -- manual execution is never timed', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+      const planCaseRow = await db
+        .selectFrom('test_plan_cases')
+        .selectAll()
+        .where('test_plan_id', '=', seed.planId)
+        .executeTakeFirstOrThrow();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/executions',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { build_id: seed.buildId, test_plan_case_id: planCaseRow.id, verdict: 'PASSED', execution_duration_ms: 777 },
+      });
+      expect(res.statusCode).toBe(201);
+      const row = await db.selectFrom('executions').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
+      expect(row.execution_duration_ms).toBeNull();
+    });
+
     it('batchExecution.ts stores null, not a fabricated 0, when duration_ms is omitted', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);

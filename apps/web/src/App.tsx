@@ -2313,7 +2313,8 @@ export default function App() {
             verdict,
             status: "COMPLETED",
             notes: resolvedNotes,
-            execution_duration_ms: Math.floor(Math.random() * 800) + 200,
+            // No duration: manual execution isn't timed (this used to send a random
+            // 200-1000ms, which made Reports' "Slowest" table meaningless).
           }),
         });
 

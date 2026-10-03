@@ -178,7 +178,6 @@ export async function createServer(connectionString?: string) {
       verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
       status?: 'COMPLETED' | 'IN_PROGRESS';
       notes?: string;
-      execution_duration_ms?: number;
       step_results?: Array<{ test_step_id: string; step_number: number; verdict: string; actual_result?: string }>;
     };
 
@@ -229,10 +228,11 @@ export async function createServer(connectionString?: string) {
         tester_id: actorId,
         status: body.status || 'COMPLETED',
         verdict: body.verdict,
-        // null (not a fabricated number like the old `|| 450`) when the caller doesn't
-        // report a real duration -- reporting queries filter these out explicitly rather
-        // than silently averaging in a made-up value. `??` also means a genuine 0 survives.
-        execution_duration_ms: body.execution_duration_ms ?? null,
+        // Manual execution isn't timed: this is the single-result route the UI uses, so it
+        // never stores a duration, even if one is sent. Durations come only from automated
+        // results via the batch route (routes/batchExecution.ts), which is all Reports'
+        // "Slowest" table ranks.
+        execution_duration_ms: null,
         notes: body.notes || null,
         custom_fields_snapshot: JSON.stringify({ environment: 'STAGING' }),
         execution_timestamp: now,

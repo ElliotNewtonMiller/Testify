@@ -483,9 +483,14 @@ export function ReportingModal({ isOpen, onClose, currentUser, projects, default
               ) : (
                 <div style={{ display: "flex", gap: "10px", flex: 1, minHeight: 0 }}>
                   <div style={{ flex: 1, overflowY: "auto" }}>
-                    <div style={{ fontSize: "10px", color: "#94a3b8", fontWeight: 700, marginBottom: "4px" }}>SLOWEST</div>
+                    <div
+                      style={{ fontSize: "10px", color: "#94a3b8", fontWeight: 700, marginBottom: "4px" }}
+                      title="Manual execution isn't timed -- durations come only from automated results submitted through the API"
+                    >
+                      SLOWEST (AUTOMATED)
+                    </div>
                     {testHealth.slowest_tests.length === 0 ? (
-                      <div style={helperTextStyle}>No measured durations yet.</div>
+                      <div style={helperTextStyle}>No automated results with durations yet.</div>
                     ) : (
                       testHealth.slowest_tests.map((t) => (
                         <div key={t.test_case_id} style={{ fontSize: "11px", padding: "3px 0", borderBottom: "1px solid #1e293b" }}>

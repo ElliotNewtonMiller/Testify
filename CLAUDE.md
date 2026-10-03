@@ -721,7 +721,7 @@ Per direct request. The server already refused executions on a `CLOSED` build (`
 - **UI** (`App.tsx`, `CaseFilterPanel.tsx`): a "Close Run"/"Open Run" button next to "+ Filter", Execute mode only, gated on `BUILD_MANAGE` (`hasBuildManagePermission`; disabled with a tooltip otherwise), calling the existing PUT route. While the selected run is `CLOSED` (`isRunClosed`): `submitVerdict` refuses with a toast, the four verdict buttons are dimmed and guarded, the Notes field is disabled, and the hotkey engine blocks `p/f/b/s` and Ctrl+Enter via a new `useHotkeyEngine` option `blockVerdictsReason` (j/k still work). When a recorded result auto-closes the run, the dropdown entry flips to closed and a toast says so.
 - **Run dropdown label**: no more `[OPEN]`; only a closed run gets a suffix, `[CLOSE]` (Elliot's exact wording).
 - **Fixed a real bug found while wiring this**: `submitVerdict` posted `build_id: workspace.build.id`, but `refreshExecutionWorkspace` always sets `workspace.build` to `builds[0]` (the plan's newest run) regardless of the dropdown -- so with an older run selected, results were displayed for that run but **recorded against the newest one**. It now posts `selectedRunId` (falling back to `workspace.build.id`).
-- **Noticed, not changed**: `submitVerdict` sends `execution_duration_ms: Math.floor(Math.random() * 800) + 200` -- a fabricated duration, the same data-quality problem the reporting entry fixed server-side (2026-09-21), reintroduced from the client. Reporting's "slowest tests" are therefore random for UI-recorded results. Flagged to Elliot.
+- **Noticed, fixed next**: `submitVerdict` sent a fabricated random `execution_duration_ms` -- see "Changed: manual test execution is no longer timed" below.
 
 New tests: `apps/server/tests/run_close.test.ts` (2 -- batch-all-but-one stays OPEN, the last single result auto-closes with an audit row, further results 422, reopen allows recording again; a manually closed run blocks results and a Tester gets 403 opening/closing). `npm test`: 569/572 (the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/`). `tsc --noEmit` clean on all four workspaces; UI verification handed to Elliot.
 
@@ -735,6 +735,16 @@ Follow-ups to the entry directly above, per direct request:
 - **Removed the "run was closed" toast** on auto-close; the dropdown entry still flips to `[CLOSED]`.
 
 `apps/server/tests/run_close.test.ts` extended: after reopening a run that already auto-closed, recording another result leaves it `OPEN` and no second audit row is written. `tsc --noEmit` clean on `apps/web`/`apps/server`.
+
+## Changed: manual test execution is no longer timed (2026-10-02)
+
+Per direct request ("get rid of the time tracking/reporting completely for manual test execution"), following the finding flagged in the Close Run entry above: `App.tsx`'s `submitVerdict` sent `execution_duration_ms: Math.floor(Math.random() * 800) + 200` on every UI verdict -- a fabricated duration that made Reports' "Slowest" table noise for manually executed cases.
+
+- `submitVerdict` no longer sends any duration.
+- `POST /api/v1/executions` (`server.ts`, the single-result route the UI uses) now always stores `execution_duration_ms: null`, ignoring any supplied value, and `execution_duration_ms` was dropped from its body type. Durations come only from automated results via the batch route (`batchExecution.ts`, unchanged), which is all the "Slowest" ranking now reflects.
+- `ReportingModal.tsx`: the column is labeled "SLOWEST (AUTOMATED)" with a tooltip explaining manual execution isn't timed; empty state reads "No automated results with durations yet." Flakiness is unaffected (it's verdict-based, not time-based).
+
+New test: `apps/server/tests/reports.test.ts` (+1 -- the manual route stores null even when a duration is sent). `core_loop_e2e.test.ts` still sends durations to the manual route; harmless now (ignored, never asserted). `tsc --noEmit` clean on `apps/server`/`apps/web`.
 
 ## Implementation status vs. the roadmap
 
