@@ -76,6 +76,9 @@ interface SpecSuiteNode {
   in_plan_count: number;
 }
 
+/** Value of the Plan dropdown's "Show/Hide archived plans" entry -- never a real plan id. */
+const TOGGLE_ARCHIVED_PLANS_VALUE = "__toggle_archived_plans__";
+
 /** Keeps only suites whose id is in `keep` (the case-search response's suite_ids already
  * includes every ancestor of a match, so the result stays a connected tree). */
 function pruneSuiteTree(nodes: SpecSuiteNode[], keep: Set<string>): SpecSuiteNode[] {
@@ -522,6 +525,8 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
   const [plansList, setPlansList] = useState<EntityItem[]>([]);
+  // Archived plans are hidden from the Plan dropdown unless revealed by its own last entry.
+  const [showArchivedPlans, setShowArchivedPlans] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
   const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
@@ -1102,6 +1107,7 @@ export default function App() {
     setSelectedProjectId(projectId);
     setSelectedSuiteId(null);
     setExecSuiteFilterId(null);
+    setShowArchivedPlans(false);
     setSpecSelectedCaseId(null);
     if (opts.silent) return;
     const target = projectsList.find((p) => p.id === projectId);
@@ -1169,8 +1175,14 @@ export default function App() {
         // without this branch, selectedPlanId/plansList were left stale on whatever the
         // previous project had, so Spec mode kept showing a since-gone plan's "In Plan"
         // state indefinitely.
+        // Default to the first plan that isn't archived (archived plans are hidden from the
+        // dropdown unless asked for), falling back to any plan.
         setSelectedPlanId((prev) =>
-          mapped.length === 0 ? "" : mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
+          mapped.length === 0
+            ? ""
+            : mapped.some((p) => p.id === prev)
+              ? prev
+              : (mapped.find((p) => p.status !== "ARCHIVED") ?? mapped[0]).id,
         );
       } else {
         // A non-ok response (e.g. a stale/fake project id from PROJECT's still-mock CREATE
@@ -2959,7 +2971,14 @@ export default function App() {
             <span style={{ color: "#9ca3af", fontWeight: 600 }}>Plan:</span>
             <select
               value={selectedPlanId}
-              onChange={(e) => handleSelectPlan(e.target.value)}
+              onChange={(e) => {
+                // The last entry toggles archived plans; it never becomes the selection.
+                if (e.target.value === TOGGLE_ARCHIVED_PLANS_VALUE) {
+                  setShowArchivedPlans((v) => !v);
+                  return;
+                }
+                handleSelectPlan(e.target.value);
+              }}
               style={{
                 backgroundColor: "#1e293b",
                 color: "#f8fafc",
@@ -2972,13 +2991,40 @@ export default function App() {
                 cursor: "pointer",
               }}
             >
-              {plansList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {/* ACTIVE is the normal state, so only LOCKED/ARCHIVED get a suffix. */}
-                  {p.status && p.status !== "ACTIVE" ? ` [${p.status}]` : ""}
-                </option>
-              ))}
+              {(() => {
+                const current = plansList.filter((p) => p.status !== "ARCHIVED");
+                const archived = plansList.filter((p) => p.status === "ARCHIVED");
+                // An archived plan that's currently selected always stays visible, so the
+                // select never shows a blank value.
+                const archivedShown = showArchivedPlans
+                  ? archived
+                  : archived.filter((p) => p.id === selectedPlanId);
+                return (
+                  <>
+                    {current.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {/* ACTIVE is the normal state, so only LOCKED gets a suffix here. */}
+                        {p.status && p.status !== "ACTIVE" ? ` [${p.status}]` : ""}
+                      </option>
+                    ))}
+                    {archivedShown.length > 0 && (
+                      <optgroup label="Archived">
+                        {archivedShown.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {archived.length > 0 && (
+                      <option value={TOGGLE_ARCHIVED_PLANS_VALUE} style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                        {showArchivedPlans ? "Hide archived plans" : `Show archived plans (${archived.length})`}
+                      </option>
+                    )}
+                  </>
+                );
+              })()}
             </select>
             <button
               onClick={() => openEntityModal("PLAN", "CREATE")}
