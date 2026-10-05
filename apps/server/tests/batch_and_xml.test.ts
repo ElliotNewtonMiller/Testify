@@ -228,6 +228,10 @@ ${tc('SEL-4', 'Done', '')}
       expect(dry.statusCode).toBe(200);
       const status = JSON.parse(dry.payload).unmapped_custom_fields.find((f: any) => f.incoming_key === 'automationStatus');
       expect(status.distinct_values).toEqual(['N/A', 'Done', 'To Do']);
+      // These cases have no steps -- each EMPTY_STEPS warning names its case and suite.
+      const emptySteps = JSON.parse(dry.payload).warnings.filter((w: any) => w.code === 'EMPTY_STEPS');
+      expect(emptySteps.map((w: any) => w.case_external_id)).toEqual(['SEL-1', 'SEL-2', 'SEL-3', 'SEL-4']);
+      expect(emptySteps[0]).toMatchObject({ case_title: 'Case SEL-1', suite_path: 'Select Fields' });
 
       const res = await app.inject({
         method: 'POST',

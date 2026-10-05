@@ -94,6 +94,11 @@ export interface DryRunWarning {
   line_or_node: string;
   code: string;
   message: string;
+  /** For case-level warnings: which case, so the user can find it. */
+  case_external_id?: string;
+  case_title?: string;
+  /** "Parent / Child" path of the suite the case is in, as it appears in the file. */
+  suite_path?: string;
 }
 
 export interface UnmappedCustomField {

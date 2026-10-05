@@ -215,14 +215,21 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
       const dupConfig = configuration.duplicate_resolution || { default_action: 'VERSION_UP' };
 
-      function processSuite(suite: ParsedSuite): HierarchyPreviewNode {
+      function processSuite(suite: ParsedSuite, parentPath = ''): HierarchyPreviewNode {
         totalSuitesDetected++;
+        const suitePath = parentPath ? `${parentPath} / ${suite.name}` : suite.name;
         suitesToCreate++;
 
         let suiteCasesCount = suite.test_cases.length;
 
         for (const tc of suite.test_cases) {
           totalCasesDetected++;
+          // Identifies the case on every case-level warning below.
+          const caseRef = {
+            ...(tc.external_id ? { case_external_id: tc.external_id } : {}),
+            case_title: tc.title,
+            suite_path: suitePath,
+          };
 
           // Check warnings
           if (tc.title.length >= 255) {
@@ -230,6 +237,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
               line_or_node: `testcase[name='${tc.title.substring(0, 30)}...']`,
               code: 'TITLE_TRUNCATED',
               message: 'Title exceeds 255 characters; automatically trimmed.',
+              ...caseRef,
             });
           }
           if (!tc.steps || tc.steps.length === 0) {
@@ -237,6 +245,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
               line_or_node: `testcase[title='${tc.title}']`,
               code: 'EMPTY_STEPS',
               message: 'Test case contains no execution steps.',
+              ...caseRef,
             });
           }
           for (const code of tc.parser_warnings || []) {
@@ -244,6 +253,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
               line_or_node: `testcase[title='${tc.title}']`,
               code,
               message: PARSER_WARNING_MESSAGES[code] || code,
+              ...caseRef,
             });
           }
 
@@ -308,7 +318,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
         const childrenNodes: HierarchyPreviewNode[] = [];
         for (const sub of suite.sub_suites || []) {
-          childrenNodes.push(processSuite(sub));
+          childrenNodes.push(processSuite(sub, suitePath));
         }
 
         return {

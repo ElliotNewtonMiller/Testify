@@ -51,7 +51,14 @@ interface DryRunResult {
     unmapped_custom_fields_count: number;
     validation_warnings_count: number;
   };
-  warnings: Array<{ line_or_node: string; code: string; message: string }>;
+  warnings: Array<{
+    line_or_node: string;
+    code: string;
+    message: string;
+    case_external_id?: string;
+    case_title?: string;
+    suite_path?: string;
+  }>;
   unmapped_custom_fields: UnmappedCustomField[];
   hierarchy_preview: Array<{ name: string; action: string; cases_count: number; children: any[] }>;
 }
@@ -716,8 +723,17 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
                   </label>
                   <div style={{ maxHeight: "120px", overflowY: "auto" }}>
                     {dryRunResult.warnings.map((w, i) => (
-                      <div key={i} style={{ fontSize: "11px", color: "#fca5a5", marginBottom: "4px" }}>
-                        {w.code}: {w.message}
+                      <div key={i} style={{ fontSize: "11px", color: "#fca5a5", marginBottom: "6px" }}>
+                        <div>
+                          {w.code}: {w.message}
+                        </div>
+                        {(w.case_title || w.case_external_id) && (
+                          <div style={{ color: "#cbd5e1" }}>
+                            {w.case_external_id ? `${w.case_external_id} -- ` : ""}
+                            {w.case_title}
+                            {w.suite_path ? <span style={{ color: "#64748b" }}> (in {w.suite_path})</span> : null}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
