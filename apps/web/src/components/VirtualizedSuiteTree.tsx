@@ -226,6 +226,13 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
                       justifyContent: 'center',
                       width: '16px',
                       height: '16px',
+                      // Bigger click target, same look: 6px of padding grows the hit area to
+                      // 28x28 (the full row height), and the matching -6px margin cancels it
+                      // out of the layout, so nothing moves. It reaches into the row's indent
+                      // on the left and the 6px gap before the folder icon on the right.
+                      boxSizing: 'content-box',
+                      padding: '6px',
+                      margin: '-6px',
                       fontSize: '10px',
                       color: '#9ca3af',
                       cursor: 'pointer',
