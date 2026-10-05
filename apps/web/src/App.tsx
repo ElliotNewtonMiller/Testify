@@ -329,11 +329,14 @@ export default function App() {
 
   const dragStateRef = useRef<{ pane: "tree" | "queue"; startX: number; startWidth: number } | null>(null);
 
-  const SUITE_TREE_MIN = 200;
-  const SUITE_TREE_MAX = 480;
-  const QUEUE_GRID_MIN = 260;
-  const QUEUE_GRID_MAX = 600;
-  const PANE3_MIN_WIDTH = 360; // Pane 3 must always keep at least this much room
+  // Loosened per request (was 200-480 / 260-600 with Pane 3 >= 360): the two left panes can
+  // now grow as far as the window allows, at the detail pane's expense. No fixed maximum --
+  // the only cap is that Pane 3 keeps PANE3_MIN_WIDTH, recomputed on every drag tick.
+  const SUITE_TREE_MIN = 140;
+  const SUITE_TREE_MAX = Number.POSITIVE_INFINITY;
+  const QUEUE_GRID_MIN = 180;
+  const QUEUE_GRID_MAX = Number.POSITIVE_INFINITY;
+  const PANE3_MIN_WIDTH = 160; // Pane 3 must always keep at least this much room
 
   // window-level listeners (added on mousedown, removed on mouseup) rather than an
   // onMouseMove handler on the divider itself -- a fast drag routinely outruns a 4px-wide
