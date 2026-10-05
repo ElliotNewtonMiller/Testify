@@ -526,4 +526,73 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       expect(add.statusCode).toBe(422);
     });
   });
+
+  describe('POST .../spec-move (drag-and-drop moves)', () => {
+    async function setup() {
+      const { app, seed, db } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+      const h = { authorization: `Bearer ${token}` };
+      const P = seed.projectId;
+      const mkSuite = async (name: string, parent: string | null = null) =>
+        JSON.parse(
+          (await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-suites`, headers: h, payload: { name, parent_suite_id: parent } })).payload
+        ).suite;
+      const move = (payload: unknown, headers = h) =>
+        app.inject({ method: 'POST', url: `/api/v1/projects/${P}/spec-move`, headers, payload });
+      const suiteOf = async (caseId: string) =>
+        (await db.selectFrom('test_cases').select('test_suite_id').where('id', '=', caseId).executeTakeFirstOrThrow()).test_suite_id;
+      const suiteRow = async (id: string) => db.selectFrom('test_suites').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+      return { app, seed, db, token, h, P, mkSuite, move, suiteOf, suiteRow };
+    }
+
+    it('moves several cases into another suite in one call', async () => {
+      const { seed, mkSuite, move, suiteOf } = await setup();
+      const dest = await mkSuite('Destination');
+      const res = await move({ case_ids: seed.caseIds.slice(0, 3), target_suite_id: dest.id });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ moved_suite_count: 0, moved_case_count: 3 });
+      for (const id of seed.caseIds.slice(0, 3)) expect(await suiteOf(id)).toBe(dest.id);
+      expect(await suiteOf(seed.caseIds[3])).toBe(seed.suiteId);
+    });
+
+    it('moves a suite (with its child) under a new parent and to the top level; nested selections travel with their ancestor', async () => {
+      const { mkSuite, move, suiteRow } = await setup();
+      const parent = await mkSuite('Parent');
+      const child = await mkSuite('Child', parent.id);
+      const dest = await mkSuite('Dest');
+
+      // Selecting both parent and child moves only the parent; the child comes along.
+      const res = await move({ suite_ids: [parent.id, child.id], target_suite_id: dest.id });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).moved_suite_count).toBe(1);
+      const movedParent = await suiteRow(parent.id);
+      const movedChild = await suiteRow(child.id);
+      expect(movedParent.parent_suite_id).toBe(dest.id);
+      expect(movedChild.parent_suite_id).toBe(parent.id);
+      expect(movedChild.path.startsWith(`${movedParent.path}/`)).toBe(true);
+
+      const top = await move({ suite_ids: [parent.id], target_suite_id: null });
+      expect(top.statusCode).toBe(200);
+      expect((await suiteRow(parent.id)).parent_suite_id).toBeNull();
+    });
+
+    it('rejects cycles, cases to the top level, cross-project targets, unknown ids (moving nothing), and a Viewer', async () => {
+      const { app, seed, h, mkSuite, move, suiteOf, token } = await setup();
+      const parent = await mkSuite('P');
+      const child = await mkSuite('C', parent.id);
+
+      expect((await move({ suite_ids: [parent.id], target_suite_id: child.id })).statusCode).toBe(400);
+      expect((await move({ case_ids: [seed.caseIds[0]], target_suite_id: null })).statusCode).toBe(400);
+      expect((await move({ case_ids: [seed.caseIds[0]], target_suite_id: 'no-such-suite' })).statusCode).toBe(400);
+
+      const unknown = await move({ case_ids: [seed.caseIds[0], 'no-such-case'], target_suite_id: parent.id });
+      expect(unknown.statusCode).toBe(404);
+      expect(await suiteOf(seed.caseIds[0])).toBe(seed.suiteId);
+
+      const viewer = await createAndLoginAs(app, token, 'Viewer');
+      const denied = await move({ case_ids: [seed.caseIds[0]], target_suite_id: parent.id }, { authorization: `Bearer ${viewer.token}` });
+      expect(denied.statusCode).toBe(403);
+      void h;
+    });
+  });
 });

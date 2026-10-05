@@ -16,7 +16,14 @@ export interface SpecCaseGridItem {
 export interface SpecCaseListGridProps {
   cases: SpecCaseGridItem[];
   selectedCaseId: string | null;
-  onSelectCase: (caseId: string) => void;
+  /** `mods` carries Shift (range) / Ctrl-Cmd (toggle) for multi-select. */
+  onSelectCase: (caseId: string, mods?: { shift: boolean; toggle: boolean }) => void;
+  /** Extra cases highlighted as selected (multi-select), on top of selectedCaseId. */
+  selectedCaseIds?: Set<string>;
+  /** Drag-and-drop moving: rows are draggable when canDrag. */
+  canDrag?: boolean;
+  onDragStartCase?: (caseId: string, e: React.DragEvent) => void;
+  onDragEndItems?: () => void;
   /** Whether the current user holds PLAN_MANAGE -- gates the include/exclude button. */
   canManagePlan: boolean;
   onToggleInclusion: (testCaseId: string, include: boolean) => void;
@@ -47,6 +54,10 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
   cases,
   selectedCaseId,
   onSelectCase,
+  selectedCaseIds,
+  canDrag = false,
+  onDragStartCase,
+  onDragEndItems,
   canManagePlan,
   onToggleInclusion,
   pendingCaseId = null,
@@ -194,12 +205,15 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
           }}
         >
           {visibleCases.map((c, idx) => {
-            const isSelected = c.id === selectedCaseId;
+            const isSelected = c.id === selectedCaseId || Boolean(selectedCaseIds?.has(c.id));
             const isDeprecated = c.latest_version?.status === 'DEPRECATED';
             return (
               <div
                 key={c.id || `${c.external_id}-${startIndex + idx}`}
-                onClick={() => onSelectCase(c.id)}
+                onClick={(e) => onSelectCase(c.id, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey })}
+                draggable={canDrag}
+                onDragStart={canDrag ? (e) => onDragStartCase?.(c.id, e) : undefined}
+                onDragEnd={canDrag ? () => onDragEndItems?.() : undefined}
                 style={{
                   height: `${ROW_HEIGHT}px`,
                   boxSizing: 'border-box',

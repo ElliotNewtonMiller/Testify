@@ -307,6 +307,13 @@ export default function App() {
   // Suite tree expand/collapse (suite id -> expanded; a missing id means expanded). Owned here
   // so the filter panel's "Expand all"/"Collapse all" can drive it. Session-only.
   const [suiteExpandedMap, setSuiteExpandedMap] = useState<Record<string, boolean>>({});
+  // Spec-mode multi-select (Shift = range, Ctrl/Cmd = toggle) and drag-and-drop moving. A
+  // selection lives in one list at a time; the anchors are where a Shift-range starts.
+  const [specSelectedSuiteIds, setSpecSelectedSuiteIds] = useState<Set<string>>(() => new Set());
+  const [specSelectedCaseIds, setSpecSelectedCaseIds] = useState<Set<string>>(() => new Set());
+  const suiteSelectAnchorRef = useRef<string | null>(null);
+  const caseSelectAnchorRef = useRef<string | null>(null);
+  const [dragPayload, setDragPayload] = useState<{ kind: "SUITES" | "CASES"; ids: string[] } | null>(null);
   const caseFilterFieldsRequestSeq = useRef(0);
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -601,6 +608,30 @@ export default function App() {
     setTimeout(() => {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3000);
+  }, []);
+
+  // Spec-mode multi-select resets on mode/project change; Escape clears it (outside inputs).
+  useEffect(() => {
+    setSpecSelectedSuiteIds(new Set());
+    setSpecSelectedCaseIds(new Set());
+  }, [workspaceMode, selectedProjectId]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
+      setSpecSelectedSuiteIds(new Set());
+      setSpecSelectedCaseIds(new Set());
+    };
+    // A virtualized source row can unmount mid-drag (its own dragend never fires), so any
+    // drag ending anywhere also clears the drag state.
+    const onDragEnd = () => setTimeout(() => setDragPayload(null), 0);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("dragend", onDragEnd);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("dragend", onDragEnd);
+    };
   }, []);
 
   // ---- Search & filter ----
@@ -2670,6 +2701,139 @@ export default function App() {
     }
   })(suiteNodes);
   const allSuitesExpanded = expandableSuiteIds.every((id) => suiteExpandedMap[id] ?? true);
+  // ---- Spec-mode multi-select + drag-and-drop moving ----
+  // Visible tree order (collapsed children excluded) -- what a Shift-range spans in the tree.
+  const visibleSuiteOrder: string[] = [];
+  (function walkVisible(nodes: SuiteTreeNode[]) {
+    for (const n of nodes) {
+      visibleSuiteOrder.push(n.id);
+      if (n.children && n.children.length > 0 && (suiteExpandedMap[n.id] ?? true)) walkVisible(n.children);
+    }
+  })(suiteNodes);
+  const suiteInfoById = new Map<string, { path: string; name: string }>();
+  (function walkAll(nodes: SpecSuiteNode[]) {
+    for (const n of nodes) {
+      suiteInfoById.set(n.id, { path: n.path, name: n.name });
+      walkAll(n.children);
+    }
+  })(specData?.suites ?? []);
+
+  const rangeBetween = (order: string[], fromId: string, toId: string): string[] => {
+    const a = order.indexOf(fromId);
+    const b = order.indexOf(toId);
+    if (a < 0 || b < 0) return [toId];
+    return order.slice(Math.min(a, b), Math.max(a, b) + 1);
+  };
+  const clearSpecMultiSelect = () => {
+    setSpecSelectedSuiteIds(new Set());
+    setSpecSelectedCaseIds(new Set());
+  };
+
+  const handleSpecSuiteClick = (suiteId: string, mods?: { shift: boolean; toggle: boolean }) => {
+    if (mods?.shift || mods?.toggle) {
+      setSpecSelectedCaseIds(new Set());
+      const base = specSelectedSuiteIds.size > 0 ? specSelectedSuiteIds : new Set(selectedSuiteId ? [selectedSuiteId] : []);
+      if (mods.shift) {
+        const from = suiteSelectAnchorRef.current ?? selectedSuiteId ?? suiteId;
+        setSpecSelectedSuiteIds(new Set(rangeBetween(visibleSuiteOrder, from, suiteId)));
+      } else {
+        const next = new Set(base);
+        if (next.has(suiteId)) next.delete(suiteId);
+        else next.add(suiteId);
+        setSpecSelectedSuiteIds(next);
+        suiteSelectAnchorRef.current = suiteId;
+      }
+      return;
+    }
+    // Plain click: unchanged behavior (select, Pane 3 shows the suite), selection = this row.
+    setSelectedSuiteId(suiteId);
+    setSpecSelectedCaseId(null);
+    setSpecSelectedSuiteIds(new Set([suiteId]));
+    setSpecSelectedCaseIds(new Set());
+    suiteSelectAnchorRef.current = suiteId;
+  };
+
+  const handleSpecCaseClick = (caseId: string, mods?: { shift: boolean; toggle: boolean }) => {
+    if (mods?.shift || mods?.toggle) {
+      setSpecSelectedSuiteIds(new Set());
+      const order = specCasesForSuite.map((c) => c.id);
+      const base = specSelectedCaseIds.size > 0 ? specSelectedCaseIds : new Set(specSelectedCaseId ? [specSelectedCaseId] : []);
+      if (mods.shift) {
+        const from = caseSelectAnchorRef.current ?? specSelectedCaseId ?? caseId;
+        setSpecSelectedCaseIds(new Set(rangeBetween(order, from, caseId)));
+      } else {
+        const next = new Set(base);
+        if (next.has(caseId)) next.delete(caseId);
+        else next.add(caseId);
+        setSpecSelectedCaseIds(next);
+        caseSelectAnchorRef.current = caseId;
+      }
+      return;
+    }
+    setSpecSelectedCaseId(caseId);
+    setSpecSelectedCaseIds(new Set([caseId]));
+    setSpecSelectedSuiteIds(new Set());
+    caseSelectAnchorRef.current = caseId;
+  };
+
+  // Dragging a selected row drags the whole selection of that kind; otherwise just that row.
+  const handleSpecDragStart = (kind: "SUITES" | "CASES", id: string, e: React.DragEvent) => {
+    const selection = kind === "SUITES" ? specSelectedSuiteIds : specSelectedCaseIds;
+    const ids = selection.has(id) ? [...selection] : [id];
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-testify-move", JSON.stringify({ kind, ids }));
+    // Deferred: changing the DOM inside dragstart (the tree adds its "top level" zone) can
+    // make the browser cancel the drag.
+    setTimeout(() => setDragPayload({ kind, ids }), 0);
+  };
+
+  const canDropSpecItemsOn = (targetSuiteId: string | null): boolean => {
+    if (!dragPayload) return false;
+    if (dragPayload.kind === "CASES") return targetSuiteId !== null;
+    if (targetSuiteId === null) return true;
+    const targetPath = suiteInfoById.get(targetSuiteId)?.path ?? "";
+    // A suite can't go into itself or one of its own sub-suites.
+    return !dragPayload.ids.some((id) => {
+      const path = suiteInfoById.get(id)?.path;
+      return id === targetSuiteId || (path ? targetPath.startsWith(`${path}/`) : false);
+    });
+  };
+
+  const handleSpecDrop = async (targetSuiteId: string | null) => {
+    const payload = dragPayload;
+    setDragPayload(null);
+    if (!payload || !selectedProjectId) return;
+    try {
+      const res = await fetch(`/api/v1/projects/${selectedProjectId}/spec-move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          ...(payload.kind === "SUITES" ? { suite_ids: payload.ids } : { case_ids: payload.ids }),
+          target_suite_id: targetSuiteId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}) as any);
+      if (!res.ok) {
+        if (res.status === 401) {
+          handleAuthExpiry();
+          return;
+        }
+        throw new Error(data.error || data.detail || "Failed to move");
+      }
+      const moved = (data.moved_suite_count ?? 0) + (data.moved_case_count ?? 0);
+      const noun =
+        payload.kind === "SUITES"
+          ? `${data.moved_suite_count} suite${data.moved_suite_count === 1 ? "" : "s"}`
+          : `${data.moved_case_count} case${data.moved_case_count === 1 ? "" : "s"}`;
+      const where = targetSuiteId ? suiteInfoById.get(targetSuiteId)?.name ?? "the suite" : "the top level";
+      showToast(moved > 0 ? `Moved ${noun} to ${where}` : `Already in ${where}`);
+      clearSpecMultiSelect();
+      await refreshSpecTree();
+    } catch (err: any) {
+      showToast(err.message || "Failed to move");
+    }
+  };
+
   const toggleAllSuitesExpanded = () => {
     const next = !allSuitesExpanded;
     setSuiteExpandedMap((prev) => {
@@ -3761,11 +3925,24 @@ export default function App() {
             suites={suiteNodes}
             expandedMap={suiteExpandedMap}
             onExpandedMapChange={setSuiteExpandedMap}
-            selectedSuiteId={workspaceMode === "EXECUTION" ? execSuiteFilterId : selectedSuiteId}
+            selectedSuiteId={
+              workspaceMode === "EXECUTION"
+                ? execSuiteFilterId
+                : specSelectedSuiteIds.size > 0
+                  ? null
+                  : selectedSuiteId
+            }
+            selectedSuiteIds={workspaceMode === "SPECIFICATION" ? specSelectedSuiteIds : undefined}
+            canDrag={workspaceMode === "SPECIFICATION" && hasSpecEditPermission}
+            onDragStartSuite={(id, e) => handleSpecDragStart("SUITES", id, e)}
+            onDragEndItems={() => setDragPayload(null)}
+            draggingKind={workspaceMode === "SPECIFICATION" ? dragPayload?.kind ?? null : null}
+            canDropOn={canDropSpecItemsOn}
+            onDropOn={handleSpecDrop}
             activeSuiteId={
               workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
             }
-            onSelectSuite={(suiteId) => {
+            onSelectSuite={(suiteId, mods) => {
               if (workspaceMode === "EXECUTION") {
                 // Execute mode: narrows the queue to this suite's cases; clicking the selected
                 // suite again shows everything again. If the active case isn't in the suite,
@@ -3781,12 +3958,10 @@ export default function App() {
                 if (inSuite.length > 0 && !inSuite.includes(selectedIndex)) setSelectedIndex(inSuite[0]);
                 return;
               }
-              // Spec mode: deliberately not a toggle -- clicking the already-selected suite
-              // again must not deselect it (per direct request). Re-selecting the same suite is
-              // still useful on its own: it switches Pane 3 back to that suite's details if a
-              // case was being viewed instead.
-              setSelectedSuiteId(suiteId);
-              setSpecSelectedCaseId(null);
+              // Spec mode: a plain click is deliberately not a toggle -- clicking the already-
+              // selected suite again must not deselect it (per direct request); it switches
+              // Pane 3 back to that suite's details. Shift/Ctrl-Cmd build a multi-selection.
+              handleSpecSuiteClick(suiteId, mods);
             }}
             mode={workspaceMode}
             canManagePlan={hasPlanManagePermission}
@@ -4015,8 +4190,12 @@ export default function App() {
           {workspaceMode === "SPECIFICATION" ? (
             <SpecCaseListGrid
               cases={specCasesForSuite}
-              selectedCaseId={specSelectedCaseId}
-              onSelectCase={(caseId) => setSpecSelectedCaseId(caseId)}
+              selectedCaseId={specSelectedCaseIds.size > 0 ? null : specSelectedCaseId}
+              selectedCaseIds={specSelectedCaseIds}
+              onSelectCase={handleSpecCaseClick}
+              canDrag={hasSpecEditPermission}
+              onDragStartCase={(id, e) => handleSpecDragStart("CASES", id, e)}
+              onDragEndItems={() => setDragPayload(null)}
               canManagePlan={hasPlanManagePermission}
               onToggleInclusion={handleToggleCaseInclusion}
               pendingCaseId={pendingToggleId}

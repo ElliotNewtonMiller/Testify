@@ -23,7 +23,20 @@ export interface VirtualizedSuiteTreeProps {
    * used for Specification-mode filtering/curation. Purely a visual "you are here" cue in
    * Execution mode; doesn't affect selection, filtering, or click behavior. */
   activeSuiteId?: string | null;
-  onSelectSuite?: (suiteId: string) => void;
+  /** `mods` carries Shift (range) / Ctrl-Cmd (toggle) for Spec-mode multi-select. */
+  onSelectSuite?: (suiteId: string, mods?: { shift: boolean; toggle: boolean }) => void;
+  /** Extra suites highlighted as selected (Spec-mode multi-select), on top of selectedSuiteId. */
+  selectedSuiteIds?: Set<string>;
+  /** Drag-and-drop moving (Spec mode). Rows are draggable when canDrag. */
+  canDrag?: boolean;
+  onDragStartSuite?: (suiteId: string, e: React.DragEvent) => void;
+  onDragEndItems?: () => void;
+  /** What's currently being dragged (anywhere in the app), or null -- shows the top-level zone
+   * for suites and decides which rows accept a drop. */
+  draggingKind?: 'SUITES' | 'CASES' | null;
+  /** Whether the current drag may drop on this suite (null = the top level). */
+  canDropOn?: (targetSuiteId: string | null) => boolean;
+  onDropOn?: (targetSuiteId: string | null) => void;
   onToggleExpand?: (suiteId: string, expanded: boolean) => void;
   /** Optional controlled expand/collapse state (suite id -> expanded; a missing id means
    * expanded). Lets the parent drive "Expand all"/"Collapse all"; without it the tree keeps
@@ -65,6 +78,13 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   selectedSuiteId,
   activeSuiteId,
   onSelectSuite,
+  selectedSuiteIds,
+  canDrag = false,
+  onDragStartSuite,
+  onDragEndItems,
+  draggingKind = null,
+  canDropOn,
+  onDropOn,
   onToggleExpand,
   expandedMap: controlledExpandedMap,
   onExpandedMapChange,
@@ -79,6 +99,22 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   onDeleteSuite,
 }) => {
   const [internalExpandedMap, setInternalExpandedMap] = useState<Record<string, boolean>>({});
+  // Row (or the top-level zone, key "__top__") currently hovered by a valid drag.
+  const [dropHoverId, setDropHoverId] = useState<string | null>(null);
+  const dropHandlers = (targetId: string | null) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!draggingKind || !canDropOn?.(targetId)) return; // no preventDefault -> no-drop cursor
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDropHoverId(targetId ?? '__top__');
+    },
+    onDragLeave: () => setDropHoverId((prev) => (prev === (targetId ?? '__top__') ? null : prev)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropHoverId(null);
+      if (canDropOn?.(targetId)) onDropOn?.(targetId);
+    },
+  });
   const expandedMap = controlledExpandedMap ?? internalExpandedMap;
 
   // Flips whatever the arrow currently shows. The caller passes that state in because a suite
@@ -191,8 +227,26 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
           visible" action buttons below need in order to clamp correctly to the pane's right
           edge at any scroll position, not just when scrolled all the way right. */}
       <div style={{ width: 'fit-content', minWidth: '100%' }}>
+        {/* Only while suites are being dragged: drop here to move them to the top level. */}
+        {draggingKind === 'SUITES' && (
+          <div
+            {...dropHandlers(null)}
+            style={{
+              padding: '6px 12px',
+              fontSize: '11px',
+              color: dropHoverId === '__top__' ? '#ffffff' : '#9ca3af',
+              border: `1px dashed ${dropHoverId === '__top__' ? '#3b82f6' : '#334155'}`,
+              backgroundColor: dropHoverId === '__top__' ? 'rgba(59, 130, 246, 0.18)' : 'transparent',
+              borderRadius: '4px',
+              margin: '4px 8px',
+            }}
+          >
+            ⤒ Move to top level
+          </div>
+        )}
         {flatNodes.map(({ node, depth }) => {
-          const isSelected = node.id === selectedSuiteId;
+          const isSelected = node.id === selectedSuiteId || Boolean(selectedSuiteIds?.has(node.id));
+          const isDropHover = dropHoverId === node.id;
           const isActive = !isSelected && Boolean(activeSuiteId) && node.id === activeSuiteId;
           const hasChildren = Boolean(node.children && node.children.length > 0);
           const isExpanded = expandedMap[node.id] ?? node.isExpanded ?? true;
@@ -204,8 +258,14 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
           return (
             <div
               key={node.id}
-              onClick={() => onSelectSuite?.(node.id)}
+              onClick={(e) => onSelectSuite?.(node.id, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey })}
+              draggable={canDrag}
+              onDragStart={canDrag ? (e) => onDragStartSuite?.(node.id, e) : undefined}
+              onDragEnd={canDrag ? () => onDragEndItems?.() : undefined}
+              {...(draggingKind ? dropHandlers(node.id) : {})}
               style={{
+                outline: isDropHover ? '1px dashed #3b82f6' : undefined,
+                outlineOffset: '-1px',
                 height: `${TREE_ROW_HEIGHT}px`, // Strict 28px Tree Node Row Standard
                 width: '100%',
                 display: 'flex',

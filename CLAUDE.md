@@ -771,6 +771,16 @@ Per direct request: an unmapped import column (e.g. TestLink's `automationStatus
 
 New tests: `packages/core/tests/importFieldValues.test.ts` (3), `apps/server/tests/batch_and_xml.test.ts` (+1 -- dry-run reports the distinct values; execute creates a SINGLE_SELECT with options N/A/Done/To Do and a MULTI_SELECT with ui/api/slow from comma-separated cells, with no skipped values, and a case reads back `'To Do'` / `['slow','ui']`).
 
+## Added: drag-and-drop moving of suites and cases, with Shift/Ctrl multi-select (Spec mode) (2026-10-05)
+
+Per direct request; decided with Elliot: move only (drop *into* a suite, or suites to the top level -- no reordering, since cases have no position column), Shift = range and Ctrl/Cmd = toggle, Spec mode only (`SPEC_EDIT`).
+
+- **Route** `POST /api/v1/projects/:projectId/spec-move` (`specEditing.ts`): `{ suite_ids?, case_ids?, target_suite_id: string | null }`, one transaction, all-or-nothing. 404 for any id outside the project, 400 for an unknown target, cases to the top level (`test_cases.test_suite_id` is NOT NULL), or a suite into itself/its own sub-suite. Normalizes before moving: a selected suite inside another selected suite travels with its ancestor; a selected case whose suite is moving stays in it; already-there items are no-ops. Returns `{moved_suite_count, moved_case_count}`; one `SPEC_ITEMS_MOVED` audit row.
+- `TestSuiteRepository.move` now uses a `runInTransaction` helper (same as `CustomFieldRepository`'s) instead of always opening its own transaction, so the route can call it inside one.
+- **UI** (`App.tsx`, `VirtualizedSuiteTree.tsx`, `SpecCaseListGrid.tsx`): `specSelectedSuiteIds`/`specSelectedCaseIds` sets with range anchors; a plain click behaves exactly as before and resets the selection to that row; Shift ranges follow visible order (the expanded tree / the case list); a selection lives in one list at a time; Escape, mode or project switch clears it. Native HTML5 drag: dragging a selected row drags the selection, otherwise just that row; suite rows are drop targets (dashed outline on hover), and a "⤒ Move to top level" zone appears at the top of the tree only while suites are dragged. Invalid targets don't `preventDefault`, so the browser shows no-drop. `setDragPayload` is deferred out of `dragstart` (changing the DOM there can cancel the drag), and a window `dragend` listener clears drag state if a virtualized source row unmounted mid-drag. Success toasts "Moved N cases to <suite>" and refreshes the spec tree.
+
+New tests: `apps/server/tests/spec_editing.test.ts` (+3 -- multi-case move; nested parent+child selection moves only the parent and the child's path follows; move to top level; 400s for a cycle, cases to top level and an unknown target; a partly unknown id list moves nothing; Viewer 403). Verified live in the browser: Shift-click highlights a range; a dispatched drag of the selection onto another suite is accepted and sends the move request.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

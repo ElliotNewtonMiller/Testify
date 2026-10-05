@@ -353,6 +353,118 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
+  // POST /api/v1/projects/:projectId/spec-move -- drag-and-drop move of suites and/or cases
+  // into a suite (or suites to the top level with target_suite_id: null), all-or-nothing in
+  // one transaction. Backs Spec mode's multi-select drag; equally usable from the API.
+  app.post(
+    '/api/v1/projects/:projectId/spec-move',
+    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    async (request, reply) => {
+      const actor = request.user!;
+      const { projectId } = request.params as { projectId: string };
+      const body = (request.body as any) || {};
+      const uniqueStrings = (v: unknown) =>
+        Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.length > 0))] : [];
+      const suiteIds = uniqueStrings(body.suite_ids);
+      const caseIds = uniqueStrings(body.case_ids);
+
+      if (!('target_suite_id' in body) || (body.target_suite_id !== null && typeof body.target_suite_id !== 'string')) {
+        return reply.status(400).send({ error: 'target_suite_id is required (a suite id, or null for the top level)' });
+      }
+      const targetSuiteId: string | null = body.target_suite_id;
+      if (suiteIds.length === 0 && caseIds.length === 0) {
+        return reply.status(400).send({ error: 'Nothing to move: provide suite_ids and/or case_ids' });
+      }
+      if (targetSuiteId === null && caseIds.length > 0) {
+        return reply.status(400).send({ error: 'Test cases must be moved into a suite, not to the top level' });
+      }
+
+      const target = targetSuiteId
+        ? await db.selectFrom('test_suites').selectAll().where('id', '=', targetSuiteId).executeTakeFirst()
+        : null;
+      if (targetSuiteId && (!target || target.project_id !== projectId)) {
+        return reply.status(400).send({ error: `Target suite '${targetSuiteId}' not found in this project` });
+      }
+
+      const suites = suiteIds.length
+        ? await db.selectFrom('test_suites').selectAll().where('id', 'in', suiteIds).execute()
+        : [];
+      const cases = caseIds.length
+        ? await db.selectFrom('test_cases').selectAll().where('id', 'in', caseIds).execute()
+        : [];
+      if (suites.length !== suiteIds.length || suites.some((su) => su.project_id !== projectId)) {
+        return reply.status(404).send({ error: 'One or more suites were not found in this project' });
+      }
+      if (cases.length !== caseIds.length || cases.some((c) => c.project_id !== projectId)) {
+        return reply.status(404).send({ error: 'One or more test cases were not found in this project' });
+      }
+
+      const isWithin = (path: string, ancestorPath: string) => path === ancestorPath || path.startsWith(`${ancestorPath}/`);
+      // A selected suite inside another selected suite travels with its ancestor.
+      const movingSuites = suites.filter(
+        (su) => !suites.some((other) => other.id !== su.id && isWithin(su.path, other.path))
+      );
+      for (const su of movingSuites) {
+        if (target && isWithin(target.path, su.path)) {
+          return reply
+            .status(400)
+            .send({ error: `Can't move suite '${su.name}' into itself or one of its own sub-suites` });
+        }
+      }
+      // A selected case whose suite is moving stays inside that suite.
+      const caseSuitePaths = new Map(
+        (cases.length
+          ? await db
+              .selectFrom('test_suites')
+              .select(['id', 'path'])
+              .where('id', 'in', [...new Set(cases.map((c) => c.test_suite_id))])
+              .execute()
+          : []
+        ).map((r) => [r.id, r.path])
+      );
+      const movingCases = cases.filter((c) => {
+        const path = caseSuitePaths.get(c.test_suite_id) ?? '';
+        return !movingSuites.some((su) => isWithin(path, su.path));
+      });
+
+      const suitesToMove = movingSuites.filter((su) => su.parent_suite_id !== targetSuiteId);
+      const casesToMove = movingCases.filter((c) => c.test_suite_id !== targetSuiteId);
+
+      try {
+        await db.transaction().execute(async (trx) => {
+          const trxSuiteRepo = new TestSuiteRepository(trx);
+          for (const su of suitesToMove) {
+            await trxSuiteRepo.move(su.id, targetSuiteId);
+          }
+          if (casesToMove.length > 0) {
+            await trx
+              .updateTable('test_cases')
+              .set({ test_suite_id: targetSuiteId!, updated_at: new Date().toISOString() })
+              .where('id', 'in', casesToMove.map((c) => c.id))
+              .execute();
+          }
+        });
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message || 'Failed to move' });
+      }
+
+      await insertAuditLog({
+        actorId: actor.id,
+        action: 'SPEC_ITEMS_MOVED',
+        resourceType: 'test_suite',
+        resourceId: targetSuiteId ?? 'TOP_LEVEL',
+        projectId,
+        diff: {
+          target_suite_id: targetSuiteId,
+          suite_ids: suitesToMove.map((su) => su.id),
+          case_ids: casesToMove.map((c) => c.id),
+        },
+      });
+
+      return reply.status(200).send({ moved_suite_count: suitesToMove.length, moved_case_count: casesToMove.length });
+    }
+  );
+
   // ---- Test Case Versions ----
 
   app.post(

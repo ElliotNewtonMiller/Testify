@@ -39,6 +39,16 @@ export type DeleteTestSuiteResult =
 export class TestSuiteRepository {
   constructor(private db: Kysely<Database>) {}
 
+  /** Runs `fn` in a transaction, or directly on `this.db` when this repository was built on
+   * an already-open transaction (Kysely can't nest them) -- same helper as
+   * CustomFieldRepository's. */
+  private async runInTransaction<T>(fn: (trx: Kysely<Database>) => Promise<T>): Promise<T> {
+    if ((this.db as any).isTransaction) {
+      return fn(this.db);
+    }
+    return this.db.transaction().execute(fn);
+  }
+
   /**
    * Helper method to calculate materialized path for a new or moved suite.
    */
@@ -242,7 +252,7 @@ export class TestSuiteRepository {
     const descendants = await this.findDescendants(suiteId);
     const now = new Date().toISOString();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       // Update target suite
       await trx
         .updateTable('test_suites')
