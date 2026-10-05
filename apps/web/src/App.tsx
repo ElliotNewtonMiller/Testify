@@ -2974,7 +2974,9 @@ export default function App() {
             >
               {plansList.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} [{p.status}]
+                  {p.name}
+                  {/* ACTIVE is the normal state, so only LOCKED/ARCHIVED get a suffix. */}
+                  {p.status && p.status !== "ACTIVE" ? ` [${p.status}]` : ""}
                 </option>
               ))}
             </select>
