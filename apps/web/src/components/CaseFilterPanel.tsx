@@ -140,6 +140,9 @@ export interface CaseFilterPanelProps {
   /** Spec mode only: whether deprecated cases are listed (they're hidden by default). */
   showDeprecated?: boolean;
   onToggleShowDeprecated?: () => void;
+  /** Suite tree "Expand all"/"Collapse all" (both modes). Omitted when no suite has
+   * sub-suites. */
+  treeExpandControl?: { allExpanded: boolean; onToggle: () => void };
   /** Execute mode only: the Close Run / Open Run button shown next to "+ Filter". */
   runControl?: { closed: boolean; canToggle: boolean; pending: boolean; onToggle: () => void };
 }
@@ -157,6 +160,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
   onRequestFields,
   showDeprecated = false,
   onToggleShowDeprecated,
+  treeExpandControl,
   runControl,
 }) => {
   const fieldsByKey = new Map(fields.map((f) => [f.key, f]));
@@ -414,6 +418,24 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
             }}
           >
             {runControl.pending ? "…" : runControl.closed ? "Open Run" : "Close Run"}
+          </button>
+        )}
+        {treeExpandControl && (
+          <button
+            onClick={treeExpandControl.onToggle}
+            title={treeExpandControl.allExpanded ? "Collapse every suite in the tree" : "Expand every suite in the tree"}
+            style={{
+              background: "transparent",
+              border: "1px solid #334155",
+              borderRadius: "4px",
+              color: "#9ca3af",
+              fontSize: "10px",
+              fontWeight: 700,
+              padding: "2px 8px",
+              cursor: "pointer",
+            }}
+          >
+            {treeExpandControl.allExpanded ? "Collapse all" : "Expand all"}
           </button>
         )}
         {mode === "SPECIFICATION" && onToggleShowDeprecated && (

@@ -301,6 +301,9 @@ export default function App() {
   // Spec mode: deprecated cases are hidden from the case list (and tree counts) unless this is
   // on -- passed to GET .../spec-tree as include_deprecated. Session-only.
   const [showDeprecated, setShowDeprecated] = useState(false);
+  // Suite tree expand/collapse (suite id -> expanded; a missing id means expanded). Owned here
+  // so the filter panel's "Expand all"/"Collapse all" can drive it. Session-only.
+  const [suiteExpandedMap, setSuiteExpandedMap] = useState<Record<string, boolean>>({});
   const caseFilterFieldsRequestSeq = useRef(0);
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -2640,6 +2643,27 @@ export default function App() {
     ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites)
     : [];
 
+  // "Expand all"/"Collapse all": only suites with sub-suites have an arrow, so "all expanded"
+  // means every one of those is open in the tree as currently shown.
+  const expandableSuiteIds: string[] = [];
+  (function collect(nodes: SuiteTreeNode[]) {
+    for (const n of nodes) {
+      if (n.children && n.children.length > 0) {
+        expandableSuiteIds.push(n.id);
+        collect(n.children);
+      }
+    }
+  })(suiteNodes);
+  const allSuitesExpanded = expandableSuiteIds.every((id) => suiteExpandedMap[id] ?? true);
+  const toggleAllSuitesExpanded = () => {
+    const next = !allSuitesExpanded;
+    setSuiteExpandedMap((prev) => {
+      const updated = { ...prev };
+      for (const id of expandableSuiteIds) updated[id] = next;
+      return updated;
+    });
+  };
+
   // Backs Pane 3's Suite Details view below -- selectedSuiteId only carries an id, so the
   // full node (name, case counts) has to be looked up from the nested tree each render.
   function findSuiteNode(nodes: SpecSuiteNode[], suiteId: string): SpecSuiteNode | null {
@@ -3515,6 +3539,11 @@ export default function App() {
             onRequestFields={loadCaseFilterFields}
             showDeprecated={showDeprecated}
             onToggleShowDeprecated={() => setShowDeprecated((v) => !v)}
+            treeExpandControl={
+              expandableSuiteIds.length > 0
+                ? { allExpanded: allSuitesExpanded, onToggle: toggleAllSuitesExpanded }
+                : undefined
+            }
             runControl={
               workspaceMode === "EXECUTION" && selectedRun
                 ? {
@@ -3679,6 +3708,8 @@ export default function App() {
 
           <VirtualizedSuiteTree
             suites={suiteNodes}
+            expandedMap={suiteExpandedMap}
+            onExpandedMapChange={setSuiteExpandedMap}
             selectedSuiteId={workspaceMode === "EXECUTION" ? execSuiteFilterId : selectedSuiteId}
             activeSuiteId={
               workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null

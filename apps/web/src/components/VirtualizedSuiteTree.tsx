@@ -25,6 +25,11 @@ export interface VirtualizedSuiteTreeProps {
   activeSuiteId?: string | null;
   onSelectSuite?: (suiteId: string) => void;
   onToggleExpand?: (suiteId: string, expanded: boolean) => void;
+  /** Optional controlled expand/collapse state (suite id -> expanded; a missing id means
+   * expanded). Lets the parent drive "Expand all"/"Collapse all"; without it the tree keeps
+   * its own state. */
+  expandedMap?: Record<string, boolean>;
+  onExpandedMapChange?: (next: Record<string, boolean>) => void;
   /** EXECUTION (default) shows the pass/fail progress pill; SPECIFICATION shows the
    * plan-inclusion tri-state indicator instead. */
   mode?: 'EXECUTION' | 'SPECIFICATION';
@@ -61,6 +66,8 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   activeSuiteId,
   onSelectSuite,
   onToggleExpand,
+  expandedMap: controlledExpandedMap,
+  onExpandedMapChange,
   mode = 'EXECUTION',
   canManagePlan = false,
   onToggleSuiteInclusion,
@@ -71,7 +78,8 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
   onRenameSuite,
   onDeleteSuite,
 }) => {
-  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+  const [internalExpandedMap, setInternalExpandedMap] = useState<Record<string, boolean>>({});
+  const expandedMap = controlledExpandedMap ?? internalExpandedMap;
 
   // Flips whatever the arrow currently shows. The caller passes that state in because a suite
   // with no entry in expandedMap is displayed expanded by default -- computing the next state
@@ -81,10 +89,12 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
     (suiteId: string, currentlyExpanded: boolean, e?: React.MouseEvent) => {
       if (e) e.stopPropagation();
       const nextState = !currentlyExpanded;
-      setExpandedMap((prev) => ({ ...prev, [suiteId]: nextState }));
+      const next = { ...expandedMap, [suiteId]: nextState };
+      if (onExpandedMapChange) onExpandedMapChange(next);
+      else setInternalExpandedMap(next);
       onToggleExpand?.(suiteId, nextState);
     },
-    [onToggleExpand]
+    [onToggleExpand, expandedMap, onExpandedMapChange]
   );
 
   // Flatten recursive tree nodes into visual items with depth level
