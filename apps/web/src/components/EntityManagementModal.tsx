@@ -53,7 +53,7 @@ export function EntityManagementModal({
         setName("");
         setExtraField(
           entityType === "PROJECT"
-            ? "TLS"
+            ? ""
             : entityType === "PLAN"
               ? "ACTIVE"
               : "OPEN",
@@ -70,6 +70,11 @@ export function EntityManagementModal({
       setError(`${entityTitle} Name is required.`);
       return;
     }
+    // Same rule the server enforces: the prefix starts every case's ID (e.g. SHOP-1).
+    if (entityType === "PROJECT" && actionType !== "DELETE" && !/^[A-Za-z][A-Za-z0-9]{0,9}$/.test(extraField.trim())) {
+      setError("Prefix is required: a letter followed by letters or digits, at most 10 characters (e.g. SHOP).");
+      return;
+    }
 
     const newItem: EntityItem = {
       id:
@@ -78,7 +83,7 @@ export function EntityManagementModal({
           : `${entityType.toLowerCase()}_${Date.now()}`,
       name: name.trim() || selectedItem?.name || `New ${entityTitle}`,
       ...(entityType === "PROJECT"
-        ? { prefix: (extraField.trim() || "TLS").toUpperCase() }
+        ? { prefix: extraField.trim().toUpperCase() }
         : { status: extraField.trim().toUpperCase() || "ACTIVE" }),
     };
 

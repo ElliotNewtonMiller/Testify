@@ -513,19 +513,14 @@ export default function App() {
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Entity Selection State (Project, Plan, Run)
-  const [projectsList, setProjectsList] = useState<EntityItem[]>([
-    { id: "prj_01", name: "Testify Core", prefix: "TFY" },
-    { id: "prj_02", name: "Security Audit Engine", prefix: "SEC" },
-    { id: "prj_03", name: "Automation Framework", prefix: "AUTO" },
-  ]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("prj_01");
+  // Start empty -- the real lists load once authenticated. (These used to start from fake
+  // placeholder projects/plans that never existed in the database.)
+  const [projectsList, setProjectsList] = useState<EntityItem[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
-  const [plansList, setPlansList] = useState<EntityItem[]>([
-    { id: "pln_01", name: "v1.0 Acceptance Plan", status: "ACTIVE" },
-    { id: "pln_02", name: "Regression Suite 2026", status: "ACTIVE" },
-    { id: "pln_03", name: "Draft Feature Specs", status: "DRAFT" },
-  ]);
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("pln_01");
+  const [plansList, setPlansList] = useState<EntityItem[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("");
+  const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // No fake seed data here (unlike the historical prj_01/pln_01 placeholders elsewhere,
   // which get overwritten quickly by the real bootstrap fetch) -- a Run can never exist
@@ -749,63 +744,50 @@ export default function App() {
     item: EntityItem,
   ) => {
     if (entityType === "PROJECT") {
+      // Real backend calls (POST/PUT /api/v1/projects[/:id], apps/server/src/routes/projects.ts).
+      // DELETE bypasses this modal -- see handleDeleteProjectClick below.
       if (actionType === "CREATE") {
-        setProjectsList((prev) => [...prev, item]);
-        setSelectedProjectId(item.id);
-        setWorkspace((prev) =>
-          prev
-            ? {
-                ...prev,
-                project: {
-                  id: item.id,
-                  name: item.name,
-                  prefix: item.prefix || "TFY",
-                },
-              }
-            : prev,
-        );
-        showToast(`Created New Project: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch("/api/v1/projects", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, prefix: item.prefix }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create project");
+            const created = data.project;
+            setProjectsList((prev) => [...prev, { id: created.id, name: created.name, prefix: created.prefix }]);
+            handleSelectProject(created.id);
+            showToast(`Created New Project: ${created.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to create project");
+          }
+        })();
       } else if (actionType === "EDIT") {
-        setProjectsList((prev) =>
-          prev.map((p) => (p.id === item.id ? item : p)),
-        );
-        setWorkspace((prev) =>
-          prev && prev.project.id === item.id
-            ? {
-                ...prev,
-                project: {
-                  ...prev.project,
-                  name: item.name,
-                  prefix: item.prefix || prev.project.prefix,
-                },
-              }
-            : prev,
-        );
-        showToast(`Updated Project: ${item.name}`);
-      } else if (actionType === "DELETE") {
-        const updated = projectsList.filter((p) => p.id !== item.id);
-        setProjectsList(updated);
-        if (selectedProjectId === item.id && updated.length > 0) {
-          setSelectedProjectId(updated[0].id);
-          setWorkspace((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  project: {
-                    id: updated[0].id,
-                    name: updated[0].name,
-                    prefix: updated[0].prefix || "TFY",
-                  },
-                }
-              : prev,
-          );
-        }
-        showToast(`Deleted Project: ${item.name}`);
+        (async () => {
+          try {
+            const res = await fetch(`/api/v1/projects/${item.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ name: item.name, prefix: item.prefix }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update project");
+            const updated = data.project;
+            setProjectsList((prev) =>
+              prev.map((p) => (p.id === updated.id ? { id: updated.id, name: updated.name, prefix: updated.prefix } : p)),
+            );
+            showToast(`Updated Project: ${updated.name}`);
+          } catch (err: any) {
+            showToast(err.message || "Failed to update project");
+          }
+        })();
       }
     } else if (entityType === "PLAN") {
       // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT/DELETE
-      // .../plans routes. Unlike PROJECT/RUN below (still client-side mock state, a known,
-      // separately-flagged gap), Test Plan create/edit/delete now actually persists.
+      // .../plans routes. Like PROJECT above and RUN below, Test Plan create/edit/delete
+      // actually persists.
       // DELETE is handled by handleDeletePlanClick below instead of here -- it bypasses this
       // modal entirely (see that function's comment for why).
       if (!selectedProjectId) return;
@@ -948,6 +930,56 @@ export default function App() {
   // content-bearing warning banner below it -- two stacked dialogs for one delete). Bypassing
   // the modal for PLAN/DELETE specifically means the blocked-with-counts banner (below) is
   // the only confirmation shown, ever -- same one-dialog shape Suite/Case delete already has.
+  // Project delete: try a plain delete first; a project with content comes back 409 with
+  // its counts, shown in the same yellow confirm banner the plan/run deletes use.
+  const applyProjectDeletedLocally = (deletedId: string) => {
+    const remaining = projectsList.filter((p) => p.id !== deletedId);
+    setProjectsList(remaining);
+    if (selectedProjectId === deletedId) handleSelectProject(remaining[0]?.id ?? "", { silent: true });
+  };
+
+  const handleDeleteProjectClick = useCallback(async () => {
+    const project = projectsList.find((p) => p.id === selectedProjectId);
+    if (!project) return;
+    try {
+      const res = await fetch(`/api/v1/projects/${project.id}`, { method: "DELETE", headers: authHeaders() });
+      if (res.status === 409) {
+        const data = await res.json();
+        setDeleteProjectPrompt({ id: project.id, name: project.name, detail: data.detail || "This project still contains content." });
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as any);
+        throw new Error(data.error || "Failed to delete project");
+      }
+      applyProjectDeletedLocally(project.id);
+      showToast(`Deleted Project: ${project.name}`);
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete project");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsList, selectedProjectId, showToast]);
+
+  const handleConfirmDeleteProject = useCallback(async () => {
+    if (!deleteProjectPrompt) return;
+    try {
+      const res = await fetch(`/api/v1/projects/${deleteProjectPrompt.id}?force=true`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as any);
+        throw new Error(data.error || "Failed to delete project");
+      }
+      applyProjectDeletedLocally(deleteProjectPrompt.id);
+      showToast(`Deleted Project: ${deleteProjectPrompt.name}`);
+      setDeleteProjectPrompt(null);
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete project");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteProjectPrompt, projectsList, selectedProjectId, showToast]);
+
   const handleDeletePlanClick = useCallback(
     async (planId: string) => {
       if (!selectedProjectId) return;
@@ -1063,11 +1095,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deleteRunPrompt, selectedProjectId, selectedPlanId, runsList, selectedRunId, showToast]);
 
-  const handleSelectProject = (projectId: string) => {
+  const handleSelectProject = (projectId: string, opts: { silent?: boolean } = {}) => {
     setSelectedProjectId(projectId);
     setSelectedSuiteId(null);
     setExecSuiteFilterId(null);
     setSpecSelectedCaseId(null);
+    if (opts.silent) return;
     const target = projectsList.find((p) => p.id === projectId);
     if (target) showToast(`Switched to Project: ${target.name}`);
   };
@@ -1091,17 +1124,16 @@ export default function App() {
       const res = await fetch("/api/v1/projects", { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        if (data.projects && data.projects.length > 0) {
-          const mapped: EntityItem[] = data.projects.map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            prefix: p.prefix,
-          }));
-          setProjectsList(mapped);
-          setSelectedProjectId((prev) =>
-            mapped.some((p) => p.id === prev) ? prev : mapped[0].id,
-          );
-        }
+        // Always apply the real list, even when it's empty (a fresh install has no projects).
+        const mapped: EntityItem[] = (data.projects || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          prefix: p.prefix,
+        }));
+        setProjectsList(mapped);
+        setSelectedProjectId((prev) =>
+          mapped.some((p) => p.id === prev) ? prev : mapped[0]?.id ?? "",
+        );
       }
     } catch {
       // Network error -- keep the existing (fallback) list
@@ -1311,7 +1343,12 @@ export default function App() {
     // it safe to still fetch (and show real suites/cases, correctly annotated as not-in-plan)
     // when the project currently has no test plan at all, instead of leaving whatever was
     // fetched for a since-deleted plan stale on screen.
-    if (!selectedProjectId) return;
+    if (!selectedProjectId) {
+      // No project selected (none exist, or it was just deleted) -- drop the old tree.
+      specTreeRequestSeq.current++;
+      setSpecData(null);
+      return;
+    }
     const seq = ++specTreeRequestSeq.current;
     try {
       const params = new URLSearchParams();
@@ -1488,6 +1525,11 @@ export default function App() {
   useEffect(() => {
     if (currentUser && selectedProjectId) {
       loadPlans(selectedProjectId);
+    } else if (currentUser) {
+      // No project (none exist yet, or the selected one was deleted): no plans either.
+      plansRequestSeq.current++;
+      setPlansList([]);
+      setSelectedPlanId("");
     }
   }, [currentUser, selectedProjectId, loadPlans]);
 
@@ -2858,6 +2900,7 @@ export default function App() {
             </button>
             <button
               onClick={() => openEntityModal("PROJECT", "EDIT")}
+              disabled={!selectedProjectId}
               title="Edit Selected Project"
               style={{
                 background: "transparent",
@@ -2870,7 +2913,8 @@ export default function App() {
               ✏️
             </button>
             <button
-              onClick={() => openEntityModal("PROJECT", "DELETE")}
+              onClick={handleDeleteProjectClick}
+              disabled={!selectedProjectId}
               title="Delete Selected Project"
               style={{
                 background: "transparent",
@@ -3162,6 +3206,56 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {deleteProjectPrompt && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ Confirm Deletion
+          </div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deleteProjectPrompt.detail}</div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setDeleteProjectPrompt(null)}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#334155",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDeleteProject}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#dc2626",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Delete Anyway
+            </button>
+          </div>
+        </div>
+      )}
 
       {deletePlanPrompt && (
         <div

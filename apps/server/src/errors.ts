@@ -304,3 +304,29 @@ export function sendCapabilityCeilingExceededError(
     invalid_params: excessKeys.map((key) => ({ name: 'capabilities', reason: `You do not hold '${key}' on this project` })),
   });
 }
+
+export function sendProjectInUseError(
+  reply: FastifyReply,
+  projectId: string,
+  counts: { suites: number; cases: number; plans: number; runs: number; executions: number },
+  instance?: string,
+  projectName?: string
+) {
+  const ref = projectName ? projectName : `(ID: ${projectId})`;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const parts: string[] = [];
+  if (counts.suites > 0) parts.push(plural(counts.suites, 'test suite'));
+  if (counts.cases > 0) parts.push(plural(counts.cases, 'test case'));
+  if (counts.plans > 0) parts.push(plural(counts.plans, 'test plan'));
+  if (counts.runs > 0) parts.push(plural(counts.runs, 'test run'));
+  if (counts.executions > 0) parts.push(plural(counts.executions, 'recorded result'));
+
+  return sendProblemDetails(reply, {
+    code: 'PROJECT_IN_USE',
+    status: 409,
+    title: 'Conflict',
+    detail: `Project ${ref} still contains ${parts.join(', ')}. Are you sure you want to delete the project and everything in it?`,
+    instance,
+    invalid_params: [{ name: 'project_id', reason: `Contains ${parts.join(', ')}` }],
+  });
+}

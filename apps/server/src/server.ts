@@ -53,16 +53,19 @@ export async function createServer(connectionString?: string) {
   }
 
   // Run migrations & seed the RBAC registry (roles/permissions/bundles) before any user or
-  // role row gets written, then seed core loop data & the initial omnipotent admin user.
+  // role row gets written, then the initial omnipotent admin user. The core-loop sample
+  // project (SHOP suite/cases/plan/run) is seeded ONLY for the test suite, which builds on its
+  // fixed ids (`seed`); a dev or real server starts with no projects at all, and SEED_SAMPLE_DATA=true
+  // brings the sample back locally if wanted.
   await migration001.up(db);
   await seedRbacRegistry(db);
-  const seed = await seedCoreLoopData(db);
+  const seedSampleData = process.env.NODE_ENV === 'test' || process.env.SEED_SAMPLE_DATA === 'true';
+  const seed = seedSampleData ? await seedCoreLoopData(db) : null;
   const userRepo = new UserRepository(db);
   await userRepo.seedInitialAdmin();
 
-  // Extra local-dev-only fixtures (a couple more projects + users covering every role,
-  // a per-project role override, and a permission override) -- gives you something to
-  // immediately test against instead of an empty admin panel. Never runs in tests
+  // Extra local-dev-only fixtures (users covering every role plus a permission override; no
+  // sample projects) -- gives you real users to test roles with instead of only the admin. Never runs in tests
   // (vitest sets NODE_ENV=test) or against a real DATABASE_URL (a real/shared database
   // shouldn't get fake test users seeded into it); set SEED_DEV_FIXTURES=false to opt out
   // locally too.
@@ -84,8 +87,11 @@ export async function createServer(connectionString?: string) {
   await registerReportRoutes(app, db, jwtSecret);
   await registerCaseSearchRoutes(app, db, jwtSecret);
 
-  // GET /api/v1/workspace - Hydrates high-density 3-pane layout
-  app.get('/api/v1/workspace', async () => {
+  // GET /api/v1/workspace - legacy hydration route hardwired to the sample core-loop project.
+  // Only meaningful when that sample is seeded (tests / SEED_SAMPLE_DATA=true); the UI uses
+  // the per-plan routes instead.
+  app.get('/api/v1/workspace', async (_request, reply) => {
+    if (!seed) return reply.status(404).send({ error: 'No sample workspace is seeded' });
     const project = await db
       .selectFrom('projects')
       .selectAll()
@@ -185,7 +191,7 @@ export async function createServer(connectionString?: string) {
     const build = await db
       .selectFrom('builds')
       .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
-      .select(['builds.status as build_status', 'test_plans.status as plan_status'])
+      .select(['builds.status as build_status', 'test_plans.status as plan_status', 'test_plans.project_id'])
       .where('builds.id', '=', body.build_id)
       .executeTakeFirst();
 
@@ -269,7 +275,8 @@ export async function createServer(connectionString?: string) {
         action: 'EXECUTION_RECORDED',
         resource_type: 'execution',
         resource_id: execId,
-        project_id: seed.projectId,
+        // The run's real project (this used to be hardwired to the sample project's id).
+        project_id: build.project_id,
         diff: JSON.stringify({ verdict: body.verdict, plan_case_id: body.test_plan_case_id }),
         ip_address: '127.0.0.1',
         user_agent: 'FastifyCoreLoopServer',

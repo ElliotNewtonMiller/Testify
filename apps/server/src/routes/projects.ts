@@ -3,10 +3,14 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
-import { sendPlanInUseError, sendBuildInUseError } from '../errors.js';
+import { v4 as uuidv4 } from 'uuid';
+import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
 const VALID_BUILD_STATUSES = new Set(['OPEN', 'CLOSED']);
+// A project's prefix becomes every case's external id (e.g. SHOP-101), so keep it short and
+// URL/ID-safe: a letter, then letters/digits, up to 10 chars, stored uppercase.
+const PROJECT_PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
 
 /**
  * Real project/test-plan listings, replacing the hardcoded fake dropdown data that used to
@@ -32,6 +36,143 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     const projects = await projectRepo.findAll();
     return { projects };
   });
+
+  // ---- Projects: real create/edit/delete (the UI's old "+ New Project" was client-only) ----
+
+  app.post(
+    '/api/v1/projects',
+    { preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
+    async (request, reply) => {
+      const { name, prefix, description } = (request.body as any) || {};
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return reply.status(400).send({ error: 'name (string) is required' });
+      }
+      const normalizedPrefix = typeof prefix === 'string' ? prefix.trim().toUpperCase() : '';
+      if (!PROJECT_PREFIX_RE.test(normalizedPrefix)) {
+        return reply.status(400).send({
+          error: 'prefix is required: a letter followed by letters or digits, at most 10 characters (e.g. SHOP)',
+        });
+      }
+      if (await projectRepo.findByPrefix(normalizedPrefix)) {
+        return reply.status(409).send({ error: `Prefix '${normalizedPrefix}' is already used by another project` });
+      }
+      const project = await projectRepo.create({
+        name: name.trim(),
+        prefix: normalizedPrefix,
+        description: typeof description === 'string' && description.trim() ? description.trim() : null,
+        settings: { allow_draft_plan_linking: false },
+      });
+      await writeProjectAudit(request.user!, 'PROJECT_CREATED', project.id, { name: project.name, prefix: project.prefix });
+      return reply.status(201).send({ project });
+    }
+  );
+
+  // Editing uses PROJECT_CREATE -- the registry has no separate "edit project" key, and
+  // whoever can create projects is the natural owner of renaming them.
+  app.put(
+    '/api/v1/projects/:projectId',
+    { preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
+    async (request, reply) => {
+      const { projectId } = request.params as { projectId: string };
+      const existing = await projectRepo.findById(projectId);
+      if (!existing) return reply.status(404).send({ error: 'Project not found' });
+
+      const { name, prefix, description } = (request.body as any) || {};
+      if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
+        return reply.status(400).send({ error: 'name must be a non-empty string' });
+      }
+      let nextPrefix: string | undefined;
+      if (prefix !== undefined) {
+        nextPrefix = typeof prefix === 'string' ? prefix.trim().toUpperCase() : '';
+        if (!PROJECT_PREFIX_RE.test(nextPrefix)) {
+          return reply.status(400).send({
+            error: 'prefix must be a letter followed by letters or digits, at most 10 characters',
+          });
+        }
+        if (nextPrefix !== existing.prefix) {
+          const taken = await projectRepo.findByPrefix(nextPrefix);
+          if (taken && taken.id !== projectId) {
+            return reply.status(409).send({ error: `Prefix '${nextPrefix}' is already used by another project` });
+          }
+          // Existing cases' external ids were built from the old prefix -- changing it would
+          // leave them mismatched, so it's only allowed while the project has no cases.
+          const { caseCount } = await projectRepo.getContentCounts(projectId);
+          if (caseCount > 0) {
+            return reply.status(409).send({
+              error: `The prefix can't change once the project has test cases (it's part of their IDs, e.g. ${existing.prefix}-1).`,
+            });
+          }
+        } else {
+          nextPrefix = undefined;
+        }
+      }
+
+      const project = await projectRepo.update(projectId, {
+        ...(name !== undefined ? { name: name.trim() } : {}),
+        ...(nextPrefix !== undefined ? { prefix: nextPrefix } : {}),
+        ...(description !== undefined ? { description: typeof description === 'string' && description.trim() ? description.trim() : null } : {}),
+      });
+      await writeProjectAudit(request.user!, 'PROJECT_UPDATED', projectId, {
+        ...(name !== undefined ? { name: name.trim() } : {}),
+        ...(nextPrefix !== undefined ? { prefix: nextPrefix } : {}),
+      });
+      return reply.status(200).send({ project });
+    }
+  );
+
+  app.delete(
+    '/api/v1/projects/:projectId',
+    { preHandler: requirePermission('PROJECT_DELETE', db, jwtSecret) },
+    async (request, reply) => {
+      const { projectId } = request.params as { projectId: string };
+      const { force } = request.query as { force?: string };
+      const existing = await projectRepo.findById(projectId);
+      if (!existing) return reply.status(404).send({ error: 'Project not found' });
+
+      const result = await projectRepo.deleteWithForce(projectId, { force: force === 'true' });
+      if (!result.deleted && 'blocked' in result) {
+        const c = result.blocked;
+        return sendProjectInUseError(
+          reply,
+          projectId,
+          { suites: c.suiteCount, cases: c.caseCount, plans: c.planCount, runs: c.runCount, executions: c.executionCount },
+          request.url,
+          existing.name
+        );
+      }
+      if (!result.deleted) return reply.status(404).send({ error: 'Project not found' });
+      await writeProjectAudit(request.user!, 'PROJECT_DELETED', projectId, {
+        name: existing.name,
+        prefix: existing.prefix,
+        forced: force === 'true',
+      });
+      return reply.status(204).send();
+    }
+  );
+
+  async function writeProjectAudit(
+    actor: { id: string; api_token?: unknown },
+    action: string,
+    projectId: string,
+    diff: Record<string, unknown>
+  ) {
+    await db
+      .insertInto('audit_logs')
+      .values({
+        id: uuidv4(),
+        actor_id: actor.id,
+        actor_type: actor.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+        action,
+        resource_type: 'project',
+        resource_id: projectId,
+        project_id: projectId,
+        diff: JSON.stringify(diff),
+        ip_address: '127.0.0.1',
+        user_agent: 'TestifyProjectService',
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+  }
 
   app.get('/api/v1/projects/:projectId/plans', async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
