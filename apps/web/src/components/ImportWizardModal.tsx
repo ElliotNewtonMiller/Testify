@@ -102,6 +102,25 @@ const STEPS: Array<{ key: WizardStep; label: string }> = [
   { key: "RESULTS", label: "5. Results" },
 ];
 
+/** Parses a JSON reply, or returns {} when the body is empty/not JSON (e.g. a proxy error or a
+ * request the server dropped) -- so callers report the HTTP status instead of a raw
+ * "Unexpected end of JSON input". */
+async function readJsonResponse(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function describeFailedResponse(res: Response, fallback: string): string {
+  if (res.status === 413) return "The file is too large to import.";
+  if (res.status >= 500) return `${fallback}: the server didn't return a usable response (HTTP ${res.status}).`;
+  return `${fallback} (HTTP ${res.status}).`;
+}
+
 export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defaultProjectId, onImportComplete }: ImportWizardModalProps) {
   const [step, setStep] = useState<WizardStep>("UPLOAD");
 
@@ -197,9 +216,9 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
           },
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
-        throw new Error(data.error || data.detail || "Failed to preview import");
+        throw new Error(data.error || data.detail || describeFailedResponse(res, "Failed to preview import"));
       }
       setDryRunResult(data);
       return data as DryRunResult;
@@ -232,7 +251,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
         `/api/v1/imports/custom-field-options?target_project_id=${encodeURIComponent(projectId)}&entity_type=TestCase`,
         { headers: getAuthHeaders() }
       );
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (res.ok) {
         setFieldOptions(data.definitions || []);
       }
@@ -282,9 +301,9 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
           },
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
-        throw new Error(data.error || data.detail || "Import failed");
+        throw new Error(data.error || data.detail || describeFailedResponse(res, "Import failed"));
       }
       setExecuteResult(data);
       setStep("RESULTS");

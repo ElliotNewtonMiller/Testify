@@ -63,6 +63,28 @@ describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
 
   // 1. Dry-Run Import Preview Tests
   describe('POST /api/v1/imports/dry-run', () => {
+    it('accepts an import larger than Fastify\'s default 1 MB body limit (real TestLink exports)', async () => {
+      const { app, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      // ~2 MB of XML -- comfortably past the old 1 MB default that dropped the upload.
+      const padding = 'x'.repeat(2000);
+      const cases = Array.from(
+        { length: 1000 },
+        (_, i) => `    <testcase name="Big case ${i}"><externalid><![CDATA[BIG-${i}]]></externalid><summary><![CDATA[${padding}]]></summary></testcase>`
+      ).join('\n');
+      const xmlPayload = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n  <testsuite name="Big Suite">\n${cases}\n  </testsuite>\n</testsuites>`;
+      expect(xmlPayload.length).toBeGreaterThan(1024 * 1024);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/dry-run',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { file_content: xmlPayload, filename: 'big.xml', target_project_id: seed.projectId },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
     it('previews TestLink XML import and detects unmapped custom fields + duplicate reconciliation diff', async () => {
       const { app, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);

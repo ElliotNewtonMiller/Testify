@@ -23,6 +23,12 @@ import {
 import { authenticateRequest, type AuthenticatedUser } from '../middleware/auth.js';
 import { sendTokenProjectMismatchError } from '../errors.js';
 
+// The web wizard sends the file base64-encoded inside a JSON body (~1.33x the file size).
+// Fastify's default 1 MB body limit cut real TestLink exports off mid-upload -- the request
+// was dropped with no response, which reached the browser as an empty 500. Sized to match
+// the 100 MB multipart file limit in server.ts once base64 overhead is included.
+const IMPORT_BODY_LIMIT_BYTES = 140 * 1024 * 1024;
+
 /**
  * Resolves the project a request should import into, given the caller's identity and
  * whatever project id (if any) parseImportRequest found in the body/multipart fields.
@@ -139,7 +145,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   }
 
   // POST /api/v1/imports/dry-run
-  app.post('/api/v1/imports/dry-run', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/imports/dry-run', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
     if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {
@@ -331,7 +337,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   });
 
   // POST /api/v1/imports/execute
-  app.post('/api/v1/imports/execute', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/imports/execute', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
     if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {

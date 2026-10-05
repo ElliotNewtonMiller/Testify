@@ -757,6 +757,10 @@ Elliot no longer wants the sample suites/cases/projects/plans/runs. Removing the
 
 New tests: `apps/server/tests/projects_crud.test.ts` (4 -- create/normalize/validate/unique prefix; rename + prefix lock once cases exist; blocked-then-forced delete of the seeded project including a recorded result, verifying every child table is emptied and the audit row written; empty project deletes immediately, Tester gets 403). `npm test`: 574/577 (the usual 3 failures in `.claude/worktrees/vigilant-haslett-05b0d0/`). `tsc --noEmit` clean on all four workspaces. Verified live: a fresh dev server lists zero projects, the fixture users still log in, and the app renders its empty state after login with no failing requests.
 
+## Fixed: imports over ~750 KB failed with "Unexpected end of JSON input" (2026-10-05)
+
+Elliot hit this importing TestLink suites. The import wizard sends the file base64-encoded inside a JSON body (~1.33x the file size), and Fastify's default 1 MB `bodyLimit` rejected it mid-upload. The Vite dev proxy logged `EPIPE` and returned an empty 500, and `ImportWizardModal.tsx` then called `res.json()` on the empty body. Fixed both ends: `POST /api/v1/imports/dry-run` and `/execute` (`apps/server/src/routes/ingestion.ts`) now set a route-level `bodyLimit` of 140 MB (`IMPORT_BODY_LIMIT_BYTES`, sized to the existing 100 MB multipart file limit plus base64 overhead), and the wizard parses replies via `readJsonResponse` (empty/non-JSON -> `{}`) with `describeFailedResponse` producing a readable message (413 -> "The file is too large to import.", 5xx -> the status). New test in `batch_and_xml.test.ts`: a ~2 MB auto-detected TestLink XML dry-run returns 200.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
