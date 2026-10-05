@@ -761,6 +761,16 @@ New tests: `apps/server/tests/projects_crud.test.ts` (4 -- create/normalize/vali
 
 Elliot hit this importing TestLink suites. The import wizard sends the file base64-encoded inside a JSON body (~1.33x the file size), and Fastify's default 1 MB `bodyLimit` rejected it mid-upload. The Vite dev proxy logged `EPIPE` and returned an empty 500, and `ImportWizardModal.tsx` then called `res.json()` on the empty body. Fixed both ends: `POST /api/v1/imports/dry-run` and `/execute` (`apps/server/src/routes/ingestion.ts`) now set a route-level `bodyLimit` of 140 MB (`IMPORT_BODY_LIMIT_BYTES`, sized to the existing 100 MB multipart file limit plus base64 overhead), and the wizard parses replies via `readJsonResponse` (empty/non-JSON -> `{}`) with `describeFailedResponse` producing a readable message (413 -> "The file is too large to import.", 5xx -> the status). New test in `batch_and_xml.test.ts`: a ~2 MB auto-detected TestLink XML dry-run returns 200.
 
+## Added: import can create new single-/multi-select fields, with options taken from the file (2026-10-05)
+
+Per direct request: an unmapped import column (e.g. TestLink's `automationStatus`, samples "N/A, No, Done, To Do") can now be created as a `SINGLE_SELECT` or `MULTI_SELECT` field -- previously both were disabled under "Create New" for lack of an options editor.
+
+- **Options come from the file.** New `packages/core/src/ingestion/importFieldValues.ts`: `collectImportFieldOptions(suites, key, type)` returns every distinct non-empty value for the column across the whole parsed tree (case-insensitive key, first-seen order, trimmed); `MULTI_SELECT` first splits each value on commas via `splitMultiSelectValue`. `ingestion.ts`'s execute `AUTO_CREATE` passes these as the new definition's options.
+- **Values are converted to match.** At execute time a `fieldTypeByDefId` map (every visible definition, so this also covers routing to an *existing* field) splits a `MULTI_SELECT` column's text into an array and trims a `SINGLE_SELECT` value before `setValue` -- previously routing a text column to an existing multi-select failed validation for every value.
+- **Preview**: dry-run's `UnmappedCustomField` gained `distinct_values` (up to `MAX_DISTINCT_IMPORT_VALUES` = 200) and `distinct_values_truncated`. `ImportWizardModal.tsx` now offers both select types under "Create New" and lists the options a new field would get (split for multi-select), noting when the preview is capped -- the server always uses every distinct value in the file.
+
+New tests: `packages/core/tests/importFieldValues.test.ts` (3), `apps/server/tests/batch_and_xml.test.ts` (+1 -- dry-run reports the distinct values; execute creates a SINGLE_SELECT with options N/A/Done/To Do and a MULTI_SELECT with ui/api/slow from comma-separated cells, with no skipped values, and a case reads back `'To Do'` / `['slow','ui']`).
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

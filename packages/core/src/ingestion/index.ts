@@ -5,3 +5,4 @@ export { CsvParser } from './CsvParser.js';
 export { JUnitXmlParser } from './JUnitXmlParser.js';
 export { TestRailCsvParser } from './TestRailCsvParser.js';
 export * from './csvHelpers.js';
+export * from './importFieldValues.js';

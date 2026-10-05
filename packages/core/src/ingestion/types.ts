@@ -103,8 +103,15 @@ export interface UnmappedCustomField {
   // inferFieldType() bases detected_type on, and shown to the user so they can judge the
   // inference themselves before accepting/overriding it.
   sample_values?: string[];
+  /** Every distinct non-empty value in the file for this column (up to
+   * MAX_DISTINCT_IMPORT_VALUES), so the wizard can preview the options a new
+   * single-/multi-select field would get. distinct_values_truncated is true past the cap. */
+  distinct_values?: string[];
+  distinct_values_truncated?: boolean;
   detected_type: CustomFieldType;
 }
+
+export const MAX_DISTINCT_IMPORT_VALUES = 200;
 
 export interface HierarchyPreviewNode {
   name: string;

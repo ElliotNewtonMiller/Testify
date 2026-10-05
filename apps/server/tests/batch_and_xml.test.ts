@@ -198,6 +198,85 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
 
   // 2. Import Execution Tests
   describe('POST /api/v1/imports/execute', () => {
+    it('AUTO_CREATE as SINGLE_SELECT / MULTI_SELECT builds the options from the column\'s values', async () => {
+      const { app, db, seed } = serverInstance;
+      const { token } = await loginAsAdmin(app);
+
+      const tc = (id: string, status: string, tags: string) => `    <testcase name="Case ${id}">
+      <externalid><![CDATA[${id}]]></externalid>
+      <custom_fields>
+        <custom_field><name><![CDATA[automationStatus]]></name><value><![CDATA[${status}]]></value></custom_field>
+        <custom_field><name><![CDATA[tags]]></name><value><![CDATA[${tags}]]></value></custom_field>
+      </custom_fields>
+    </testcase>`;
+      const xmlPayload = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Select Fields">
+${tc('SEL-1', 'N/A', 'ui, api')}
+${tc('SEL-2', 'Done', 'api')}
+${tc('SEL-3', 'To Do', 'slow,ui')}
+${tc('SEL-4', 'Done', '')}
+  </testsuite>
+</testsuites>`;
+
+      const dry = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/dry-run',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { file_content: xmlPayload, format: 'TESTLINK_XML', target_project_id: seed.projectId },
+      });
+      expect(dry.statusCode).toBe(200);
+      const status = JSON.parse(dry.payload).unmapped_custom_fields.find((f: any) => f.incoming_key === 'automationStatus');
+      expect(status.distinct_values).toEqual(['N/A', 'Done', 'To Do']);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imports/execute',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          file_content: xmlPayload,
+          format: 'TESTLINK_XML',
+          target_project_id: seed.projectId,
+          configuration: {
+            field_mappings: [
+              { incoming_key: 'automationStatus', action: 'AUTO_CREATE', field_type: 'SINGLE_SELECT' },
+              { incoming_key: 'tags', action: 'AUTO_CREATE', field_type: 'MULTI_SELECT' },
+            ],
+            duplicate_resolution: { default_action: 'CREATE_NEW' },
+          },
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).summary.skipped_custom_field_values_count).toBe(0);
+
+      const optionsOf = async (name: string) => {
+        const def = await db.selectFrom('custom_field_definitions').selectAll().where('name', '=', name).executeTakeFirstOrThrow();
+        const opts = await db
+          .selectFrom('custom_field_options')
+          .select('option_value')
+          .where('custom_field_definition_id', '=', def.id)
+          .orderBy('position')
+          .execute();
+        return { def, options: opts.map((o: any) => o.option_value) };
+      };
+      const single = await optionsOf('automationStatus');
+      expect(single.def.field_type).toBe('SINGLE_SELECT');
+      expect(single.options).toEqual(['N/A', 'Done', 'To Do']);
+      const multi = await optionsOf('tags');
+      expect(multi.def.field_type).toBe('MULTI_SELECT');
+      expect(multi.options).toEqual(['ui', 'api', 'slow']);
+
+      const caseId = (await db.selectFrom('test_cases').select('id').where('external_id', '=', 'SEL-3').executeTakeFirstOrThrow()).id;
+      const values = await app.inject({
+        method: 'GET',
+        url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const byName = Object.fromEntries(JSON.parse(values.payload).values.map((v: any) => [v.definition.name, v.value]));
+      expect(byName.automationStatus).toBe('To Do');
+      expect(byName.tags).toEqual(['slow', 'ui']);
+    });
+
     it('executes TestLink XML import with AUTO_CREATE custom field mapping', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);

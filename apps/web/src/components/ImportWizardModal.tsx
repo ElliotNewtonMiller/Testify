@@ -13,15 +13,29 @@ type FieldFormatId = "" | "TESTLINK_XML" | "NATIVE_JSON" | "STANDARD_CSV" | "JUN
 
 type CustomFieldType = "TEXT" | "NUMBER" | "CHECKBOX" | "DATE" | "SINGLE_SELECT" | "MULTI_SELECT";
 
-// SINGLE_SELECT/MULTI_SELECT are deliberately excluded here -- creating one via import would
-// need an options-editor sub-UI this wizard doesn't have yet (see CLAUDE.md's import feature
-// entry). Mapping TO an existing SINGLE_SELECT/MULTI_SELECT field is still fully supported.
-const CREATABLE_FIELD_TYPES: CustomFieldType[] = ["TEXT", "NUMBER", "CHECKBOX", "DATE"];
+// A new SINGLE_SELECT/MULTI_SELECT field gets its options from the column's own values: one
+// option per distinct value (multi-select splits comma-separated values first). The server
+// computes them from the whole file at execute time; the wizard previews them below.
+const CREATABLE_FIELD_TYPES: CustomFieldType[] = ["TEXT", "NUMBER", "CHECKBOX", "DATE", "SINGLE_SELECT", "MULTI_SELECT"];
+
+/** Mirrors @testify/core's splitMultiSelectValue (the web app doesn't depend on core). */
+function splitCommaValues(value: string): string[] {
+  return Array.from(new Set(value.split(",").map((v) => v.trim()).filter(Boolean)));
+}
+
+/** The options a new select field would be created with, from the dry-run's distinct values. */
+function previewSelectOptions(field: UnmappedCustomField, type: CustomFieldType): string[] {
+  const values = field.distinct_values && field.distinct_values.length > 0 ? field.distinct_values : field.sample_values || [];
+  if (type === "MULTI_SELECT") return Array.from(new Set(values.flatMap(splitCommaValues)));
+  return values;
+}
 
 interface UnmappedCustomField {
   incoming_key: string;
   sample_value: string;
   sample_values?: string[];
+  distinct_values?: string[];
+  distinct_values_truncated?: boolean;
   detected_type: CustomFieldType;
 }
 
@@ -614,9 +628,42 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
                             </option>
                           ))}
                         </select>
-                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px" }}>
-                          SINGLE_SELECT/MULTI_SELECT aren't creatable from here yet -- map to an existing one instead.
-                        </div>
+                        {(selectedChoice.field_type === "SINGLE_SELECT" || selectedChoice.field_type === "MULTI_SELECT") &&
+                          (() => {
+                            const options = previewSelectOptions(selectedUnmapped, selectedChoice.field_type!);
+                            return (
+                              <div style={{ marginTop: "8px" }}>
+                                <div style={{ fontSize: "10px", color: "#64748b", marginBottom: "4px" }}>
+                                  {selectedChoice.field_type === "MULTI_SELECT"
+                                    ? "Options (comma-separated values are split into separate options):"
+                                    : "Options (one per distinct value):"}{" "}
+                                  {options.length}
+                                  {selectedUnmapped.distinct_values_truncated ? "+" : ""}
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", maxHeight: "96px", overflowY: "auto" }}>
+                                  {options.map((o) => (
+                                    <span
+                                      key={o}
+                                      style={{
+                                        fontSize: "10px",
+                                        padding: "2px 6px",
+                                        borderRadius: "4px",
+                                        border: "1px solid #334155",
+                                        color: "#cbd5e1",
+                                      }}
+                                    >
+                                      {o}
+                                    </span>
+                                  ))}
+                                </div>
+                                {selectedUnmapped.distinct_values_truncated && (
+                                  <div style={{ fontSize: "10px", color: "#fbbf24", marginTop: "4px" }}>
+                                    Showing the first {selectedUnmapped.distinct_values?.length} values; every distinct value in the file becomes an option.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                       </div>
                     )}
                   </div>

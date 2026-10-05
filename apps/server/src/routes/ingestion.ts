@@ -10,6 +10,9 @@ import {
   JUnitXmlParser,
   TestRailCsvParser,
   inferFieldType,
+  collectImportFieldOptions,
+  splitMultiSelectValue,
+  MAX_DISTINCT_IMPORT_VALUES,
   type IFileParser,
   type ParsedSuite,
   type ParsedCase,
@@ -251,12 +254,26 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
             const lowerKey = cfKey.toLowerCase();
             if (!existingCfNames.has(lowerKey) && !mappedIncomingKeys.has(lowerKey)) {
               if (!unmappedCfsMap.has(lowerKey)) {
-                unmappedCfsMap.set(lowerKey, { incoming_key: cfKey, sample_value: String(cfVal || ''), sample_values: [], detected_type: 'TEXT' });
+                unmappedCfsMap.set(lowerKey, {
+                  incoming_key: cfKey,
+                  sample_value: String(cfVal || ''),
+                  sample_values: [],
+                  distinct_values: [],
+                  distinct_values_truncated: false,
+                  detected_type: 'TEXT',
+                });
               }
               const field = unmappedCfsMap.get(lowerKey)!;
-              const strVal = String(cfVal || '');
+              const strVal = String(cfVal || '').trim();
               if (strVal && field.sample_values!.length < 5 && !field.sample_values!.includes(strVal)) {
                 field.sample_values!.push(strVal);
+              }
+              // Every distinct value (capped) -- previews the options a new single-/multi-
+              // select field would get. The real options are recomputed from the whole file
+              // at execute time (collectImportFieldOptions), so the cap only limits the preview.
+              if (strVal && !field.distinct_values!.includes(strVal)) {
+                if (field.distinct_values!.length < MAX_DISTINCT_IMPORT_VALUES) field.distinct_values!.push(strVal);
+                else field.distinct_values_truncated = true;
               }
             }
           }
@@ -401,12 +418,23 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
             const lower = mapping.incoming_key.toLowerCase();
             if (!customFieldIdMap.has(lower)) {
               try {
+                const fieldType = mapping.field_type || 'TEXT';
+                // A new single-/multi-select field gets one option per distinct value the
+                // file holds for this column (multi-select splits comma-separated values).
+                const options =
+                  fieldType === 'SINGLE_SELECT' || fieldType === 'MULTI_SELECT'
+                    ? collectImportFieldOptions(parsedSuites, mapping.incoming_key, fieldType).map((v) => ({
+                        option_label: v,
+                        option_value: v,
+                      }))
+                    : undefined;
                 const created = await customFieldRepo.createDefinition({
                   project_id: targetProjectId!,
                   entity_type: 'TestCase',
                   name: mapping.incoming_key,
                   field_label: mapping.field_name || mapping.incoming_key,
-                  field_type: mapping.field_type || 'TEXT',
+                  field_type: fieldType,
+                  ...(options ? { options } : {}),
                 });
                 customFieldIdMap.set(lower, created.id);
                 autoCreatedCfCount++;
@@ -428,6 +456,12 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
             customFieldIdMap.set(mapping.incoming_key.toLowerCase(), mapping.target_field_id);
           }
         }
+
+        // Field types of every mapped definition, so a multi-select column's text can be split
+        // into an array before validation (whether the field was just created or already existed).
+        const fieldTypeByDefId = new Map(
+          (await customFieldRepo.listVisibleToProject(targetProjectId!, 'TestCase')).map((d) => [d.id, d.field_type])
+        );
 
         // Recursive helper to import suites & cases
         async function importSuiteRecursive(suite: ParsedSuite, parentSuiteId: string | null, parentPath: string) {
@@ -646,7 +680,13 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
                 const defId = customFieldIdMap.get(k.toLowerCase());
                 if (defId && v) {
                   try {
-                    await customFieldRepo.setValue(defId, 'TestCase', caseId, v, targetProjectId!);
+                    const value =
+                      fieldTypeByDefId.get(defId) === 'MULTI_SELECT' && typeof v === 'string'
+                        ? splitMultiSelectValue(v)
+                        : typeof v === 'string' && fieldTypeByDefId.get(defId) === 'SINGLE_SELECT'
+                          ? v.trim()
+                          : v;
+                    await customFieldRepo.setValue(defId, 'TestCase', caseId, value, targetProjectId!);
                   } catch (err: any) {
                     skippedCustomFieldValuesCount++;
                     skippedCustomFieldValueWarnings.push({
