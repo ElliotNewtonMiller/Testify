@@ -73,14 +73,16 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
 }) => {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
 
+  // Flips whatever the arrow currently shows. The caller passes that state in because a suite
+  // with no entry in expandedMap is displayed expanded by default -- computing the next state
+  // as `!prev[suiteId]` (undefined -> true) used to "expand" an already-expanded suite, so the
+  // first click on every arrow after a reload did nothing.
   const toggleSuite = useCallback(
-    (suiteId: string, e?: React.MouseEvent) => {
+    (suiteId: string, currentlyExpanded: boolean, e?: React.MouseEvent) => {
       if (e) e.stopPropagation();
-      setExpandedMap((prev) => {
-        const nextState = !prev[suiteId];
-        onToggleExpand?.(suiteId, nextState);
-        return { ...prev, [suiteId]: nextState };
-      });
+      const nextState = !currentlyExpanded;
+      setExpandedMap((prev) => ({ ...prev, [suiteId]: nextState }));
+      onToggleExpand?.(suiteId, nextState);
     },
     [onToggleExpand]
   );
@@ -219,7 +221,7 @@ export const VirtualizedSuiteTree: React.FC<VirtualizedSuiteTreeProps> = ({
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                 {hasChildren ? (
                   <span
-                    onClick={(e) => toggleSuite(node.id, e)}
+                    onClick={(e) => toggleSuite(node.id, isExpanded, e)}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
