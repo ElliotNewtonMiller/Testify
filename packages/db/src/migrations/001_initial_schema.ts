@@ -140,11 +140,23 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('execution_duration_ms', 'integer')
     .addColumn('notes', 'text')
     .addColumn('custom_fields_snapshot', 'text', (col) => col.notNull().defaultTo('{}'))
+    // Troubleshooting data reported by automated callers (batch API). failure_message is the
+    // short error (JUnit's message attribute), stack_trace the full trace; environment and
+    // runner are JSON objects (environment tags; CI runner name/run_id/job_name/commit_sha/url).
+    .addColumn('failure_message', 'text')
+    .addColumn('stack_trace', 'text')
+    .addColumn('environment', 'text')
+    .addColumn('runner', 'text')
+    // Where the result came from: 'UI' (recorded by a person in Execute mode) or 'API' (batch
+    // route / machine token). Null for rows written before this column existed.
+    .addColumn('source', 'varchar(8)')
     .addColumn('execution_timestamp', 'varchar(30)', (col) => col.notNull())
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
+  // Backs per-case history (every result a case ever got, newest first).
+  await db.schema.createIndex('idx_executions_case_time').on('executions').columns(['test_plan_case_id', 'execution_timestamp']).execute();
   await db.schema.createIndex('idx_executions_build_case').on('executions').columns(['build_id', 'test_plan_case_id']).execute();
   await db.schema.createIndex('idx_executions_verdict').on('executions').column('verdict').execute();
   // Backs the reporting feature's "latest execution per plan-case" window functions and

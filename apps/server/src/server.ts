@@ -240,7 +240,8 @@ export async function createServer(connectionString?: string) {
         // "Slowest" table ranks.
         execution_duration_ms: null,
         notes: body.notes || null,
-        custom_fields_snapshot: JSON.stringify({ environment: 'STAGING' }),
+        custom_fields_snapshot: '{}',
+        source: 'UI',
         execution_timestamp: now,
         created_at: now,
         updated_at: now,

@@ -29,6 +29,8 @@ export interface TestCaseLatestVersionSummary {
   status: string;
   summary: string | null;
   preconditions: string | null;
+  /** Last change to this version -- reports use it for how long a draft has been waiting. */
+  updated_at: string;
 }
 
 export interface TestCaseWithLatestVersion extends TestCase {
@@ -119,7 +121,7 @@ export class TestCaseRepository {
     const caseIds = cases.map((c) => c.id);
     const versions = await this.db
       .selectFrom('test_case_versions')
-      .select(['id', 'test_case_id', 'version_number', 'status', 'summary', 'preconditions'])
+      .select(['id', 'test_case_id', 'version_number', 'status', 'summary', 'preconditions', 'updated_at'])
       .where('test_case_id', 'in', caseIds)
       .orderBy('version_number', 'desc')
       .execute();
@@ -142,6 +144,7 @@ export class TestCaseRepository {
               status: v.status,
               summary: v.summary,
               preconditions: v.preconditions,
+              updated_at: v.updated_at,
             }
           : null,
       };

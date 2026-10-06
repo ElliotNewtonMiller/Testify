@@ -103,6 +103,11 @@ export interface ExecutionsTable {
   execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
   custom_fields_snapshot: Generated<string>;
+  failure_message: string | null;
+  stack_trace: string | null;
+  environment: string | null; // JSON object of environment tags
+  runner: string | null; // JSON: { name?, run_id?, job_name?, commit_sha?, url? }
+  source: string | null; // 'UI' | 'API'
   execution_timestamp: string;
   created_at: string;
   updated_at: string;

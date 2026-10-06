@@ -29,46 +29,91 @@ export interface CreateExecutionInput {
   execution_duration_ms?: number;
   notes?: string | null;
   custom_fields_snapshot?: Record<string, any> | string;
+  failure_message?: string | null;
+  stack_trace?: string | null;
+  environment?: Record<string, unknown> | null;
+  runner?: Record<string, unknown> | null;
+  source?: 'UI' | 'API' | null;
   execution_timestamp?: string;
   steps?: CreateExecutionStepInput[];
+}
+
+function jsonOrNull(v: Record<string, unknown> | null | undefined): string | null {
+  return v && Object.keys(v).length > 0 ? JSON.stringify(v) : null;
+}
+
+function encodeCursor(ts: string, id: string): string {
+  return Buffer.from(`${ts}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string | null | undefined): { ts: string; id: string } | null {
+  if (!cursor) return null;
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  const sep = decoded.indexOf('|');
+  if (sep <= 0) return null;
+  return { ts: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
 }
 
 export interface ExecutionWithSteps extends Execution {
   steps: ExecutionStep[];
 }
 
-/** One row per (build, test_plan_case) pair -- the shared "latest execution" building
- * block for the reporting feature's verdict-breakdown and trend reports. `verdict: null`
- * (and every other execution field null) means the case has no execution recorded in
- * that build yet (UNTESTED), not that the row is missing. */
-export interface LatestExecutionRow {
-  build_id: string;
+/** The final result (latest execution) of one plan case in one run, plus what happened
+ * across all of that case's attempts in the run. Every plan case gets a row for every
+ * requested run; `verdict: null` (and every other execution field null) means it has no
+ * result in that run yet (UNTESTED). See getFinalResultsForRuns. */
+export interface FinalResultRow {
+  run_id: string;
   plan_case_id: string;
   test_case_id: string;
   execution_id: string | null;
   verdict: string | null;
   execution_duration_ms: number | null;
+  failure_message: string | null;
+  notes: string | null;
+  tester_id: string | null;
+  source: string | null;
+  runner: string | null; // JSON
   execution_timestamp: string | null;
+  /** Executions recorded for this case in this run (re-runs/retries add rows). 0 = untested. */
+  attempts: number;
+  had_pass: boolean;
+  had_fail: boolean; // any FAILED or BLOCKED attempt
 }
 
-export interface AverageDurationRow {
-  plan_case_id: string;
-  test_case_id: string;
-  avg_duration_ms: number;
-  sample_count: number;
+/** One execution in a case's history, with the run/plan it belongs to. */
+export interface CaseHistoryRow {
+  execution_id: string;
+  run_id: string;
+  run_name: string;
+  plan_id: string;
+  plan_name: string;
+  version_number: number | null;
+  verdict: string;
+  status: string;
+  execution_duration_ms: number | null;
+  notes: string | null;
+  failure_message: string | null;
+  stack_trace: string | null;
+  environment: string | null; // JSON
+  runner: string | null; // JSON
+  source: string | null;
+  tester_id: string;
+  execution_timestamp: string;
 }
 
-/** Verdict-volatility building block for the flakiest-tests report -- see
- * packages/core/src/reporting/flakiness.ts for how this is turned into a ranked,
- * thresholded result. */
-export interface FlakinessRow {
-  plan_case_id: string;
-  test_case_id: string;
-  total_executions: number;
-  verdict_changes: number;
+/** Minimal per-execution row for a case's whole history (stats are computed from these). */
+export interface CaseVerdictTimelineRow {
+  run_id: string;
+  verdict: string;
+  execution_timestamp: string;
 }
 
-export type VerdictVolatilityScope = { type: 'BUILD'; buildId: string } | { type: 'PLAN'; planId: string };
+export interface ActivityRow {
+  day: string; // YYYY-MM-DD
+  source: string | null;
+  count: number;
+}
 
 export class ExecutionRepository {
   constructor(private db: Kysely<Database>) {}
@@ -91,6 +136,11 @@ export class ExecutionRepository {
       execution_duration_ms: input.execution_duration_ms ?? null,
       notes: input.notes ?? null,
       custom_fields_snapshot: snapshotStr,
+      failure_message: input.failure_message ?? null,
+      stack_trace: input.stack_trace ?? null,
+      environment: jsonOrNull(input.environment),
+      runner: jsonOrNull(input.runner),
+      source: input.source ?? null,
       execution_timestamp: input.execution_timestamp ?? now,
       created_at: now,
       updated_at: now,
@@ -214,141 +264,194 @@ export class ExecutionRepository {
   }
 
   /**
-   * For every test_plan_case in `planId`, its latest execution (by execution_timestamp
-   * desc, created_at desc tie-break) within each of `buildIds` -- one row per (build,
-   * plan_case) pair, with UNTESTED (all-null) rows for cases with no execution yet in
-   * that build. Built for the reporting feature's verdict-breakdown (buildIds = [one id])
-   * and trend-across-builds (buildIds = last N builds) reports -- deliberately does not
-   * call the single-row getLatestExecutionForPlanCase() in a loop for either; `buildIds`
-   * is always small (bounded by the caller's own `limit`), so one small query per build
-   * (each using a ROW_NUMBER() window function, verified to compile and run correctly
-   * against this repo's PGlite via Kysely's query builder) is simpler and more legible
-   * than one raw-SQL cross-join across every build at once.
+   * The final result of every plan case in `planId` for each of `runIds`, in ONE query: a
+   * window over (run, plan case) picks the latest execution (execution_timestamp desc,
+   * created_at desc tie-break) and also counts the attempts and whether any attempt passed
+   * or failed (pass-after-retry flakiness needs those). Plan cases with no execution in a run
+   * get an all-null UNTESTED row, so totals always reflect the plan's current case list.
+   * Rows are returned in `runIds` order.
    */
-  async getLatestExecutionsForPlanAcrossBuilds(planId: string, buildIds: string[]): Promise<LatestExecutionRow[]> {
-    if (buildIds.length === 0) return [];
+  async getFinalResultsForRuns(planId: string, runIds: string[]): Promise<FinalResultRow[]> {
+    if (runIds.length === 0) return [];
 
     const planCases = await this.db
       .selectFrom('test_plan_cases')
       .select(['id as plan_case_id', 'test_case_id'])
       .where('test_plan_id', '=', planId)
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'asc')
       .execute();
+    if (planCases.length === 0) return [];
 
-    const results: LatestExecutionRow[] = [];
-
-    for (const buildId of buildIds) {
-      const ranked = await this.db
-        .with('ranked', (db) =>
-          db
-            .selectFrom('executions')
-            .select((eb) => [
-              'id',
-              'test_plan_case_id',
-              'verdict',
-              'execution_duration_ms',
-              'execution_timestamp',
-              eb.fn
-                .agg<number>('row_number')
-                .over((ob) => ob.partitionBy('test_plan_case_id').orderBy('execution_timestamp', 'desc').orderBy('created_at', 'desc'))
-                .as('rn'),
-            ])
-            .where('build_id', '=', buildId)
-        )
-        .selectFrom('ranked')
-        .selectAll()
-        .where('rn', '=', 1)
-        .execute();
-
-      const latestByPlanCase = new Map(ranked.map((r) => [r.test_plan_case_id, r]));
-
-      for (const pc of planCases) {
-        const latest = latestByPlanCase.get(pc.plan_case_id);
-        results.push({
-          build_id: buildId,
-          plan_case_id: pc.plan_case_id,
-          test_case_id: pc.test_case_id,
-          execution_id: latest?.id ?? null,
-          verdict: latest?.verdict ?? null,
-          execution_duration_ms: latest?.execution_duration_ms ?? null,
-          execution_timestamp: latest?.execution_timestamp ?? null,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /** Average execution_duration_ms per test_plan_case across every execution recorded
-   * under `planId` (all builds), excluding executions with no measured duration --
-   * fabricated/default durations must never be able to skew this, which is exactly why
-   * execution_duration_ms is nullable with no default (see the migration/routes that
-   * write it). Plain aggregate, no window function needed. */
-  async getAverageDurationByPlanCase(planId: string): Promise<AverageDurationRow[]> {
-    const rows = await this.db
-      .selectFrom('executions as e')
-      .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
-      .select((eb) => [
-        'tpc.id as plan_case_id',
-        'tpc.test_case_id as test_case_id',
-        eb.fn.avg<number>('e.execution_duration_ms').as('avg_duration_ms'),
-        eb.fn.count<number>('e.id').as('sample_count'),
-      ])
-      .where('tpc.test_plan_id', '=', planId)
-      .where('e.execution_duration_ms', 'is not', null)
-      .groupBy(['tpc.id', 'tpc.test_case_id'])
-      .execute();
-
-    return rows.map((r) => ({
-      plan_case_id: r.plan_case_id,
-      test_case_id: r.test_case_id,
-      avg_duration_ms: Number(r.avg_duration_ms),
-      sample_count: Number(r.sample_count),
-    }));
-  }
-
-  /** Verdict-volatility per test_plan_case, scoped either to one build's repeated
-   * re-runs or a whole plan's execution history. Uses LAG(verdict) OVER (PARTITION BY
-   * test_plan_case_id ORDER BY execution_timestamp) in a CTE (verified against this
-   * repo's PGlite), then counts how many consecutive-execution verdict changes occurred
-   * per case. The raw `sql` CASE WHEN fragment (comparing a row's verdict to its LAG) is
-   * the one narrow, justified use of the raw-SQL escape hatch here -- everything else is
-   * plain Kysely, matching this file's other new aggregate methods. */
-  async getVerdictVolatility(scope: VerdictVolatilityScope): Promise<FlakinessRow[]> {
-    const withChanges = await this.db
-      .with('with_prev', (db) => {
-        let base = db
+    const partition = ['e.build_id', 'e.test_plan_case_id'] as const;
+    const ranked = await this.db
+      .with('ranked', (db) =>
+        db
           .selectFrom('executions as e')
           .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
           .select((eb) => [
-            'tpc.id as plan_case_id',
-            'tpc.test_case_id as test_case_id',
+            'e.id as execution_id',
+            'e.build_id as run_id',
+            'e.test_plan_case_id as plan_case_id',
             'e.verdict as verdict',
+            'e.execution_duration_ms as execution_duration_ms',
+            'e.failure_message as failure_message',
+            'e.notes as notes',
+            'e.tester_id as tester_id',
+            'e.source as source',
+            'e.runner as runner',
+            'e.execution_timestamp as execution_timestamp',
             eb.fn
-              .agg<string | null>('lag', ['e.verdict'])
-              .over((ob) => ob.partitionBy('e.test_plan_case_id').orderBy('e.execution_timestamp', 'asc'))
-              .as('prev_verdict'),
-          ]);
-        base = scope.type === 'BUILD' ? base.where('e.build_id', '=', scope.buildId) : base.where('tpc.test_plan_id', '=', scope.planId);
-        return base;
-      })
-      .selectFrom('with_prev')
-      .select((eb) => [
-        'plan_case_id',
-        'test_case_id',
-        eb.fn.count<number>('plan_case_id').as('total_executions'),
-        eb.fn
-          .sum<number>(sql<number>`case when "prev_verdict" is not null and "prev_verdict" != "verdict" then 1 else 0 end`)
-          .as('verdict_changes'),
-      ])
-      .groupBy(['plan_case_id', 'test_case_id'])
+              .agg<number>('row_number')
+              .over((ob) => ob.partitionBy([...partition]).orderBy('e.execution_timestamp', 'desc').orderBy('e.created_at', 'desc'))
+              .as('rn'),
+            eb.fn.count<number>('e.id').over((ob) => ob.partitionBy([...partition])).as('attempts'),
+            eb.fn
+              .agg<boolean>('bool_or', [sql<boolean>`${sql.ref('e.verdict')} = 'PASSED'`])
+              .over((ob) => ob.partitionBy([...partition]))
+              .as('had_pass'),
+            eb.fn
+              .agg<boolean>('bool_or', [sql<boolean>`${sql.ref('e.verdict')} in ('FAILED', 'BLOCKED')`])
+              .over((ob) => ob.partitionBy([...partition]))
+              .as('had_fail'),
+          ])
+          .where('tpc.test_plan_id', '=', planId)
+          .where('e.build_id', 'in', runIds)
+      )
+      .selectFrom('ranked')
+      .selectAll()
+      .where('rn', '=', 1)
       .execute();
 
-    return withChanges.map((r) => ({
-      plan_case_id: r.plan_case_id,
-      test_case_id: r.test_case_id,
-      total_executions: Number(r.total_executions),
-      verdict_changes: Number(r.verdict_changes),
-    }));
+    const byKey = new Map(ranked.map((r) => [`${r.run_id}|${r.plan_case_id}`, r]));
+    const results: FinalResultRow[] = [];
+    for (const runId of runIds) {
+      for (const pc of planCases) {
+        const r = byKey.get(`${runId}|${pc.plan_case_id}`);
+        results.push({
+          run_id: runId,
+          plan_case_id: pc.plan_case_id,
+          test_case_id: pc.test_case_id,
+          execution_id: r?.execution_id ?? null,
+          verdict: r?.verdict ?? null,
+          execution_duration_ms: r?.execution_duration_ms ?? null,
+          failure_message: r?.failure_message ?? null,
+          notes: r?.notes ?? null,
+          tester_id: r?.tester_id ?? null,
+          source: r?.source ?? null,
+          runner: r?.runner ?? null,
+          execution_timestamp: r?.execution_timestamp ?? null,
+          attempts: r ? Number(r.attempts) : 0,
+          had_pass: Boolean(r?.had_pass),
+          had_fail: Boolean(r?.had_fail),
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * One page of every execution a test case ever got, across all plans and runs, newest
+   * first. Keyset-paginated on (execution_timestamp, id): pass the `next_cursor` from the
+   * previous page as `cursor`.
+   */
+  async getCaseHistory(
+    testCaseId: string,
+    opts: { limit: number; cursor?: string | null }
+  ): Promise<{ rows: CaseHistoryRow[]; next_cursor: string | null }> {
+    let query = this.db
+      .selectFrom('executions as e')
+      .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
+      .innerJoin('builds as b', 'b.id', 'e.build_id')
+      .innerJoin('test_plans as p', 'p.id', 'b.test_plan_id')
+      .leftJoin('test_case_versions as v', 'v.id', 'tpc.test_case_version_id')
+      .select([
+        'e.id as execution_id',
+        'b.id as run_id',
+        'b.name as run_name',
+        'p.id as plan_id',
+        'p.name as plan_name',
+        'v.version_number as version_number',
+        'e.verdict as verdict',
+        'e.status as status',
+        'e.execution_duration_ms as execution_duration_ms',
+        'e.notes as notes',
+        'e.failure_message as failure_message',
+        'e.stack_trace as stack_trace',
+        'e.environment as environment',
+        'e.runner as runner',
+        'e.source as source',
+        'e.tester_id as tester_id',
+        'e.execution_timestamp as execution_timestamp',
+      ])
+      .where('tpc.test_case_id', '=', testCaseId);
+
+    const cursor = decodeCursor(opts.cursor);
+    if (cursor) {
+      query = query.where((eb) =>
+        eb.or([
+          eb('e.execution_timestamp', '<', cursor.ts),
+          eb.and([eb('e.execution_timestamp', '=', cursor.ts), eb('e.id', '<', cursor.id)]),
+        ])
+      );
+    }
+
+    const rows = await query
+      .orderBy('e.execution_timestamp', 'desc')
+      .orderBy('e.id', 'desc')
+      .limit(opts.limit + 1)
+      .execute();
+
+    const page = rows.slice(0, opts.limit) as CaseHistoryRow[];
+    const last = page[page.length - 1];
+    return {
+      rows: page,
+      next_cursor: rows.length > opts.limit && last ? encodeCursor(last.execution_timestamp, last.execution_id) : null,
+    };
+  }
+
+  /** Every execution of a case (verdict + run + time only), oldest first -- the input for a
+   * case's whole-history stats, independent of which history page is being shown. */
+  async getCaseVerdictTimeline(testCaseId: string): Promise<CaseVerdictTimelineRow[]> {
+    return await this.db
+      .selectFrom('executions as e')
+      .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
+      .select(['e.build_id as run_id', 'e.verdict as verdict', 'e.execution_timestamp as execution_timestamp'])
+      .where('tpc.test_case_id', '=', testCaseId)
+      .orderBy('e.execution_timestamp', 'asc')
+      .orderBy('e.created_at', 'asc')
+      .execute();
+  }
+
+  /** Latest execution time per test case in a project, in any plan/run. Cases never
+   * executed are simply absent. */
+  async getLastExecutedAtByCase(projectId: string): Promise<Map<string, string>> {
+    const rows = await this.db
+      .selectFrom('executions as e')
+      .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
+      .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
+      .select((eb) => ['tpc.test_case_id as test_case_id', eb.fn.max('e.execution_timestamp').as('last_executed_at')])
+      .where('tc.project_id', '=', projectId)
+      .groupBy('tpc.test_case_id')
+      .execute();
+    return new Map(rows.map((r) => [r.test_case_id, String(r.last_executed_at)]));
+  }
+
+  /** Results recorded per day (UTC, from execution_timestamp) and source in a project,
+   * since `sinceIso`. */
+  async getActivity(projectId: string, sinceIso: string): Promise<ActivityRow[]> {
+    const day = sql<string>`left(${sql.ref('e.execution_timestamp')}, 10)`;
+    const rows = await this.db
+      .selectFrom('executions as e')
+      .innerJoin('builds as b', 'b.id', 'e.build_id')
+      .innerJoin('test_plans as p', 'p.id', 'b.test_plan_id')
+      .select((eb) => [day.as('day'), 'e.source as source', eb.fn.count<number>('e.id').as('count')])
+      .where('p.project_id', '=', projectId)
+      .where('e.execution_timestamp', '>=', sinceIso)
+      .groupBy([day, 'e.source'])
+      .orderBy('day', 'asc')
+      .execute();
+    return rows.map((r) => ({ day: r.day, source: r.source, count: Number(r.count) }));
   }
 
   async createBatch(inputs: CreateExecutionInput[]): Promise<ExecutionWithSteps[]> {
@@ -377,6 +480,11 @@ export class ExecutionRepository {
         execution_duration_ms: input.execution_duration_ms ?? null,
         notes: input.notes ?? null,
         custom_fields_snapshot: snapshotStr,
+        failure_message: input.failure_message ?? null,
+        stack_trace: input.stack_trace ?? null,
+        environment: jsonOrNull(input.environment),
+        runner: jsonOrNull(input.runner),
+        source: input.source ?? null,
         execution_timestamp: input.execution_timestamp ?? now,
         created_at: now,
         updated_at: now,

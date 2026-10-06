@@ -13,10 +13,9 @@ import {
   ExecutionRepository,
 } from '../src/repositories/index.js';
 
-// This is the first aggregation code (window functions, groupBy/avg/sum) in this
-// repository -- these tests hand-seed small, fully-known datasets so the aggregation
-// math itself is provably correct, not just "doesn't throw".
-describe('ExecutionRepository reporting aggregates', () => {
+// Hand-seeded, fully-known datasets so the window functions and aggregates behind the
+// reports are provably correct, not just "doesn't throw".
+describe('ExecutionRepository reporting queries', () => {
   let db: Kysely<Database>;
   let projectRepo: ProjectRepository;
   let suiteRepo: TestSuiteRepository;
@@ -57,136 +56,128 @@ describe('ExecutionRepository reporting aggregates', () => {
     const plan = await planRepo.create({ project_id: project.id, name: 'Plan 1' });
     const planCaseA = await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
     const planCaseB = await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseB.id, test_case_version_id: versionB.id });
-    return { project, suite, caseA, caseB, plan, planCaseA, planCaseB };
+    return { project, suite, caseA, caseB, versionA, plan, planCaseA, planCaseB };
   }
 
-  describe('getLatestExecutionsForPlanAcrossBuilds', () => {
-    it('returns the latest execution per (build, plan_case), and an untested row when none exists', async () => {
-      const { plan, caseA, caseB, planCaseA, planCaseB } = await makePlanWithTwoCases();
-      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
+  /** Inserts an execution row directly, so created_at can be pinned for tie-break tests. */
+  async function insertExecution(row: {
+    id: string;
+    build_id: string;
+    test_plan_case_id: string;
+    verdict: string;
+    ts: string;
+    created_at?: string;
+    duration?: number | null;
+    failure_message?: string | null;
+    source?: string | null;
+  }) {
+    await db
+      .insertInto('executions')
+      .values({
+        id: row.id,
+        build_id: row.build_id,
+        test_plan_case_id: row.test_plan_case_id,
+        tester_id: 'tester-1',
+        verdict: row.verdict,
+        execution_duration_ms: row.duration ?? null,
+        notes: null,
+        failure_message: row.failure_message ?? null,
+        source: row.source ?? 'API',
+        execution_timestamp: row.ts,
+        created_at: row.created_at ?? row.ts,
+        updated_at: row.ts,
+      })
+      .execute();
+  }
 
-      // caseA: two executions in this build -- the later one (by execution_timestamp) must win.
-      await executionRepo.create({
-        build_id: build.id,
-        test_plan_case_id: planCaseA.id,
-        tester_id: 'tester1',
-        verdict: 'FAILED',
-        execution_timestamp: '2026-01-01T00:00:00.000Z',
-      });
-      await executionRepo.create({
-        build_id: build.id,
-        test_plan_case_id: planCaseA.id,
-        tester_id: 'tester1',
-        verdict: 'PASSED',
-        execution_timestamp: '2026-01-02T00:00:00.000Z',
-      });
-      // caseB: no executions in this build at all -- must come back UNTESTED (all-null).
+  describe('getFinalResultsForRuns', () => {
+    it('returns the final result per (run, case) for several runs, with attempts and pass/fail flags', async () => {
+      const { plan, planCaseA, planCaseB, caseA, caseB } = await makePlanWithTwoCases();
+      const run1 = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      const run2 = await buildRepo.create({ test_plan_id: plan.id, name: 'R2' });
 
-      const rows = await executionRepo.getLatestExecutionsForPlanAcrossBuilds(plan.id, [build.id]);
-      expect(rows).toHaveLength(2);
+      // Run 1: A failed, then passed on retry. B passed.
+      await insertExecution({ id: 'e1', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'FAILED', ts: '2026-01-01T10:00:00.000Z', failure_message: 'boom' });
+      await insertExecution({ id: 'e2', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts: '2026-01-01T10:05:00.000Z', duration: 120 });
+      await insertExecution({ id: 'e3', build_id: run1.id, test_plan_case_id: planCaseB.id, verdict: 'PASSED', ts: '2026-01-01T10:00:00.000Z' });
+      // Run 2: A blocked. B untested.
+      await insertExecution({ id: 'e4', build_id: run2.id, test_plan_case_id: planCaseA.id, verdict: 'BLOCKED', ts: '2026-01-02T10:00:00.000Z', failure_message: 'env down' });
 
-      const rowA = rows.find((r) => r.plan_case_id === planCaseA.id)!;
-      expect(rowA.verdict).toBe('PASSED');
-      expect(rowA.test_case_id).toBe(caseA.id);
-      expect(rowA.build_id).toBe(build.id);
+      const rows = await executionRepo.getFinalResultsForRuns(plan.id, [run1.id, run2.id]);
+      expect(rows).toHaveLength(4); // 2 runs x 2 plan cases, in runIds order
+      expect(rows.map((r) => r.run_id)).toEqual([run1.id, run1.id, run2.id, run2.id]);
 
-      const rowB = rows.find((r) => r.plan_case_id === planCaseB.id)!;
-      expect(rowB.verdict).toBeNull();
-      expect(rowB.execution_id).toBeNull();
-      expect(rowB.test_case_id).toBe(caseB.id);
+      const r1a = rows.find((r) => r.run_id === run1.id && r.test_case_id === caseA.id)!;
+      expect(r1a).toMatchObject({ execution_id: 'e2', verdict: 'PASSED', execution_duration_ms: 120, attempts: 2, had_pass: true, had_fail: true });
+
+      const r2a = rows.find((r) => r.run_id === run2.id && r.test_case_id === caseA.id)!;
+      expect(r2a).toMatchObject({ verdict: 'BLOCKED', failure_message: 'env down', attempts: 1, had_pass: false, had_fail: true });
+
+      const r2b = rows.find((r) => r.run_id === run2.id && r.test_case_id === caseB.id)!;
+      expect(r2b).toMatchObject({ execution_id: null, verdict: null, attempts: 0, had_pass: false, had_fail: false });
     });
 
-    it('tie-breaks on created_at when two executions share the same execution_timestamp', async () => {
-      const { plan, planCaseA } = await makePlanWithTwoCases();
-      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
-      const sameTimestamp = '2026-01-01T00:00:00.000Z';
+    it('breaks a same-timestamp tie by created_at', async () => {
+      const { plan, planCaseA, caseA } = await makePlanWithTwoCases();
+      const run = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      const ts = '2026-01-01T10:00:00.000Z';
+      await insertExecution({ id: 'later', build_id: run.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts, created_at: '2026-01-01T10:00:02.000Z' });
+      await insertExecution({ id: 'earlier', build_id: run.id, test_plan_case_id: planCaseA.id, verdict: 'FAILED', ts, created_at: '2026-01-01T10:00:01.000Z' });
 
-      // created_at is server-generated at insert time, so inserting sequentially gives the
-      // second insert a later created_at even with an identical execution_timestamp.
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'FAILED', execution_timestamp: sameTimestamp });
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED', execution_timestamp: sameTimestamp });
-
-      const rows = await executionRepo.getLatestExecutionsForPlanAcrossBuilds(plan.id, [build.id]);
-      const rowA = rows.find((r) => r.plan_case_id === planCaseA.id)!;
-      expect(rowA.verdict).toBe('PASSED');
+      const rows = await executionRepo.getFinalResultsForRuns(plan.id, [run.id]);
+      expect(rows.find((r) => r.test_case_id === caseA.id)).toMatchObject({ execution_id: 'later', verdict: 'PASSED' });
     });
 
-    it('scopes correctly across multiple builds and returns [] for an empty buildIds array', async () => {
-      const { plan, planCaseA } = await makePlanWithTwoCases();
-      const build1 = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
-      const build2 = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 2' });
-
-      await executionRepo.create({ build_id: build1.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'FAILED' });
-      await executionRepo.create({ build_id: build2.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED' });
-
-      const rows = await executionRepo.getLatestExecutionsForPlanAcrossBuilds(plan.id, [build1.id, build2.id]);
-      expect(rows.find((r) => r.build_id === build1.id && r.plan_case_id === planCaseA.id)?.verdict).toBe('FAILED');
-      expect(rows.find((r) => r.build_id === build2.id && r.plan_case_id === planCaseA.id)?.verdict).toBe('PASSED');
-
-      expect(await executionRepo.getLatestExecutionsForPlanAcrossBuilds(plan.id, [])).toEqual([]);
-    });
-  });
-
-  describe('getAverageDurationByPlanCase', () => {
-    it('averages only non-null durations, excluding a null-duration execution from both the average and the sample count', async () => {
-      const { plan, planCaseA } = await makePlanWithTwoCases();
-      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
-
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED', execution_duration_ms: 100 });
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED', execution_duration_ms: 300 });
-      // No execution_duration_ms supplied -- stored as null, must not drag the average down.
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED' });
-
-      const rows = await executionRepo.getAverageDurationByPlanCase(plan.id);
-      const rowA = rows.find((r) => r.plan_case_id === planCaseA.id)!;
-      expect(rowA.sample_count).toBe(2);
-      expect(rowA.avg_duration_ms).toBe(200);
-    });
-
-    it('a plan case with zero executions produces no row at all', async () => {
+    it('returns nothing for no runs', async () => {
       const { plan } = await makePlanWithTwoCases();
-      const rows = await executionRepo.getAverageDurationByPlanCase(plan.id);
-      expect(rows).toEqual([]);
+      expect(await executionRepo.getFinalResultsForRuns(plan.id, [])).toEqual([]);
     });
   });
 
-  describe('getVerdictVolatility', () => {
-    it('counts verdict changes across a known sequence, scoped to a build', async () => {
-      const { plan, planCaseA, planCaseB } = await makePlanWithTwoCases();
-      const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
+  describe('case history', () => {
+    it('lists a case\'s executions across plans newest first, keyset-paginated, plus a whole-history timeline', async () => {
+      const { project, plan, planCaseA, caseA, versionA } = await makePlanWithTwoCases();
+      const run1 = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      const otherPlan = await planRepo.create({ project_id: project.id, name: 'Plan 2' });
+      const otherPlanCase = await planRepo.addCase({ test_plan_id: otherPlan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
+      const run2 = await buildRepo.create({ test_plan_id: otherPlan.id, name: 'Other R1' });
 
-      // caseA: FAILED -> PASSED -> FAILED = 2 changes across 3 executions.
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'FAILED', execution_timestamp: '2026-01-01T00:00:00.000Z' });
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED', execution_timestamp: '2026-01-02T00:00:00.000Z' });
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'FAILED', execution_timestamp: '2026-01-03T00:00:00.000Z' });
+      await insertExecution({ id: 'h1', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts: '2026-01-01T10:00:00.000Z' });
+      await insertExecution({ id: 'h2', build_id: run2.id, test_plan_case_id: otherPlanCase.id, verdict: 'FAILED', ts: '2026-01-02T10:00:00.000Z', failure_message: 'x' });
+      await insertExecution({ id: 'h3', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts: '2026-01-03T10:00:00.000Z', source: 'UI' });
 
-      // caseB: PASSED -> PASSED = 0 changes across 2 executions (stable).
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseB.id, tester_id: 't1', verdict: 'PASSED', execution_timestamp: '2026-01-01T00:00:00.000Z' });
-      await executionRepo.create({ build_id: build.id, test_plan_case_id: planCaseB.id, tester_id: 't1', verdict: 'PASSED', execution_timestamp: '2026-01-02T00:00:00.000Z' });
+      const page1 = await executionRepo.getCaseHistory(caseA.id, { limit: 2 });
+      expect(page1.rows.map((r) => r.execution_id)).toEqual(['h3', 'h2']);
+      expect(page1.rows[1]).toMatchObject({ plan_name: 'Plan 2', run_name: 'Other R1', version_number: 1, failure_message: 'x' });
+      expect(page1.next_cursor).toBeTruthy();
 
-      const rows = await executionRepo.getVerdictVolatility({ type: 'BUILD', buildId: build.id });
+      const page2 = await executionRepo.getCaseHistory(caseA.id, { limit: 2, cursor: page1.next_cursor });
+      expect(page2.rows.map((r) => r.execution_id)).toEqual(['h1']);
+      expect(page2.next_cursor).toBeNull();
 
-      const rowA = rows.find((r) => r.plan_case_id === planCaseA.id)!;
-      expect(rowA.total_executions).toBe(3);
-      expect(rowA.verdict_changes).toBe(2);
-
-      const rowB = rows.find((r) => r.plan_case_id === planCaseB.id)!;
-      expect(rowB.total_executions).toBe(2);
-      expect(rowB.verdict_changes).toBe(0);
+      const timeline = await executionRepo.getCaseVerdictTimeline(caseA.id);
+      expect(timeline.map((t) => t.verdict)).toEqual(['PASSED', 'FAILED', 'PASSED']);
     });
+  });
 
-    it('PLAN scope aggregates volatility across every build in the plan', async () => {
-      const { plan, planCaseA } = await makePlanWithTwoCases();
-      const build1 = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
-      const build2 = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 2' });
+  describe('staleness and activity', () => {
+    it('last executed time per case, and results per day by source', async () => {
+      const { project, plan, planCaseA, caseA, caseB } = await makePlanWithTwoCases();
+      const run = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      await insertExecution({ id: 'a1', build_id: run.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts: '2026-03-01T10:00:00.000Z', source: 'API' });
+      await insertExecution({ id: 'a2', build_id: run.id, test_plan_case_id: planCaseA.id, verdict: 'FAILED', ts: '2026-03-02T09:00:00.000Z', source: 'UI' });
+      await insertExecution({ id: 'a3', build_id: run.id, test_plan_case_id: planCaseA.id, verdict: 'PASSED', ts: '2026-03-02T11:00:00.000Z', source: 'UI' });
 
-      await executionRepo.create({ build_id: build1.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'FAILED', execution_timestamp: '2026-01-01T00:00:00.000Z' });
-      await executionRepo.create({ build_id: build2.id, test_plan_case_id: planCaseA.id, tester_id: 't1', verdict: 'PASSED', execution_timestamp: '2026-01-02T00:00:00.000Z' });
+      const last = await executionRepo.getLastExecutedAtByCase(project.id);
+      expect(last.get(caseA.id)).toBe('2026-03-02T11:00:00.000Z');
+      expect(last.has(caseB.id)).toBe(false);
 
-      const rows = await executionRepo.getVerdictVolatility({ type: 'PLAN', planId: plan.id });
-      const rowA = rows.find((r) => r.plan_case_id === planCaseA.id)!;
-      expect(rowA.total_executions).toBe(2);
-      expect(rowA.verdict_changes).toBe(1);
+      const activity = await executionRepo.getActivity(project.id, '2026-03-01T00:00:00.000Z');
+      expect(activity).toEqual([
+        { day: '2026-03-01', source: 'API', count: 1 },
+        { day: '2026-03-02', source: 'UI', count: 2 },
+      ]);
+      expect(await executionRepo.getActivity(project.id, '2026-03-02T00:00:00.000Z')).toEqual([{ day: '2026-03-02', source: 'UI', count: 2 }]);
     });
   });
 });

@@ -126,6 +126,15 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       let successCount = 0;
       let failedCount = 0;
 
+      // CI runner metadata applies to every result in this submission. Only known string
+      // fields are kept, so arbitrary payloads can't bloat the column.
+      const runnerInfo: Record<string, string> = {};
+      for (const key of ['name', 'run_id', 'job_name', 'commit_sha', 'url'] as const) {
+        const v = (body.runner_info as Record<string, unknown> | undefined)?.[key];
+        if (typeof v === 'string' && v.trim()) runnerInfo[key] = v.trim().slice(0, 500);
+      }
+      const runnerJson = Object.keys(runnerInfo).length > 0 ? JSON.stringify(runnerInfo) : null;
+
       for (let i = 0; i < executions.length; i++) {
         const item = executions[i];
         const cid = item.case_identifier || {};
@@ -246,7 +255,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
 
         const execId = uuidv4();
         const execTimestamp = item.executed_at || now;
-        const envTags = item.environment_tags || (body.environment ? { environment: body.environment } : {});
+        const envTags = item.environment_tags || (body.environment ? { environment: body.environment } : null);
 
         executionsToInsert.push({
           id: execId,
@@ -259,7 +268,11 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           // see server.ts's single-execution route for the matching fix and rationale.
           execution_duration_ms: item.duration_ms ?? null,
           notes: item.notes || null,
-          custom_fields_snapshot: JSON.stringify(envTags),
+          failure_message: item.failure_message || null,
+          stack_trace: item.stack_trace || null,
+          environment: envTags && Object.keys(envTags).length > 0 ? JSON.stringify(envTags) : null,
+          runner: runnerJson,
+          source: 'API',
           execution_timestamp: execTimestamp,
           created_at: now,
           updated_at: now,

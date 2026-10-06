@@ -186,39 +186,6 @@ export class TestSuiteRepository {
   }
 
   /**
-   * Flat, non-cumulative per-suite case count: how many of a suite's OWN cases (not
-   * sub-suite cases) exist at all vs. are linked into `planId`. Built for the reporting
-   * feature's coverage-by-suite chart. Deliberately not reusing testPlanCases.ts's
-   * annotateTreeCounts() -- that rolls counts cumulatively up the whole suite tree for
-   * the Specification-mode tri-state indicator, a different shape than this flat bar
-   * chart needs. A suite with zero cases still returns a row (total_case_count: 0).
-   */
-  async getCoverageByPlan(projectId: string, planId: string): Promise<Array<{ suite_id: string; suite_name: string; total_case_count: number; in_plan_count: number }>> {
-    const rows = await this.db
-      .selectFrom('test_suites as ts')
-      .leftJoin('test_cases as tc', 'tc.test_suite_id', 'ts.id')
-      .leftJoin('test_plan_cases as tpc', (join) => join.onRef('tpc.test_case_id', '=', 'tc.id').on('tpc.test_plan_id', '=', planId))
-      .select((eb) => [
-        'ts.id as suite_id',
-        'ts.name as suite_name',
-        eb.fn.count<number>('tc.id').distinct().as('total_case_count'),
-        eb.fn.count<number>('tpc.test_case_id').distinct().as('in_plan_count'),
-      ])
-      .where('ts.project_id', '=', projectId)
-      .groupBy(['ts.id', 'ts.name', 'ts.position'])
-      .orderBy('ts.position', 'asc')
-      .orderBy('ts.name', 'asc')
-      .execute();
-
-    return rows.map((r) => ({
-      suite_id: r.suite_id,
-      suite_name: r.suite_name,
-      total_case_count: Number(r.total_case_count),
-      in_plan_count: Number(r.in_plan_count),
-    }));
-  }
-
-  /**
    * Move a suite to a new parent, updating materialized paths for the suite and all its descendants.
    */
   async move(suiteId: string, newParentSuiteId: string | null): Promise<TestSuite> {

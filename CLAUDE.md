@@ -781,6 +781,61 @@ Per direct request; decided with Elliot: move only (drop *into* a suite, or suit
 
 New tests: `apps/server/tests/spec_editing.test.ts` (+3 -- multi-case move; nested parent+child selection moves only the parent and the child's path follows; move to top level; 400s for a cycle, cases to top level and an unknown target; a partly unknown id list moves nothing; Viewer 403). Verified live in the browser: Shift-click highlights a range; a dispatched drag of the selection onto another suite is accepted and sends the move request.
 
+## Reports overhaul, phase 1: one report engine behind a catalog-driven API (2026-10-06)
+
+Elliot expects execution and case writing to become mostly automated/agent-driven, with reports read by QA engineers troubleshooting, by stakeholders, and by agents over the API or MCP. The original reporting feature (2026-09-21 entry above) was four GET routes and four cards that couldn't answer what broke since the last run, since when, with what error, or whether it's flaky. Its "flakiness" counted every verdict change, so a real fix counted as flaky. Planned with Elliot as three phases:
+1. Engine + REST (this entry).
+2. A full Reports view in the web app, replacing `ReportingModal`.
+3. An MCP endpoint built into the API server.
+
+v1 covers run summary + diff, case history, test health, and breakdowns & trends.
+
+- **Result capture.** The batch API accepted `stack_trace` and `runner_info` (commit SHA, CI run id) but threw them away. It also stuffed environment tags into `executions.custom_fields_snapshot`, and the manual route wrote a fabricated `{environment: 'STAGING'}` there.
+  - New nullable columns on `executions` (`001_initial_schema.ts`, edited in place): `failure_message`, `stack_trace`, `environment` (JSON), `runner` (JSON: name/run_id/job_name/commit_sha/url) and `source` (`UI` | `API`).
+  - New index `idx_executions_case_time`.
+  - `BatchExecutionItem` gained `failure_message`; `runner_info` gained `url`. Only known runner keys are kept.
+  - `custom_fields_snapshot` is now `'{}'` on both execution routes. The execution-results export reads `environment` instead.
+- **Queries** (`ExecutionRepository`). These replace `getLatestExecutionsForPlanAcrossBuilds` (per-build loop), `getAverageDurationByPlanCase`, `getVerdictVolatility` and `TestSuiteRepository.getCoverageByPlan`, all removed:
+  - `getFinalResultsForRuns(planId, runIds)`: one query. Window over (run, plan case): latest execution, plus `attempts`/`had_pass`/`had_fail`.
+  - `getCaseHistory`: across all plans, keyset-paginated.
+  - `getCaseVerdictTimeline`, `getLastExecutedAtByCase`, `getActivity`.
+  - `findByProjectWithLatestVersion`'s `latest_version` also carries `updated_at`, used for the draft age.
+- **Pure engine** (`packages/core/src/reporting/`, rewritten):
+  - `verdicts.ts`: buckets incl. OTHER for RETEST_REQUIRED/KNOWN_ISSUE; pass rate = passed / (total − untested − skipped); completion.
+  - `runDiff.ts`: new_failure / fixed / still_failing / not_run / added / removed, plus failing-since.
+  - `health.ts`: flip score `(transitions − 1) / (outcomes − 2)`, so a single break or fix scores 0; pass-after-retry; median/slowdown; consecutive failures.
+  - `caseHistory.ts`, `breakdown.ts`, `trend.ts`, `csv.ts`.
+  - `markdown.ts`: run summary for PR/chat comments.
+  - `catalog.ts`: `REPORT_CATALOG` (each report's id, description, params as JSON Schema, formats), `REPORT_DEFINITIONS` (how every number is computed) and `validateReportParams`. The catalog is the single definition that the REST API, the coming MCP tools and the coming UI are driven by.
+- **Flaky threshold.** A case counts as flaky at flip score ≥ 0.3, or if it both passed and failed within one run. Decided after seeing demo data: a case that broke for three runs and was then fixed scored 0.17 and was noise in the flaky list.
+- **Case filter extracted.** `routes/caseSearch.ts`'s evaluation moved into `apps/server/src/services/caseFilterService.ts` (`fieldCatalog`, `evaluate`). Every report takes the same optional `filter: {q, filters}` as case search. The verdict filter now uses `getFinalResultsForRuns`.
+- **Routes** (`routes/reports.ts`, replacing the four old GET routes; `SPEC_VIEW`):
+  - `GET /api/v1/projects/:projectId/reports`: the catalog plus definitions.
+  - `POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]`: body = params.
+  - Errors: 400 `INVALID_PARAMS` names each bad param; 404 for unknown reports or ids from another project.
+- **`apps/server/src/services/reportService.ts`.** One method per report, shared with the coming MCP tools:
+  - `overview`
+  - `run_summary`: compares with the previous run of the plan by default, `compare_to` for any run, `null` for none.
+  - `case_history`: takes an id or external id.
+  - `plan_trend`
+  - `test_health`: flaky / slowest / slowing (≥ 1.2×) / always failing (3+ runs) / stale.
+  - `breakdown`: coverage without a run, verdicts per group with one. Groups by suite / priority / execution type / status / tester / case or suite custom field. Multi-select values put a case in several groups. Suite fields inherit like the suite filter.
+- **Known simplification.** Run totals use the plan's current case list, so a case added later shows as untested in earlier runs. This is documented in `REPORT_DEFINITIONS`.
+- **Fixed a real security gap found while doing this.** A project-scoped API token passed `requirePermission` on *any* project's `/projects/:projectId/...` route (reports, case search, exports, spec editing, plan CRUD...). Only `batchExecution.ts` and `ingestion.ts` checked the token's project, by hand. `authenticateApiToken` (`middleware/auth.ts`) now refuses a token whose bound project differs from the route's `:projectId` / `?project_id` with `403 TOKEN_PROJECT_MISMATCH`, once, centrally.
+- **Demo data.** New `apps/server/scripts/report-demo.ts` (`npx tsx apps/server/scripts/report-demo.ts`, `TESTIFY_URL` to override). Through the public API it builds a "Report Demo" project with 12 cases and 8 runs: a regression, a fix, flip-flopping, pass-after-retry, a slowing case, always failing, not run in the latest run, never run, and manual results. It prints the project id and a `SPEC_VIEW`+`EXECUTE_RUN` token. Verified against a throwaway server instance.
+- **Docs.** New `docs/reports_api_and_mcp.md` covers the API, definitions, and how to send results that make good reports.
+
+**Tests:**
+- `packages/core/tests/reporting.test.ts`: rewritten, 18 tests.
+- `packages/db/tests/execution_reporting.repository.test.ts`: rewritten, 5 tests (multi-run window, created_at tie-break, cross-plan pagination, staleness/activity).
+- `apps/server/tests/reports.test.ts`: rewritten, 16 tests. A fixed 3-run fixture covers every report incl. Markdown/CSV, filter scoping, explicit/no comparison, 400/404/403/401, token own-project vs. other-project, and result capture. The 3 duration regression tests are kept.
+- The `getCoverageByPlan` repository test was removed with the method.
+
+**Results:**
+- `npm test`: 594/597. The 3 failures are the usual ones in `.claude/worktrees/vigilant-haslett-05b0d0/`.
+- `tsc --noEmit` is clean on all four workspaces.
+- The old `ReportingModal` calls the removed routes until phase 2 replaces it.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -793,6 +848,7 @@ New tests: `apps/server/tests/spec_editing.test.ts` (+3 -- multi-case move; nest
 ## Notable gaps / risks worth flagging before building on top of this
 
 - **Fixed (2026-09-18): `ingestion.ts` and `batchExecution.ts` no longer bypass auth.** Both now call `authenticateRequest` and require `IMPORT_DATA`/`EXECUTE_RUN` (or `SYSTEM_ADMIN`) respectively, and both accept either a JWT or a machine API token. See "Added: machine API tokens..." above. (The inline `POST /api/v1/executions` route in `server.ts` was fixed separately, 2026-09-14 -- see "Fixed: execution-submission route had no auth" below.)
+- **Fixed (2026-10-06): a project-scoped API token could use any project's `/projects/:projectId/...` routes.** Now refused centrally in `authenticateApiToken` -- see "Reports overhaul, phase 1" above.
 - **No rate limiting on machine API tokens.** A minted `tf_ci_...` token can be used at unlimited request volume -- deliberately deferred out of the 2026-09-18 API tokens feature (see "Added: machine API tokens..." above) rather than built without a clear req/window policy from Elliot. Worth revisiting once there's real CI traffic to size limits against.
 - **`PUT /api/v1/test-case-versions/:versionId` also has no auth check at all** (`server.ts`, ~line 276) -- doesn't call `authenticateRequest`, let alone gate on a permission like `SPEC_EDIT`. Anyone can edit a draft test case version's summary/preconditions with no token. Noticed while building the global custom-fields feature (2026-09-18); not fixed there since it was unrelated to that change's scope.
 - **Fixed (2026-09-19): `routes/ingestion.ts`'s custom-field auto-creation now has real type inference and validation**, routed through `CustomFieldRepository`/`parseCustomFieldValue()` instead of a hardcoded `field_type: 'STRING'`/string-only raw insert. See "Added: flexible multi-format import wizard..." above.

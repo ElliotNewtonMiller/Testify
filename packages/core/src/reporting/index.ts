@@ -1,3 +1,10 @@
 export * from './types.js';
-export { computeFlakinessScores } from './flakiness.js';
-export { computeTrendPoints, KNOWN_VERDICTS } from './trend.js';
+export * from './verdicts.js';
+export * from './runDiff.js';
+export * from './health.js';
+export * from './caseHistory.js';
+export * from './breakdown.js';
+export * from './trend.js';
+export * from './csv.js';
+export * from './markdown.js';
+export * from './catalog.js';

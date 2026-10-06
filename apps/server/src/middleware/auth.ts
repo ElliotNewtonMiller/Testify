@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, ApiTokenRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
 import { verifyJwt } from '@testify/core';
-import { sendInvalidTokenError, sendTokenRevokedError, sendTokenExpiredError } from '../errors.js';
+import { sendInvalidTokenError, sendTokenRevokedError, sendTokenExpiredError, sendTokenProjectMismatchError } from '../errors.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -58,6 +58,15 @@ async function authenticateApiToken(
   }
   if (token.expires_at && new Date(token.expires_at).getTime() <= Date.now()) {
     sendTokenExpiredError(reply, request.url);
+    return null;
+  }
+
+  // A token belongs to one project. Every project-scoped route is nested under
+  // /projects/:projectId (or takes ?project_id), so refuse a token aimed at any other
+  // project here, once, rather than relying on each route to remember to check.
+  const requestedProjectId = (request.params as any)?.projectId || (request.query as any)?.project_id || null;
+  if (requestedProjectId && requestedProjectId !== token.project_id) {
+    sendTokenProjectMismatchError(reply, token.project_id, requestedProjectId, request.url);
     return null;
   }
 

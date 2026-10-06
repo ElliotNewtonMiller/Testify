@@ -325,7 +325,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
 
         let environmentTags: Record<string, unknown> | null = null;
         try {
-          const parsed = JSON.parse(ex.custom_fields_snapshot || '{}');
+          const parsed = JSON.parse(ex.environment || '{}');
           environmentTags = parsed && Object.keys(parsed).length > 0 ? parsed : null;
         } catch {
           environmentTags = null;

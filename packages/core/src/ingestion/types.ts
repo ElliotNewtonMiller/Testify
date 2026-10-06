@@ -179,6 +179,8 @@ export interface BatchExecutionItem {
   duration_ms?: number;
   executed_at?: string;
   notes?: string;
+  /** Short failure reason (e.g. JUnit's failure message attribute). Shown in reports. */
+  failure_message?: string;
   stack_trace?: string;
   environment_tags?: Record<string, string>;
   step_results?: ExecutionStepResult[];
@@ -191,6 +193,8 @@ export interface BatchExecutionRequest {
     run_id?: string;
     job_name?: string;
     commit_sha?: string;
+    /** Link back to the CI run, shown in reports. */
+    url?: string;
   };
   executions: BatchExecutionItem[];
 }
