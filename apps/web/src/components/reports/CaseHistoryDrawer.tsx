@@ -120,9 +120,10 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
           {data && (
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
-                <Kpi label="Pass rate" value={pct(data.stats.pass_rate)} hint={`over ${data.stats.runs} run${data.stats.runs === 1 ? "" : "s"}`} />
+                <Kpi label="Pass rate" info="Over the case's final result in each run (retries don't count twice). Skipped results don't count." value={pct(data.stats.pass_rate)} hint={`over ${data.stats.runs} run${data.stats.runs === 1 ? "" : "s"}`} />
                 <Kpi
                   label="Current streak"
+                  info="How many of its most recent runs in a row ended with the same result."
                   value={streak ? `${streak.runs}×` : "—"}
                   hint={streak ? <VerdictPill verdict={streak.verdict} /> : "Never executed"}
                 />

@@ -78,7 +78,7 @@ export function TrendsTab({
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
       <Section
         title="Plan trend"
-        subtitle="Final result counts per run (bars) and pass rate (line), oldest run first."
+        info="Final result counts per run (bars) and pass rate (line), oldest run first. A case's final result is its latest one in that run."
         actions={
           <>
             <select value={runs} onChange={(e) => setRuns(Number(e.target.value))} style={selectStyle}>
@@ -158,7 +158,8 @@ export function TrendsTab({
 
       <Section
         title="Breakdown"
-        subtitle={withRun ? `Results of run "${runName ?? ""}" per group.` : "Plan coverage per group: how many of the group's cases are in the plan."}
+        subtitle={withRun ? `Run "${runName ?? ""}"` : "Plan coverage"}
+        info={withRun ? "Results of the selected run, per group of cases." : "Plan coverage per group: how many of the group's cases are in the plan."}
         actions={
           <>
             <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} style={selectStyle} aria-label="Group by">

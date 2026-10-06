@@ -893,6 +893,16 @@ The third phase of the reports plan (see phases 1 and 2 above): agents can read 
 
 **Verification.** Also verified over a real HTTP socket with the SDK's own `Client` against a throwaway server instance filled by `report-demo.ts`: 11 tools, instructions, project listing, Markdown run summary.
 
+## Changed: Reports explanations moved into hover bubbles (2026-10-06)
+
+Per direct request, the explanatory text in the Reports view (tab descriptions, section subtitles like "Draft versions not yet approved...", KPI hints like "passed ÷ executed") no longer sits on screen. It appears in a small speech bubble after hovering a title for ~400ms.
+
+- **`InfoTip`.** New component in `apps/web/src/components/reports/shared.tsx`: a bright panel with dark text and a tail pointing at its anchor, placed `bottom` or `right`.
+  - It's positioned `fixed` from the anchor's bounding box, so the sidebar and scroll containers can't clip it.
+  - Anchors get a faint dotted underline and a `help` cursor, so you can tell they have one.
+- **`Section` and `Kpi`** gained an `info` prop. `subtitle` / `hint` are kept for data-bearing text, e.g. "Plan X · open" or "4 automated · 2 by people".
+- **Sidebar.** The "Same numbers via the API" footer and the "overview always covers the whole project" note moved into bubbles on the "Reports" and "Limit to cases" labels.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

@@ -154,10 +154,10 @@ export function RunTab({
         }
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginBottom: "10px" }}>
-          <Kpi label="Pass rate" value={pct(s.pass_rate)} hint="passed ÷ executed (skipped excluded)" />
-          <Kpi label="Executed" value={`${s.total - s.untested} / ${s.total}`} hint={pct(s.completion)} />
-          <Kpi label="Failing" value={s.failed + s.blocked} color={s.failed + s.blocked > 0 ? "#f87171" : undefined} hint={`${s.failed} failed · ${s.blocked} blocked`} />
-          <Kpi label="Automated time" value={fmtMs(s.automated_duration_ms)} hint={`${s.attempts} result${s.attempts === 1 ? "" : "s"} recorded`} />
+          <Kpi label="Pass rate" value={pct(s.pass_rate)} info="Passed ÷ executed. Untested and skipped cases don't count." />
+          <Kpi label="Executed" value={`${s.total - s.untested} / ${s.total}`} hint={pct(s.completion)} info="Cases with a result in this run, out of every case in the plan." />
+          <Kpi label="Failing" value={s.failed + s.blocked} color={s.failed + s.blocked > 0 ? "#f87171" : undefined} hint={`${s.failed} failed · ${s.blocked} blocked`} info="Failed and blocked cases both count as failing." />
+          <Kpi label="Automated time" value={fmtMs(s.automated_duration_ms)} hint={`${s.attempts} result${s.attempts === 1 ? "" : "s"} recorded`} info="Total duration of automated results. Results recorded by people aren't timed." />
         </div>
         <VerdictBar summary={s} height={10} />
         <div style={{ marginTop: "8px" }}>
@@ -185,7 +185,8 @@ export function RunTab({
       </Section>
 
       {data.compared_to && (
-        <Section title={`Changes since "${data.compared_to.name}"`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan "${data.compared_to.plan_name}"` : undefined}>
+        <Section title={`Changes since "${data.compared_to.name}"`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan "${data.compared_to.plan_name}"` : undefined}
+          info="How each case's result changed since the compared run. Click a count to list its cases.">
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
             {DIFF_LABELS.filter((d) => (d.key !== "added" && d.key !== "removed") || data.diff.counts[d.key] > 0).map((d) => (
               <button
@@ -220,7 +221,7 @@ export function RunTab({
         </Section>
       )}
 
-      <Section title={`Failures (${s.failed + s.blocked})`} subtitle={data.compared_to ? "New failures first. Click a case for its full history." : "Click a case for its full history."}>
+      <Section title={`Failures (${s.failed + s.blocked})`} info={`${data.compared_to ? "New failures first. " : ""}"Failing since" is the first run of the current unbroken failing streak. Click a case for its full history.`}>
         {data.failures.length === 0 ? (
           <Empty>No failing or blocked cases in this run.</Empty>
         ) : (

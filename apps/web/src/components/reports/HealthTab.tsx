@@ -118,7 +118,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
         loading ? <Loading /> : null
       ) : (
         <>
-          <Section title={`Flaky (${data.counts.flaky})`} subtitle="Pass/fail flip-flopping between runs (a single break or fix doesn't count), or both passing and failing within one run.">
+          <Section title={`Flaky (${data.counts.flaky})`} info="Pass/fail flip-flopping between runs (a single break or fix doesn't count), or both passing and failing within one run.">
             {table(
               data.flaky,
               [
@@ -132,7 +132,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
             )}
           </Section>
 
-          <Section title={`Always failing (${data.counts.always_failing})`} subtitle="Failed or blocked in each of the last 3 or more runs it was executed in.">
+          <Section title={`Always failing (${data.counts.always_failing})`} info="Failed or blocked in each of the last 3 or more runs it was executed in.">
             {table(
               data.always_failing,
               [
@@ -146,7 +146,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
           </Section>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: "14px" }}>
-            <Section title={`Slowest (${data.counts.slowest})`} subtitle="Median duration of automated results. People's results aren't timed.">
+            <Section title={`Slowest (${data.counts.slowest})`} info="Median duration of automated results. People's results aren't timed.">
               {table(
                 data.slowest,
                 [
@@ -157,7 +157,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
                 data.counts.slowest
               )}
             </Section>
-            <Section title={`Getting slower (${data.counts.slowing})`} subtitle="Recent median vs. older median, 1.2× or more (needs 4+ timed runs).">
+            <Section title={`Getting slower (${data.counts.slowing})`} info="Recent median vs. older median, 1.2× or more (needs 4+ timed runs).">
               {table(
                 data.slowing,
                 [
@@ -170,7 +170,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
             </Section>
           </div>
 
-          <Section title={`Stale (${data.counts.stale})`} subtitle={`Not executed in any plan for ${staleDays} days, or never.`}>
+          <Section title={`Stale (${data.counts.stale})`} info={`Not executed in any plan for ${staleDays} days, or never.`}>
             {table(
               data.stale,
               [

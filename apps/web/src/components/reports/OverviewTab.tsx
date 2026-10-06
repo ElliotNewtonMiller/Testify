@@ -48,7 +48,7 @@ export function OverviewTab({ projectId, onOpenRun, onOpenCase }: { projectId: s
   const s = data.spec;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-      <Section title="Active test plans" subtitle="Latest run of each active plan, compared with the run before it. Click a plan to open its run summary.">
+      <Section title="Active test plans" info="Latest run of each active plan, compared with the run before it. Click a plan to open its run summary.">
         {data.plans.length === 0 ? (
           <Empty>No active test plans in this project.</Empty>
         ) : (
@@ -105,14 +105,14 @@ export function OverviewTab({ projectId, onOpenRun, onOpenCase }: { projectId: s
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
         <Kpi label="Test cases" value={s.total_cases} hint={`${s.by_status.APPROVED ?? 0} approved · ${s.by_status.DEPRECATED ?? 0} deprecated`} />
-        <Kpi label="Drafts awaiting approval" value={s.drafts_awaiting_approval} color={s.drafts_awaiting_approval > 0 ? "#fbbf24" : undefined} />
-        <Kpi label="Never executed" value={s.never_executed} hint="Live cases with no result in any run" />
+        <Kpi label="Drafts awaiting approval" value={s.drafts_awaiting_approval} info="Draft versions not yet approved -- they can't run in a plan until they are." color={s.drafts_awaiting_approval > 0 ? "#fbbf24" : undefined} />
+        <Kpi label="Never executed" value={s.never_executed} info="Live (non-deprecated) cases with no result in any run of any plan." />
         <Kpi label={`Results, last ${data.activity.days} days`} value={data.activity.total} hint={`${data.activity.api} automated · ${data.activity.ui} by people`} />
       </div>
 
       <Section
         title="Testing activity"
-        subtitle="Results recorded per day: automated (API) vs. by people (UI)."
+        info="Results recorded per day: automated (API) vs. by people (UI)."
         actions={
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={selectStyle}>
             {[7, 14, 30, 90].map((d) => (
@@ -139,7 +139,7 @@ export function OverviewTab({ projectId, onOpenRun, onOpenCase }: { projectId: s
       </Section>
 
       {s.oldest_drafts.length > 0 && (
-        <Section title="Drafts waiting longest" subtitle="Draft versions not yet approved -- they can't run in a plan until they are.">
+        <Section title="Drafts waiting longest" info="Draft versions not yet approved -- they can't run in a plan until they are. Longest-waiting first.">
           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
             {s.oldest_drafts.map((d) => (
               <div key={d.test_case_id} style={{ display: "flex", gap: "10px", alignItems: "baseline", fontSize: "12px" }}>

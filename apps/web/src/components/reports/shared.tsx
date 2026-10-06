@@ -200,12 +200,102 @@ export const darkTooltip = {
   cursor: { fill: "rgba(148, 163, 184, 0.08)" },
 };
 
-export function Section({ title, subtitle, actions, children }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode }) {
+/**
+ * A small speech-bubble explanation that appears after hovering `children` (a title or
+ * label) for a moment -- keeps explanatory text out of the way until someone wants it.
+ * Positioned `fixed` from the anchor's bounding box so scrolling/overflow containers can't
+ * clip it. Anchors get a faint dotted underline so it's discoverable.
+ */
+export function InfoTip({ text, children, placement = "bottom" }: { text: React.ReactNode; children: React.ReactNode; placement?: "bottom" | "right" }) {
+  const anchorRef = React.useRef<HTMLSpanElement>(null);
+  const timer = React.useRef<number | undefined>(undefined);
+  const [box, setBox] = React.useState<DOMRect | null>(null);
+
+  const show = () => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      if (anchorRef.current) setBox(anchorRef.current.getBoundingClientRect());
+    }, 400);
+  };
+  const hide = () => {
+    window.clearTimeout(timer.current);
+    setBox(null);
+  };
+  React.useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const WIDTH = 280;
+  let bubble: React.ReactNode = null;
+  if (box) {
+    const right = placement === "right";
+    const left = right ? box.right + 12 : Math.min(Math.max(box.left - 6, 8), window.innerWidth - WIDTH - 8);
+    const top = right ? box.top + box.height / 2 : box.bottom + 9;
+    // The little tail points back at the anchor.
+    const tail: React.CSSProperties = right
+      ? { left: -5, top: "50%", marginTop: -5 }
+      : { top: -5, left: Math.min(Math.max(box.left + Math.min(box.width / 2, 18) - left - 5, 10), WIDTH - 20) };
+    bubble = (
+      <span
+        role="tooltip"
+        style={{
+          position: "fixed",
+          left,
+          top,
+          transform: right ? "translateY(-50%)" : undefined,
+          width: "max-content",
+          maxWidth: WIDTH,
+          zIndex: 1000,
+          pointerEvents: "none",
+          backgroundColor: "#f8fafc",
+          color: "#0f172a",
+          border: "1px solid #cbd5e1",
+          borderRadius: "8px",
+          padding: "7px 10px",
+          fontSize: "11.5px",
+          fontWeight: 500,
+          lineHeight: 1.45,
+          textTransform: "none",
+          letterSpacing: "normal",
+          textAlign: "left",
+          whiteSpace: "normal",
+          boxShadow: "0 6px 20px rgba(0, 0, 0, 0.45)",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            width: 10,
+            height: 10,
+            backgroundColor: "#f8fafc",
+            borderLeft: "1px solid #cbd5e1",
+            borderTop: "1px solid #cbd5e1",
+            transform: right ? "rotate(-45deg)" : "rotate(45deg)",
+            ...tail,
+          }}
+        />
+        {text}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      ref={anchorRef}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      style={{ cursor: "help", textDecoration: "underline dotted rgba(148, 163, 184, 0.45)", textUnderlineOffset: "3px" }}
+    >
+      {children}
+      {bubble}
+    </span>
+  );
+}
+
+export function Section({ title, subtitle, info, actions, children }: { title: string; subtitle?: React.ReactNode; info?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "10px" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>{title}</h3>
+          <h3 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>{info ? <InfoTip text={info}>{title}</InfoTip> : title}</h3>
           {subtitle && <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>{subtitle}</div>}
         </div>
         {actions && <div style={{ display: "flex", gap: "6px", flexShrink: 0, flexWrap: "wrap" }}>{actions}</div>}
@@ -215,10 +305,12 @@ export function Section({ title, subtitle, actions, children }: { title: string;
   );
 }
 
-export function Kpi({ label, value, hint, color }: { label: string; value: React.ReactNode; hint?: React.ReactNode; color?: string }) {
+export function Kpi({ label, value, hint, info, color }: { label: string; value: React.ReactNode; hint?: React.ReactNode; info?: React.ReactNode; color?: string }) {
   return (
     <div style={{ ...cardStyle, padding: "10px 14px" }}>
-      <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {info ? <InfoTip text={info}>{label}</InfoTip> : label}
+      </div>
       <div style={{ fontSize: "22px", fontWeight: 700, color: color ?? "#f1f5f9", marginTop: "2px", fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {hint && <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>{hint}</div>}
     </div>

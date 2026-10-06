@@ -5,12 +5,13 @@ import { RunTab, type CompareChoice } from "./RunTab";
 import { TrendsTab } from "./TrendsTab";
 import { HealthTab } from "./HealthTab";
 import { CaseHistoryDrawer } from "./CaseHistoryDrawer";
+import { InfoTip } from "./shared";
 
 export const REPORT_TABS = [
-  { id: "overview", label: "Overview", hint: "Status of every active plan" },
-  { id: "run", label: "Run", hint: "What broke, what changed" },
-  { id: "trends", label: "Trends & Breakdown", hint: "Across runs, by group" },
-  { id: "health", label: "Test Health", hint: "Flaky, slow, failing, stale" },
+  { id: "overview", label: "Overview", hint: "Status of every active plan: its latest run, new failures, spec health and testing activity." },
+  { id: "run", label: "Run", hint: "What broke in the selected run, and what changed since the run before it." },
+  { id: "trends", label: "Trends & Breakdown", hint: "How the plan moves across runs, and how groups of cases (suite, priority, custom fields...) compare." },
+  { id: "health", label: "Test Health", hint: "Flaky, slow, always-failing and stale cases across the plan's recent runs." },
 ] as const;
 export type ReportsTabId = (typeof REPORT_TABS)[number]["id"];
 
@@ -135,7 +136,19 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
     <div style={{ display: "flex", flex: 1, overflow: "hidden", backgroundColor: "#090d16" }}>
       <nav style={{ width: 250, flexShrink: 0, borderRight: "1px solid #1f2937", backgroundColor: "#0b0f19", display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ padding: "14px 14px 8px" }}>
-          <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Reports</div>
+          <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <InfoTip
+              placement="right"
+              text={
+                <>
+                  Scoped by the Project, Plan and Run pickers in the header. Scripts and AI agents get the same numbers from{" "}
+                  <code>POST /api/v1/projects/:id/reports/:report</code> or the MCP endpoint at <code>/mcp</code>.
+                </>
+              }
+            >
+              Reports
+            </InfoTip>
+          </div>
           <div style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", padding: "0 8px", gap: "2px" }}>
@@ -153,15 +166,20 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
                 borderLeft: tab === t.id ? "3px solid #0ea5e9" : "3px solid transparent",
               }}
             >
-              <div style={{ fontSize: "12px", fontWeight: 700, color: tab === t.id ? "#f1f5f9" : "#cbd5e1" }}>{t.label}</div>
-              <div style={{ fontSize: "10px", color: "#64748b" }}>{t.hint}</div>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: tab === t.id ? "#f1f5f9" : "#cbd5e1" }}>
+                <InfoTip text={t.hint} placement="right">
+                  {t.label}
+                </InfoTip>
+              </div>
             </button>
           ))}
         </div>
 
         <div style={{ padding: "14px 8px 8px", borderTop: "1px solid #1f2937", marginTop: "12px", opacity: usesFilter ? 1 : 0.45 }}>
           <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 6px 6px" }}>
-            Limit to cases
+            <InfoTip placement="right" text="Limits every report except the Overview to the cases matching this search and these filters.">
+              Limit to cases
+            </InfoTip>
           </div>
           <CaseFilterPanel
             value={filterState}
@@ -175,7 +193,6 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
             totalCount={0}
             onRequestFields={loadFields}
           />
-          {!usesFilter && <div style={{ fontSize: "10px", color: "#64748b", padding: "6px" }}>The overview always covers the whole project.</div>}
         </div>
 
         <div style={{ marginTop: "auto", padding: "12px 14px", borderTop: "1px solid #1f2937", display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -185,9 +202,6 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
           >
             {copied ? "✓ Link copied" : "🔗 Copy link to this report"}
           </button>
-          <div style={{ fontSize: "10px", color: "#475569" }}>
-            Same numbers via the API: <code>POST /api/v1/projects/:id/reports/:report</code>
-          </div>
         </div>
       </nav>
 
