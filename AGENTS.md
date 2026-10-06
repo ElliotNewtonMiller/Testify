@@ -834,7 +834,29 @@ v1 covers run summary + diff, case history, test health, and breakdowns & trends
 **Results:**
 - `npm test`: 594/597. The 3 failures are the usual ones in `.claude/worktrees/vigilant-haslett-05b0d0/`.
 - `tsc --noEmit` is clean on all four workspaces.
-- The old `ReportingModal` calls the removed routes until phase 2 replaces it.
+- The old `ReportingModal` called the removed routes until phase 2 (below) replaced it.
+
+## Reports overhaul, phase 2: a full Reports view replaces the modal (2026-10-06)
+
+Per the plan agreed with Elliot (see phase 1 above), the 960px `ReportingModal` is deleted. **📊 Reports** in the header now switches the app into a full-width Reports view in place of the three panes (`appView: "WORKSPACE" | "REPORTS"` in `App.tsx`). Execute/Spec state is kept for when you come back ("← Back to workspace"), and the header's Project / Plan / Run pickers stay visible as the view's scope.
+
+- **Components** (`apps/web/src/components/reports/`):
+  - **Data.** `shared.tsx` has `runReport`, `downloadReportCsv`, the `useReport` hook (refetches on param change, ignores superseded responses), plus formatting and small UI pieces.
+  - **`ReportsView.tsx`.** Sidebar with four tabs, a "Limit to cases" filter and "Copy link". Main area for the active tab.
+  - **`OverviewTab`.** Active-plan cards (pass rate, verdict bar, new failures / fixed; click one to open its run), KPI tiles, an activity chart (automated vs. by people), and the drafts waiting longest.
+  - **`RunTab`.** KPIs, verdict bar, commits/CI links, and a "Compare to" picker (previous run / nothing / any run of the plan). Clickable diff buckets with before → after verdicts. The failures table puts NEW first and shows flaky badges, failing-since, error, and who ran it. "Copy as Markdown" (`format=markdown`) and CSV.
+  - **`TrendsTab`.** Plan trend as stacked bars plus a pass-rate line, with a per-run table (new failures / fixed). Breakdown: group by built-ins or any case/suite custom field from the case-search field catalog; "Results of the selected run" vs. "Plan coverage"; chart, table and CSV.
+  - **`HealthTab`.** Run window and stale-days controls. Flaky / always failing / slowest / getting slower / stale tables, plus CSV.
+  - **`CaseHistoryDrawer`.** Opens from any case in any tab. Stats, then a timeline: verdict, run, plan, version, 🤖/👤 tester, duration, commit + CI link, environment, error/notes, an expandable stack trace, and "Load older results". "Open in Spec" switches to Spec mode with the case selected. Escape closes it.
+- **The case filter.** The existing `CaseFilterPanel` is reused as-is (it's controlled) for "Limit to cases". It feeds every report's `filter` param, debounced 300ms. The Overview ignores it, and says so.
+- **Shareable links.** The view keeps the URL hash in sync (`#/reports/<tab>?project=&plan=&run=&case=&compare=`, `parseReportsHash` / `buildReportsHash`). Opening such a link starts the app in that view with that scope: `App.tsx` seeds `appView` / `selectedProjectId` / `selectedPlanId` / `selectedRunId` from a module-level `INITIAL_REPORTS_LINK`, and the loaders already keep a valid previous selection. Leaving the view clears the hash.
+- **Hotkeys.** `useHotkeyEngine` gained a `disabled` option, set while Reports is open. Otherwise a stray `p` / `f` could record a verdict on a case that isn't even on screen.
+- **Charts.** Recharts, dark tooltips (light label text), and the subtle bar-hover fill Elliot asked for earlier.
+
+**Verification:**
+- `tsc --noEmit` is clean on `apps/web`; web tests 56/56.
+- Checked live against the running dev server (old API, so data calls 404 as expected): a `#/reports/overview` link opens the view after login; tabs switch and the hash follows; "← Back to workspace" returns to Spec mode and clears the hash; no render errors.
+- The data-filled views need the API server restarted on the phase 1 code.
 
 ## Implementation status vs. the roadmap
 

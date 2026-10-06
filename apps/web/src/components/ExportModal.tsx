@@ -139,7 +139,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
   // previous one -- without this, the Plan <select> just shows blank (its value won't match
   // any option in the new project's plans list) while selectedPlanId silently keeps pointing
   // at the old, wrong project's plan, so exporting without re-touching that dropdown would
-  // use the stale id. Matches ReportingModal.tsx's identical picker, which already does this.
+  // use the stale id.
   useEffect(() => {
     if (!isOpen) return;
     setSelectedPlanId("");

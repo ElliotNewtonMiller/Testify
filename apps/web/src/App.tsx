@@ -19,7 +19,7 @@ import { AuthModal, UserProfile } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
 import { ImportWizardModal } from "./components/ImportWizardModal";
 import { ExportModal } from "./components/ExportModal";
-import { ReportingModal } from "./components/ReportingModal";
+import { ReportsView, parseReportsHash } from "./components/reports/ReportsView";
 import { LoginPage } from "./components/LoginPage";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
 import {
@@ -280,6 +280,9 @@ const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
   ],
 };
 
+/** A Reports link (#/reports/...) opened directly: the view, tab and scope to start on. */
+const INITIAL_REPORTS_LINK = typeof window !== "undefined" ? parseReportsHash(window.location.hash) : null;
+
 export default function App() {
   // Starts as the fallback placeholder, not null -- workspaceMode now defaults to
   // SPECIFICATION, whose own bootstrap effect never calls refreshExecutionWorkspace() (only
@@ -525,19 +528,27 @@ export default function App() {
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(false);
   const [importWizardOpen, setImportWizardOpen] = useState<boolean>(false);
   const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
-  const [reportingModalOpen, setReportingModalOpen] = useState<boolean>(false);
+  // The Reports view replaces the three panes while open (the header stays as its scope).
+  const [appView, setAppView] = useState<"WORKSPACE" | "REPORTS">(INITIAL_REPORTS_LINK ? "REPORTS" : "WORKSPACE");
+  // Leaving Reports drops its #/reports/... link from the address bar (the view keeps the hash
+  // in sync while it's open, so the address is always a link to the report on screen).
+  useEffect(() => {
+    if (appView !== "REPORTS" && window.location.hash.startsWith("#/reports")) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+  }, [appView]);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Entity Selection State (Project, Plan, Run)
   // Start empty -- the real lists load once authenticated. (These used to start from fake
   // placeholder projects/plans that never existed in the database.)
   const [projectsList, setProjectsList] = useState<EntityItem[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(INITIAL_REPORTS_LINK?.project ?? "");
 
   const [plansList, setPlansList] = useState<EntityItem[]>([]);
   // Archived plans are hidden from the Plan dropdown unless revealed by its own last entry.
   const [showArchivedPlans, setShowArchivedPlans] = useState(false);
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("");
+  const [selectedPlanId, setSelectedPlanId] = useState<string>(INITIAL_REPORTS_LINK?.plan ?? "");
   const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // No fake seed data here (unlike the historical prj_01/pln_01 placeholders elsewhere,
@@ -548,7 +559,7 @@ export default function App() {
   // genuinely tied to the currently selected plan.
   const [runsList, setRunsList] = useState<EntityItem[]>([]);
   const [isTogglingRun, setIsTogglingRun] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [selectedRunId, setSelectedRunId] = useState<string>(INITIAL_REPORTS_LINK?.run ?? "");
 
   // Entity Modal State
   const [entityModalOpen, setEntityModalOpen] = useState<boolean>(false);
@@ -2507,6 +2518,7 @@ export default function App() {
   // `mode` option.
   useHotkeyEngine({
     fsm,
+    disabled: appView === "REPORTS",
     mode: workspaceMode,
     caseCount:
       workspaceMode === "SPECIFICATION"
@@ -2989,14 +3001,6 @@ export default function App() {
         defaultProjectId={selectedProjectId}
       />
 
-      <ReportingModal
-        isOpen={reportingModalOpen}
-        onClose={() => setReportingModalOpen(false)}
-        currentUser={currentUser}
-        projects={projectsList}
-        defaultProjectId={selectedProjectId}
-      />
-
       <EntityManagementModal
         isOpen={entityModalOpen}
         onClose={() => setEntityModalOpen(false)}
@@ -3341,11 +3345,12 @@ export default function App() {
           )}
           {hasSpecViewPermission && (
             <button
-              onClick={() => setReportingModalOpen(true)}
+              onClick={() => setAppView((v) => (v === "REPORTS" ? "WORKSPACE" : "REPORTS"))}
+              title={appView === "REPORTS" ? "Back to Execute / Spec" : "Open Reports"}
               style={{
-                backgroundColor: "#0ea5e9",
-                color: "#ffffff",
-                border: "none",
+                backgroundColor: appView === "REPORTS" ? "transparent" : "#0ea5e9",
+                color: appView === "REPORTS" ? "#7dd3fc" : "#ffffff",
+                border: appView === "REPORTS" ? "1px solid #0ea5e9" : "1px solid transparent",
                 padding: "4px 10px",
                 borderRadius: "4px",
                 fontSize: "11px",
@@ -3353,7 +3358,7 @@ export default function App() {
                 cursor: "pointer",
               }}
             >
-              📊 Reports
+              {appView === "REPORTS" ? "← Back to workspace" : "📊 Reports"}
             </button>
           )}
           {hasUserManagePermission && (
@@ -3652,7 +3657,23 @@ export default function App() {
         </div>
       )}
 
-      {/* 3-PANE TOPOLOGY WORKSPACE */}
+      {appView === "REPORTS" && hasSpecViewPermission ? (
+        <ReportsView
+          projectId={selectedProjectId}
+          projectName={projectsList.find((p) => p.id === selectedProjectId)?.name ?? ""}
+          planId={selectedPlanId}
+          runId={selectedRunId}
+          runs={runsList}
+          onSelectPlan={setSelectedPlanId}
+          onOpenInSpec={(caseId) => {
+            setAppView("WORKSPACE");
+            setWorkspaceMode("SPECIFICATION");
+            setSpecSelectedCaseId(caseId);
+          }}
+          initialLink={INITIAL_REPORTS_LINK}
+        />
+      ) : (
+      /* 3-PANE TOPOLOGY WORKSPACE */
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* PANE 1: RECURSIVE TREE NAVIGATION (28px NODE DENSITY) */}
         <div
@@ -5295,6 +5316,7 @@ export default function App() {
           ) : null}
         </div>
       </div>
+      )}
 
       {/* FOOTER BAR */}
       <footer
