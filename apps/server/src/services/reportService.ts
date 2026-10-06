@@ -136,6 +136,33 @@ export class ReportService {
   }
 
   // ---------------------------------------------------------------------------------------
+  // Case lookups shared with the MCP tools
+
+  /** Summaries of the given cases (in the given order): ids, title, suite path, priority,
+   * execution type and latest version status. Unknown ids are skipped. */
+  async describeCases(projectId: string, caseIds: string[]) {
+    const ctx = await this.projectContext(projectId);
+    return caseIds
+      .map((id) => ctx.caseById.get(id))
+      .filter((c): c is CaseRow => Boolean(c))
+      .map((c) => ({
+        ...this.caseRef(ctx, c.id),
+        priority: c.priority,
+        execution_type: c.execution_type,
+        version_status: c.latest_version?.status ?? null,
+      }));
+  }
+
+  /** A case of the project by id or external id (case-insensitive), or ReportError 404. */
+  async findCase(projectId: string, idOrExternalId: string) {
+    const ctx = await this.projectContext(projectId);
+    const c =
+      ctx.caseById.get(idOrExternalId) ?? ctx.cases.find((x) => x.external_id.toLowerCase() === idOrExternalId.toLowerCase());
+    if (!c) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${idOrExternalId}' not found in this project`, { param: 'case_id' });
+    return { ...c, suite_path: ctx.suitePath.get(c.test_suite_id) ?? null };
+  }
+
+  // ---------------------------------------------------------------------------------------
   // Shared lookups
 
   private async projectContext(projectId: string): Promise<ProjectContext> {

@@ -307,7 +307,7 @@ The last item on the original feature roadmap (Import/Export/API tokens already 
 
 New tests: `packages/db/tests/execution_reporting.repository.test.ts` (7, hand-seeded known datasets for all three new `ExecutionRepository` methods), a new `TestSuiteRepository.getCoverageByPlan` case in `packages/db/tests/repositories.test.ts`, `packages/core/tests/reporting.test.ts` (9, pure unit tests for the flakiness/trend math), `apps/server/tests/reports.test.ts` (9 -- permission gating via the throwaway-custom-role technique above, each of the 4 endpoints against inline-seeded known data, and regression tests that both duration-fabrication sites now store real `null`). `npm test`: **475/475**, all green. `tsc --noEmit` clean on all four workspaces. Verified live in a browser: recorded real executions via the hotkey flow and confirmed the donut/trend/coverage/test-health cards all reconcile with what was just recorded (including real, non-fabricated durations in the Slowest table); confirmed the Build selector only re-fetches Build-scoped cards while Plan-scoped ones hold steady; confirmed a custom role without `SPEC_VIEW` gets both a 403 from the API and a hidden "📊 Reports" button in the UI; confirmed via curl that an execution posted with no `execution_duration_ms` stores `null`, not the old fabricated `450`.
 
-**Notable gap surfaced, not fixed here**: `docs/rfc_04_rbac_security_matrix.md`'s threat-model section names 6 specific attack vectors (spec tampering, verdict spoofing, mass export exfiltration, privilege escalation, token leakage, brute-force/DoS) but has no entry for this new aggregate-data read surface -- worth a 7th entry (something like "reporting/analytics data exposure") next time that doc gets revisited, but out of scope to add unprompted here.
+**Notable gap surfaced, not fixed here** (closed 2026-10-06, see "Reports overhaul, phase 3"): `docs/rfc_04_rbac_security_matrix.md`'s threat-model section names 6 specific attack vectors (spec tampering, verdict spoofing, mass export exfiltration, privilege escalation, token leakage, brute-force/DoS) but has no entry for this new aggregate-data read surface -- worth a 7th entry (something like "reporting/analytics data exposure") next time that doc gets revisited, but out of scope to add unprompted here.
 
 ## Fixed six Spec-mode case-editing UX issues, including a real session bug (2026-09-21)
 
@@ -858,13 +858,48 @@ Per the plan agreed with Elliot (see phase 1 above), the 960px `ReportingModal` 
 - Checked live against the running dev server (old API, so data calls 404 as expected): a `#/reports/overview` link opens the view after login; tabs switch and the hash follows; "← Back to workspace" returns to Spec mode and clears the hash; no render errors.
 - The data-filled views need the API server restarted on the phase 1 code.
 
+## Reports overhaul, phase 3: MCP endpoint built into the API server (2026-10-06)
+
+The third phase of the reports plan (see phases 1 and 2 above): agents can read every report, and look up cases, over MCP, with nothing to install.
+
+- **Transport.** New `apps/server/src/mcp/mcpServer.ts` mounts `POST /mcp`: Streamable HTTP, stateless (a fresh SDK `Server` + `StreamableHTTPServerTransport` per request, `enableJsonResponse`), via `reply.hijack()`. `GET` / `DELETE /mcp` return 405.
+  - New dependency: `@modelcontextprotocol/sdk` (`apps/server`). It pulls in its own Express/Hono/zod.
+  - The low-level `Server` is used deliberately rather than `McpServer`, so tool input schemas are plain JSON Schema taken straight from `REPORT_CATALOG`; nullable params become `type: [t, 'null']`.
+  - The server sends `instructions` explaining the domain and the typical tool flow.
+- **Auth.** The same `authenticateRequest` as REST (JWT or `tf_ci_` token; 401 otherwise). Each tool call then checks `SPEC_VIEW` on the project it's asked about:
+  - A token must match its bound project.
+  - A user goes through `RoleRepository.evaluatePermissions(user, projectId)` (project overrides apply; `SYSTEM_ADMIN` passes).
+  - Failures come back as MCP tool errors (`isError`), not HTTP errors.
+- **Tools** (all `readOnlyHint`):
+  - `list_projects`: only projects the caller can read.
+  - `list_plans_and_runs`: archived plans hidden unless asked for.
+  - `search_cases`: `CaseFilterService`.
+  - `get_case`: latest version, steps, custom fields.
+  - `list_report_fields`: the field catalog plus an operator guide.
+  - One `report_<id>` per catalog entry, run through the shared `ReportService`. List limits default to 25 for agents; `report_run_summary` also takes `format: "markdown"`.
+  - Results are compact JSON text only. No duplicate `structuredContent`, to keep agent context small.
+- **ReportService helpers.** `describeCases` and `findCase` (id or external id) were added for the case tools.
+- **Docs.**
+  - `docs/reports_api_and_mcp.md` gained an MCP section (connect command, tools, example question).
+  - `docs/rfc_04_rbac_security_matrix.md` gained threat vector #7, "Aggregate Data Exposure via Reports & MCP". It records what's implemented (per-project `SPEC_VIEW`, central token binding, read-only tools) and the gaps (no rate limiting, report reads not audit-logged). This closes the "worth a 7th entry" note in the 2026-09-21 reporting entry.
+
+**Tests.** New `apps/server/tests/mcp.test.ts` (5 tests):
+- 401 without auth; 405 on GET.
+- `initialize` returns the server info and instructions.
+- `tools/list` has all 11 tools, schemas from the catalog, and every tool read-only.
+- A token sees only its own project; `report_run_summary` matches the REST numbers, with Markdown; another project or bad params give tool errors.
+- `search_cases` / `get_case` / `list_report_fields` work.
+- A user whose role lacks `SPEC_VIEW` sees no projects and gets a tool error.
+
+**Verification.** Also verified over a real HTTP socket with the SDK's own `Client` against a throwaway server instance filled by `report-demo.ts`: 11 tools, instructions, project listing, Markdown run summary.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
 - **Slice 1 (read spine):** Done — `VirtualizedSuiteTree` (now driven by a real nested suite tree, see "Added: Specification / Execution mode toggle" above), `TestCaseQueueGrid`, `SpecCaseListGrid`, real project/plan/spec-tree routes in `routes/projects.ts`/`routes/testPlanCases.ts` (the original hardcoded workspace hydration route in `server.ts` still exists too, used as a fallback/by `core_loop_e2e.test.ts`). Spec mode is no longer curation-only — full suite/case create/edit/delete and the DRAFT→APPROVED versioning lifecycle now exist, see "Added: create/edit/delete for Test Suites and Test Cases in Specification mode" above.
 - **Slice 2 (execution loop):** Largely done — `useHotkeyEngine`, `useFocusFSM`, `FocusIndicatorBadge`, batch execution route (`routes/batchExecution.ts`), plan/build lock checks.
 - **Slice 3 (admin & customization):** Largely done. `routes/admin.ts`, `RoleRepository`, `AdminPanelModal.tsx`, `EntityManagementModal.tsx` exist. `packages/core/src/rbac/` (permission registry + a pure override-evaluator) — see "Added: admin-editable role templates & per-user permission overrides" above — and `packages/core/src/custom-fields/` (field-type validator, real type inference, global AND project-scoped definitions for Test Cases/Test Suites) — see "Added: global admin-defined custom fields..." and "Added: flexible multi-format import wizard..." above — now both exist, and `routes/ingestion.ts`'s custom-field writes are now fully validated (no longer the noted gap). Not yet built: a snapshot builder that actually freezes real custom-field values into `test_plan_cases`/`executions`' `custom_fields_snapshot` columns (those remain placeholder JSON today, unrelated to either feature).
-- **Slice 4 (integrations/migrations):** Largely done. `packages/core/src/ingestion/` now has 5 parsers (TestLink XML, native JSON, CSV, JUnit XML, TestRail CSV) behind the `IFileParser` interface, plus a full frontend import wizard with interactive field mapping (dry-run type inference, map/drop/create-new) — see "Added: flexible multi-format import wizard..." above. `packages/core/src/export/` (JSON/CSV serializers for both suite/case definitions and Build execution results) plus a frontend Export modal now exist too — see "Added: flexible export..." above. Machine API tokens exist (`tf_ci_...`, project-scoped, capability-capped) — see "Added: machine API tokens..." above. `IStorageProvider` (S3/local attachment storage) is still not built.
+- **Slice 4 (integrations/migrations):** Largely done. `packages/core/src/ingestion/` now has 5 parsers (TestLink XML, native JSON, CSV, JUnit XML, TestRail CSV) behind the `IFileParser` interface, plus a full frontend import wizard with interactive field mapping (dry-run type inference, map/drop/create-new) — see "Added: flexible multi-format import wizard..." above. `packages/core/src/export/` (JSON/CSV serializers for both suite/case definitions and Build execution results) plus a frontend Export modal now exist too — see "Added: flexible export..." above. Machine API tokens exist (`tf_ci_...`, project-scoped, capability-capped) — see "Added: machine API tokens..." above. Reports are a catalog-driven API plus an MCP endpoint at `POST /mcp` — see "Reports overhaul" phases 1–3 above. `IStorageProvider` (S3/local attachment storage) is still not built.
 - No OpenAPI 3.1 spec file exists anywhere in the repo despite RFC 03 requiring one — the API contract currently lives only in route code + the RFC doc.
 
 ## Notable gaps / risks worth flagging before building on top of this

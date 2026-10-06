@@ -1,4 +1,4 @@
-# Reports API
+# Reports API & MCP
 
 Testify's reports are built for three audiences: QA engineers troubleshooting failures, stakeholders who want status, and agents/scripts that need the same numbers. Every report is computed in one place (`apps/server/src/services/reportService.ts`) and described once in a catalog (`packages/core/src/reporting/catalog.ts`). The web UI and this API therefore always agree.
 
@@ -65,6 +65,27 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 - `environment_tags`
 
 Per submission, it also stores `environment` and `runner_info`: `{ name, run_id, job_name, commit_sha, url }`. The failure message and stack trace show up in run summaries and case history, and the commit shows up in run summaries.
+
+## MCP (for AI agents)
+
+The API server also serves the reports as an MCP server, built in at `POST /mcp`. It uses the Streamable HTTP transport, stateless, with JSON responses. It authenticates exactly like the REST API, so the best credential is an API token with just `SPEC_VIEW`:
+
+```bash
+claude mcp add --transport http testify http://localhost:3001/mcp --header "Authorization: Bearer tf_ci_..."
+```
+
+Every tool is read-only and checks `SPEC_VIEW` on the project it's asked about. A token only ever sees its own project.
+
+| Tool | What it does |
+|---|---|
+| `list_projects` | Projects you can read |
+| `list_plans_and_runs` | Plans with their recent runs |
+| `search_cases` | Text and property search; same filters as the UI |
+| `get_case` | A case's content: steps, expected results, custom fields |
+| `list_report_fields` | Filter and group-by keys, with their operators |
+| `report_overview`, `report_run_summary`, `report_case_history`, `report_plan_trend`, `report_test_health`, `report_breakdown` | The reports above, generated from the catalog. List sizes default to 25. `report_run_summary` also takes `format: "markdown"`. |
+
+Ask, for example: *"What broke in the latest run of the Release Regression plan, and is any of it flaky?"*
 
 ## Examples
 

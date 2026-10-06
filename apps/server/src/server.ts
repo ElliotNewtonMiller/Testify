@@ -24,6 +24,7 @@ import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
+import { registerMcpRoutes } from './mcp/mcpServer.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
 import { UserRepository } from '@testify/db';
@@ -86,6 +87,7 @@ export async function createServer(connectionString?: string) {
   await registerExportRoutes(app, db, jwtSecret);
   await registerReportRoutes(app, db, jwtSecret);
   await registerCaseSearchRoutes(app, db, jwtSecret);
+  await registerMcpRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - legacy hydration route hardwired to the sample core-loop project.
   // Only meaningful when that sample is seeded (tests / SEED_SAMPLE_DATA=true); the UI uses

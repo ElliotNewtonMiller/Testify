@@ -317,7 +317,7 @@ Every state-altering or security-relevant transaction emits an audit event.
 
 ## 6. Threat Model & Mitigation Matrix
 
-A comprehensive threat modeling analysis identifies six primary security attack vectors targeting Enterprise QA platforms.
+A comprehensive threat modeling analysis identifies seven primary security attack vectors targeting Enterprise QA platforms.
 
 ```mermaid
 graph TD
@@ -327,6 +327,7 @@ graph TD
     A --> E[4. Privilege Escalation via Overrides]
     A --> F[5. CI/CD Token Leakage]
     A --> G[6. Brute Force & Rate Exhaustion]
+    A --> H[7. Aggregate Data Exposure via Reports & MCP]
 
     B --> B1[Mitigation: SPEC_APPROVE gating + Frozen Snapshots]
     C --> C1[Mitigation: Token Project Binding + Locked Plan HTTP 422]
@@ -334,6 +335,7 @@ graph TD
     E --> E1[Mitigation: SYSTEM_ADMIN check + Audit Logging of Roles]
     F --> F1[Mitigation: Single-View Token + Argon2id Hash Persistence]
     G --> G1[Mitigation: Redis Leaky Bucket Rate Limiter + Lockout]
+    H --> H1[Mitigation: SPEC_VIEW per project + Central Token Project Binding]
 ```
 
 ### 6.1 Attack Vector Deep Dives & Security Controls
@@ -376,6 +378,17 @@ graph TD
   - Rate Limiting Middleware (Leaky Bucket / Redis sliding window):
     - Public Login endpoint: Max 5 failed attempts per IP per 15 minutes before account lockout / CAPTCHA enforcement.
     - Batch Execution Ingest (`/executions/batch`): Max 100 requests per minute per Machine API Token.
+
+#### 7. Aggregate Data Exposure via Reports & the MCP Endpoint
+- **Risk:** The reports API (`/api/v1/projects/:projectId/reports/...`) and the MCP endpoint (`POST /mcp`) are read surfaces built for scripts and AI agents. They expose failure messages, stack traces, CI runner metadata (commit SHAs, CI URLs), environment tags and tester identities across a whole project in a few calls. A leaked agent credential, or an agent tricked by prompt injection in test content (case titles, notes and failure messages are user/CI-controlled text), could read more than intended.
+- **Architectural Mitigation (implemented):**
+  - Every report and MCP tool requires `SPEC_VIEW` on the specific project, evaluated per call: project-scoped role overrides for users, frozen capabilities for tokens.
+  - A machine token is refused on any project other than its own. This is enforced centrally in `authenticateApiToken` for every `/projects/:projectId/...` route and per tool call on `/mcp`.
+  - Every report and MCP tool is read-only; MCP tools carry `readOnlyHint`. There are no write tools yet, so injected instructions can't change data through MCP.
+  - Agents should use a dedicated token with only `SPEC_VIEW`, revocable on its own.
+- **Gaps:**
+  - No rate limiting on report or MCP calls yet (same deferred gap as exports).
+  - Report reads aren't audit-logged; only exports are.
 
 ---
 
