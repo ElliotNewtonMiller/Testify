@@ -115,16 +115,17 @@ export function RunTab({
     }
     setTimeout(() => setCopyState(null), 2500);
   };
+  const failureById = new Map(data.failures.map((f) => [f.test_case_id, f]));
   const commits = [...new Set(data.runners.map((r) => r.commit_sha).filter(Boolean))];
   const ciLinks = data.runners.filter((r) => r.url);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
       <Section
-        title={`Run "${data.run.name}"`}
+        title={`Run: ${data.run.name}`}
         subtitle={
           <>
-            Plan "{data.run.plan_name}" · {data.run.status === "CLOSED" ? "closed" : "open"}
+            Plan: {data.run.plan_name} · {data.run.status === "CLOSED" ? "closed" : "open"}
             {data.filter_applied && <span style={{ color: "#fbbf24" }}> · limited to the cases matching your filter</span>}
           </>
         }
@@ -185,7 +186,7 @@ export function RunTab({
       </Section>
 
       {data.compared_to && (
-        <Section title={`Changes since "${data.compared_to.name}"`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan "${data.compared_to.plan_name}"` : undefined}
+        <Section title={`Changes since: ${data.compared_to.name}`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan: ${data.compared_to.plan_name}` : undefined}
           info="How each case's result changed since the compared run. Click a count to list its cases.">
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
             {DIFF_LABELS.filter((d) => (d.key !== "added" && d.key !== "removed") || data.diff.counts[d.key] > 0).map((d) => (
@@ -198,22 +199,29 @@ export function RunTab({
               </button>
             ))}
           </div>
-          {DIFF_LABELS.filter((d) => openLists[d.key] && d.key !== "new_failure" && d.key !== "still_failing").map((d) => (
+          {DIFF_LABELS.filter((d) => openLists[d.key]).map((d) => (
             <div key={d.key} style={{ marginBottom: "8px" }}>
               <div style={{ fontSize: "11px", fontWeight: 700, color: d.color, margin: "4px 0" }}>{d.label}</div>
               {data.diff.cases[d.key].length === 0 ? (
                 <Empty>None.</Empty>
               ) : (
-                data.diff.cases[d.key].map((c) => (
-                  <div key={c.test_case_id} style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "12px", padding: "2px 0" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <CaseCell c={c} onOpen={onOpenCase} />
+                data.diff.cases[d.key].map((c) => {
+                  const failure = failureById.get(c.test_case_id);
+                  const message = failure ? failure.failure_message || failure.notes : null;
+                  return (
+                    <div key={c.test_case_id} style={{ padding: "2px 0" }}>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "12px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <CaseCell c={c} onOpen={onOpenCase} badge={failure?.flaky ? <FlakyBadge /> : undefined} />
+                        </div>
+                        <VerdictPill verdict={c.previous_verdict} />
+                        <span style={{ color: "#475569" }}>→</span>
+                        <VerdictPill verdict={c.verdict} />
+                      </div>
+                      {message && <div style={{ fontSize: "11px", color: "#fca5a5", margin: "1px 0 2px 0", wordBreak: "break-word" }}>{message}</div>}
                     </div>
-                    <VerdictPill verdict={c.previous_verdict} />
-                    <span style={{ color: "#475569" }}>→</span>
-                    <VerdictPill verdict={c.verdict} />
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           ))}

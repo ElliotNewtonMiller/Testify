@@ -903,6 +903,10 @@ Per direct request, the explanatory text in the Reports view (tab descriptions, 
 - **`Section` and `Kpi`** gained an `info` prop. `subtitle` / `hint` are kept for data-bearing text, e.g. "Plan X · open" or "4 automated · 2 by people".
 - **Sidebar.** The "Same numbers via the API" footer and the "overview always covers the whole project" note moved into bubbles on the "Reports" and "Limit to cases" labels.
 
+## Fixed: "new failures" / "still failing" toggles in the Run report showed nothing (2026-10-06)
+
+`RunTab.tsx` deliberately skipped those two buckets when expanded (their cases are also in the Failures table below), so clicking "1 still failing ▸" looked broken. Every diff bucket now expands. Failing cases also show their error message and flaky badge. The headings now read "Run: run4" / "Plan: plan2 · open" and "Changes since: run3", per direct request.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
