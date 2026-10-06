@@ -158,7 +158,7 @@ export function TrendsTab({
 
       <Section
         title="Breakdown"
-        subtitle={withRun ? `Run "${runName ?? ""}"` : "Plan coverage"}
+        subtitle={withRun ? `Run: ${runName ?? ""}` : "Plan coverage"}
         info={withRun ? "Results of the selected run, per group of cases." : "Plan coverage per group: how many of the group's cases are in the plan."}
         actions={
           <>
@@ -223,9 +223,34 @@ export function TrendsTab({
   );
 }
 
+const LABEL_FONT_PX = 11;
+/** Rough width of one character at 11px -- enough to size the label column and decide
+ * where to cut a label, without measuring text in the DOM. */
+const LABEL_CHAR_PX = 6.3;
+const ROW_PX = 32;
+
+/** One-line Y-axis label: long group names (e.g. nested suite paths) are cut with "…" instead
+ * of wrapping into the neighbouring rows; the full name shows on hover. */
+function GroupTick({ x, y, payload, width }: { x?: number; y?: number; payload?: { value: string }; width: number }) {
+  const full = String(payload?.value ?? "");
+  const maxChars = Math.max(4, Math.floor((width - 8) / LABEL_CHAR_PX));
+  // For paths, keep the end ("… / Child suite") -- it's the part that tells rows apart.
+  const label = full.length <= maxChars ? full : full.includes(" / ") ? `…${full.slice(full.length - maxChars + 1)}` : `${full.slice(0, maxChars - 1)}…`;
+  return (
+    <text x={x} y={y} dy={4} textAnchor="end" fill="#cbd5e1" fontSize={LABEL_FONT_PX}>
+      <title>{full}</title>
+      {label}
+    </text>
+  );
+}
+
 function BreakdownBody({ report }: { report: BreakdownReport }) {
   const verdicts = report.mode === "verdicts";
-  const height = Math.max(120, report.groups.length * 28 + 40);
+  const height = Math.max(120, report.groups.length * ROW_PX + 40);
+  // Fit the longest label, within 100-280px, so short labels don't waste room and long ones
+  // don't squeeze the bars.
+  const longest = report.groups.reduce((n, g) => Math.max(n, String(g.key).length), 0);
+  const labelWidth = Math.min(280, Math.max(100, Math.ceil(longest * LABEL_CHAR_PX) + 12));
   return (
     <>
       <div style={{ height }}>
@@ -233,7 +258,7 @@ function BreakdownBody({ report }: { report: BreakdownReport }) {
           <BarChart data={report.groups} layout="vertical" margin={{ top: 0, right: 8, left: 8, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
             <XAxis type="number" allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} />
-            <YAxis type="category" dataKey="key" width={160} tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+            <YAxis type="category" dataKey="key" width={labelWidth} interval={0} tick={<GroupTick width={labelWidth} />} />
             <Tooltip {...darkTooltip} />
             <Legend wrapperStyle={{ fontSize: "11px" }} />
             {verdicts ? (
