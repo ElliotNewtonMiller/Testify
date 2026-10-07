@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { UserProfile } from "./AuthModal";
 
 interface UserItem extends UserProfile {
@@ -103,7 +104,7 @@ export function AdminPanelModal({
   onSelfPermissionsChanged,
 }: AdminPanelModalProps) {
   const [activeTab, setActiveTab] = useState<
-    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "AUDIT"
+    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "EMAIL" | "AUDIT"
   >("ROSTER");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
@@ -1058,6 +1059,22 @@ export function AdminPanelModal({
           >
             🔑 API Tokens
           </button>
+          {currentUser?.permissions?.includes("SYSTEM_ADMIN") && (
+            <button
+              onClick={() => setActiveTab("EMAIL")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom: activeTab === "EMAIL" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "EMAIL" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              ✉ Email
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("AUDIT")}
             style={{
@@ -1107,6 +1124,8 @@ export function AdminPanelModal({
             {successMessage}
           </div>
         )}
+
+        {activeTab === "EMAIL" && <EmailSettingsPanel />}
 
         {/* TAB 1: USER ROSTER & ADD USER */}
         {activeTab === "ROSTER" && (

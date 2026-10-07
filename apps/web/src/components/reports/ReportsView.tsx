@@ -5,13 +5,16 @@ import { RunTab, type CompareChoice } from "./RunTab";
 import { TrendsTab } from "./TrendsTab";
 import { HealthTab } from "./HealthTab";
 import { CaseHistoryDrawer } from "./CaseHistoryDrawer";
-import { InfoTip } from "./shared";
+import { InfoTip, type EmailContext } from "./shared";
+import { SchedulesTab } from "./SchedulesTab";
+import { EmailReportDialog } from "./EmailReportDialog";
 
 export const REPORT_TABS = [
   { id: "overview", label: "Overview", hint: "Status of every active plan: its latest run, new failures, spec health and testing activity." },
   { id: "run", label: "Run", hint: "What broke in the selected run, and what changed since the run before it." },
   { id: "trends", label: "Trends & Breakdown", hint: "How the plan moves across runs, and how groups of cases (suite, priority, custom fields...) compare." },
   { id: "health", label: "Test Health", hint: "Flaky, slow, always-failing and stale cases across the plan's recent runs." },
+  { id: "schedules", label: "Scheduled Emails", hint: "Send reports to stakeholders automatically, daily or weekly." },
 ] as const;
 export type ReportsTabId = (typeof REPORT_TABS)[number]["id"];
 
@@ -51,6 +54,10 @@ export interface ReportsViewProps {
   planId: string;
   runId: string;
   runs: Array<{ id: string; name: string }>;
+  /** The project's plans, for picking one in a scheduled email. */
+  plans: Array<{ id: string; name: string; status?: string }>;
+  /** Holds REPORT_EMAIL: can email reports and manage scheduled emails. */
+  canEmail: boolean;
   /** Selects a plan in the header (its latest run becomes the selected run). */
   onSelectPlan: (planId: string) => void;
   onOpenInSpec: (caseId: string) => void;
@@ -63,8 +70,12 @@ export interface ReportsViewProps {
  * scripts and agents use. The current tab, scope, open case and comparison live in the URL
  * hash, so a link reopens exactly this report.
  */
-export function ReportsView({ projectId, projectName, planId, runId, runs, onSelectPlan, onOpenInSpec, initialLink }: ReportsViewProps) {
-  const [tab, setTab] = React.useState<ReportsTabId>(initialLink?.tab ?? "overview");
+export function ReportsView({ projectId, projectName, planId, runId, runs, plans, canEmail, onSelectPlan, onOpenInSpec, initialLink }: ReportsViewProps) {
+  const [tabState, setTab] = React.useState<ReportsTabId>(initialLink?.tab ?? "overview");
+  // Without REPORT_EMAIL the schedules tab doesn't exist (e.g. a link from someone who has it).
+  const tab: ReportsTabId = tabState === "schedules" && !canEmail ? "overview" : tabState;
+  const [emailContext, setEmailContext] = React.useState<EmailContext | null>(null);
+  const [emailOpen, setEmailOpen] = React.useState(false);
   const [caseId, setCaseId] = React.useState<string | null>(initialLink?.caseId ?? null);
   const [compareTo, setCompareTo] = React.useState<CompareChoice>(initialLink?.compare ?? "previous");
   const [filterState, setFilterState] = React.useState<CaseFilterState>(EMPTY_CASE_FILTER);
@@ -130,7 +141,8 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
   }
 
   const runName = runs.find((r) => r.id === runId)?.name ?? null;
-  const usesFilter = tab !== "overview";
+  const usesFilter = tab !== "overview" && tab !== "schedules";
+  const canEmailThis = canEmail && tab !== "schedules" && emailContext !== null;
 
   return (
     <div style={{ display: "flex", flex: 1, overflow: "hidden", backgroundColor: "#090d16" }}>
@@ -152,7 +164,7 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
           <div style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", padding: "0 8px", gap: "2px" }}>
-          {REPORT_TABS.map((t) => (
+          {REPORT_TABS.filter((t) => t.id !== "schedules" || canEmail).map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -196,6 +208,16 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
         </div>
 
         <div style={{ marginTop: "auto", padding: "12px 14px", borderTop: "1px solid #1f2937", display: "flex", flexDirection: "column", gap: "6px" }}>
+          {canEmail && tab !== "schedules" && (
+            <button
+              onClick={() => setEmailOpen(true)}
+              disabled={!canEmailThis}
+              title={canEmailThis ? "Email this report to stakeholders" : "Pick a plan or run to email this report"}
+              style={{ padding: "5px 10px", backgroundColor: "#0284c7", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: canEmailThis ? "pointer" : "not-allowed", opacity: canEmailThis ? 1 : 0.5 }}
+            >
+              ✉ Email this report
+            </button>
+          )}
           <button
             onClick={copyLink}
             style={{ padding: "5px 10px", backgroundColor: "transparent", border: "1px solid #334155", borderRadius: "4px", color: "#cbd5e1", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
@@ -210,6 +232,7 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
           <OverviewTab
             projectId={projectId}
             onOpenCase={setCaseId}
+            onEmailContext={setEmailContext}
             onOpenRun={(id) => {
               onSelectPlan(id);
               setTab("run");
@@ -217,12 +240,14 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, onSel
           />
         )}
         {tab === "run" && (
-          <RunTab projectId={projectId} runId={runId} runs={runs} compareTo={compareTo} onCompareToChange={setCompareTo} filter={filter} onOpenCase={setCaseId} />
+          <RunTab projectId={projectId} runId={runId} runs={runs} compareTo={compareTo} onCompareToChange={setCompareTo} filter={filter} onOpenCase={setCaseId} onEmailContext={setEmailContext} />
         )}
-        {tab === "trends" && <TrendsTab projectId={projectId} planId={planId} runId={runId} runName={runName} fields={fields} filter={filter} />}
-        {tab === "health" && <HealthTab projectId={projectId} planId={planId} filter={filter} onOpenCase={setCaseId} />}
+        {tab === "trends" && <TrendsTab projectId={projectId} planId={planId} runId={runId} runName={runName} fields={fields} filter={filter} onEmailContext={setEmailContext} />}
+        {tab === "health" && <HealthTab projectId={projectId} planId={planId} filter={filter} onOpenCase={setCaseId} onEmailContext={setEmailContext} />}
+        {tab === "schedules" && canEmail && <SchedulesTab projectId={projectId} plans={plans} defaultPlanId={planId} />}
       </main>
 
+      {emailOpen && emailContext && <EmailReportDialog projectId={projectId} what={emailContext.what} sections={emailContext.sections} onClose={() => setEmailOpen(false)} />}
       {caseId && <CaseHistoryDrawer projectId={projectId} caseId={caseId} onClose={() => setCaseId(null)} onOpenInSpec={onOpenInSpec} />}
     </div>
   );

@@ -13,6 +13,8 @@ import {
   pct,
   selectStyle,
   useReport,
+  useEmailContext,
+  type EmailContext,
   type CaseRef,
   type RunRef,
   type VerdictSummary,
@@ -38,9 +40,10 @@ interface OverviewReport {
 }
 
 /** Stakeholder view: every active plan's latest run, spec health, and testing activity. */
-export function OverviewTab({ projectId, onOpenRun, onOpenCase }: { projectId: string; onOpenRun: (planId: string) => void; onOpenCase: (caseId: string) => void }) {
+export function OverviewTab({ projectId, onOpenRun, onOpenCase, onEmailContext }: { projectId: string; onOpenRun: (planId: string) => void; onOpenCase: (caseId: string) => void; onEmailContext?: (ctx: EmailContext | null) => void }) {
   const [days, setDays] = React.useState(30);
   const { data, error, loading } = useReport<OverviewReport>(projectId, "overview", { days });
+  useEmailContext(onEmailContext, { what: `Project overview (activity over the last ${days} days)`, sections: [{ report_id: "overview", params: { days } }] });
 
   if (error) return <ErrorNote message={error} />;
   if (!data) return loading ? <Loading /> : null;

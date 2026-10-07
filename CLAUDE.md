@@ -918,6 +918,68 @@ Per direct request, the free-text search (`q`) now matches a case's external id,
 
 Tests: `caseFilter.test.ts` +1; `case_search.test.ts` +1 (parent-name match, sibling excluded, empty sub-suite listed, case filter still applies).
 
+## Added: emailing reports to stakeholders -- scheduled digests and "Email this report" (2026-10-06)
+
+Per direct request. Decided with Elliot:
+- Scheduled (daily/weekly) and manual sends; not on run close.
+- SMTP settings configured in the Admin Panel.
+- Any recipient address; stakeholders don't need an account.
+- An outbox that captures every email for dev testing.
+
+An email is one or more **sections**, each a catalog report plus params, produced by the same `ReportService` as the UI/REST/MCP.
+
+- **Data** (`001_initial_schema.ts`, in place):
+  - New `report_schedules` table: sections / recipients as JSON; DAILY/WEEKLY + weekday + `HH:MM` + IANA time zone; `only_when_new_run`; `enabled`; `next_run_at`; last status/error/sent-run ids. `project_id` cascades on project delete.
+  - New `email_outbox` table: every email sent, captured or failed. `project_id` / `schedule_id` are set to null on delete, so the log survives.
+  - SMTP settings live in the previously-unused `system_settings` table, under keys `email.smtp_*`, `email.from`, `app.public_url`. The password is stored as entered (no encryption-key infrastructure yet) and the API never returns it, only `has_password`.
+  - Repositories: `SystemSettingsRepository`, `ReportScheduleRepository` (incl. `findDue` and a compare-and-set `claim`), `EmailOutboxRepository` (`packages/db/src/repositories/report_email.repository.ts`).
+- **Core** (`packages/core/src/reporting/`):
+  - `email.ts`: `renderReportEmail(sections, {projectName, title?, message?, sentBy?})` produces `{subject, html, text}`. Light, inline-styled, table-based HTML (no scripts or images); verdict bars as coloured cells.
+    - Renderers for overview / run_summary / test_health / plan_trend / breakdown (`EMAILABLE_REPORTS`). Long lists are capped with "…and N more — see all in Testify".
+    - Every user/CI string goes through `escapeHtml`.
+  - `schedule.ts`: `nextRunAt` (wall-clock time in the schedule's zone via `Intl` offsets, so it's DST-correct) and `validateScheduleTiming`.
+  - `emailAddress.ts`: `parseRecipients` (split, lower-case, dedupe, invalid list, 50 cap).
+- **New permission `REPORT_EMAIL`** (registry 18 → 19 keys), held by Admin and Test Lead by default. It's separate from `SPEC_VIEW` because it sends project data outside Testify.
+- **Server:**
+  - `services/mailer.ts`: `loadEmailSettings`, plus `sendEmail`. With no SMTP host it only captures (`CAPTURED`); with one it sends via **nodemailer** (new dependency, `SENT` or `FAILED` plus the error). Every attempt goes to the outbox. `setTransportFactoryForTests`.
+  - `services/reportEmailService.ts`:
+    - `ReportEmailService.build` validates each section against the catalog. Links come from `app.public_url` plus the Reports hash format.
+    - `resolveScheduleSections`: `latest_run` resolves to the plan's newest run at send time; overview = last 7 days; health / trend = last 10 runs.
+    - `sendSchedule`: re-checks the creator is active and still has REPORT_EMAIL + SPEC_VIEW (or SYSTEM_ADMIN) on the project, otherwise FAILED; honors `only_when_new_run` (SKIPPED); writes a `REPORT_EMAILED` audit row.
+    - `runDueSchedules(db, now)` claims each due schedule (`UPDATE … WHERE next_run_at = <old>`), so concurrent instances never double-send. `server.ts` runs it every 60s outside tests.
+  - `routes/reportEmail.ts` (REPORT_EMAIL, nested under `:projectId`):
+    - `POST .../report-emails` (`preview: true` returns `{subject, html}` without sending).
+    - Schedule CRUD and `.../send-now`.
+    - 400s name the field.
+  - `routes/emailAdmin.ts` (SYSTEM_ADMIN): `GET` / `PUT` `/api/v1/admin/email-settings` (password: left out = keep, `""` = clear), `.../test`, `/api/v1/admin/email-outbox[/:id]`.
+  - New audit actions were added to `admin.ts`'s `securityActions` allowlist in the same change: `REPORT_EMAILED`, `REPORT_SCHEDULE_CREATED` / `UPDATED` / `DELETED`, `EMAIL_SETTINGS_UPDATED`.
+- **Web:**
+  - Reports sidebar "✉ Email this report" opens `EmailReportDialog.tsx` (recipients, note, Preview, Send). It sends the current tab's report(s) with the exact params on screen; each tab reports them via `useEmailContext`, e.g. Trends sends plan_trend + breakdown with the chosen group-by.
+  - New "Scheduled Emails" Reports tab, `SchedulesTab.tsx`: list with next/last status, Send now / Pause / Edit / Delete, and an editor (sections, plan, weekly/daily, time, time zone with an `Intl` list, recipients, note, "only when there's a new run").
+  - New Admin Panel "✉ Email" tab, `EmailSettingsPanel.tsx` (SYSTEM_ADMIN only): SMTP form, app address (pre-filled with the browser's origin), "Send test email", and the outbox with previews.
+  - Previews use `EmailPreviewModal`: a sandboxed iframe whose links open in a new tab.
+  - App passes `canEmail` (REPORT_EMAIL or SYSTEM_ADMIN) and the plan list to `ReportsView`.
+- **Bug found while verifying.** SchedulesTab's request helper sent `Content-Type: application/json` on body-less POST/DELETE, which Fastify 400s ("Body cannot be empty..."). This is the same class as the 2026-09-16 plan-toggle bug; the helper now only sets it with a body.
+- **Not built** (documented in docs and the RFC 04 threat model):
+  - Sending on run close.
+  - Unsubscribe links.
+  - Encrypting the SMTP password.
+  - Rate limiting beyond the 50-recipient cap.
+  - MCP stays read-only.
+
+**Tests:**
+- `packages/core/tests/reportEmail.test.ts` (10): DST in New York and London, weekly/daily, escaping of `<script>`/`<img onerror>`, subjects, recipients.
+- `apps/server/tests/report_email.test.ts` (7):
+  - The password is never returned.
+  - Captured, sent and failed via test transports.
+  - Preview writes nothing; a send writes the outbox and an audit row.
+  - Validation, Tester/Viewer 403, cross-project token 403.
+  - Due schedules are sent once and advanced; a stale claim loses.
+  - `only_when_new_run` skips; a disabled creator gives FAILED.
+- Permission-count tests bumped to 19.
+
+**Verification.** Verified live in the browser: a rendered run-summary email, creating a schedule and Send now (captured), and the Admin Panel Email tab and outbox.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

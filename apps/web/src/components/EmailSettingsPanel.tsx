@@ -1,0 +1,301 @@
+import React, { useCallback, useEffect, useState } from "react";
+
+interface EmailSettings {
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_secure: boolean;
+  smtp_user: string | null;
+  has_password: boolean;
+  from: string | null;
+  public_url: string | null;
+  delivery: "smtp" | "capture_only";
+}
+
+interface OutboxEntry {
+  id: string;
+  project_id: string | null;
+  schedule_id: string | null;
+  subject: string;
+  recipients: string[];
+  status: "SENT" | "CAPTURED" | "FAILED";
+  error: string | null;
+  created_at: string;
+}
+
+function authHeaders(json = false): Record<string, string> {
+  const token = localStorage.getItem("auth_token");
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { "Content-Type": "application/json" } : {}) };
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "7px 9px",
+  backgroundColor: "#0f172a",
+  border: "1px solid #334155",
+  borderRadius: "4px",
+  color: "#e2e8f0",
+  fontSize: "12px",
+  boxSizing: "border-box",
+};
+const labelStyle: React.CSSProperties = { fontSize: "11px", color: "#94a3b8", fontWeight: 700, display: "block", marginBottom: "4px" };
+const buttonStyle: React.CSSProperties = {
+  padding: "7px 14px",
+  borderRadius: "4px",
+  border: "1px solid #334155",
+  backgroundColor: "transparent",
+  color: "#cbd5e1",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+const STATUS_COLORS: Record<string, string> = { SENT: "#4ade80", CAPTURED: "#7dd3fc", FAILED: "#f87171" };
+
+/** Admin Panel "Email" tab: outgoing mail server settings and the outbox of every report email. */
+export function EmailSettingsPanel() {
+  const [settings, setSettings] = useState<EmailSettings | null>(null);
+  const [form, setForm] = useState({ smtp_host: "", smtp_port: "", smtp_secure: false, smtp_user: "", smtp_password: "", from: "", public_url: "" });
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [outbox, setOutbox] = useState<OutboxEntry[]>([]);
+  const [outboxTotal, setOutboxTotal] = useState(0);
+  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
+
+  const applySettings = (s: EmailSettings) => {
+    setSettings(s);
+    setForm({
+      smtp_host: s.smtp_host ?? "",
+      smtp_port: s.smtp_port ? String(s.smtp_port) : "",
+      smtp_secure: s.smtp_secure,
+      smtp_user: s.smtp_user ?? "",
+      smtp_password: "",
+      from: s.from ?? "",
+      public_url: s.public_url ?? (typeof window !== "undefined" ? window.location.origin : ""),
+    });
+    setPasswordTouched(false);
+  };
+
+  const loadOutbox = useCallback(async () => {
+    const res = await fetch("/api/v1/admin/email-outbox?limit=50", { headers: authHeaders() });
+    if (res.ok) {
+      const d = await res.json();
+      setOutbox(d.entries);
+      setOutboxTotal(d.total);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/v1/admin/email-settings", { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Failed to load email settings (${r.status})`))))
+      .then((d) => applySettings(d.settings))
+      .catch((e) => setNotice({ ok: false, text: e.message }));
+    loadOutbox();
+  }, [loadOutbox]);
+
+  const flash = (ok: boolean, text: string) => {
+    setNotice({ ok, text });
+    if (ok) setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 3500);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = { ...form, smtp_port: form.smtp_port || null };
+      if (!passwordTouched) delete body.smtp_password;
+      const res = await fetch("/api/v1/admin/email-settings", { method: "PUT", headers: authHeaders(true), body: JSON.stringify(body) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || d.error || "Couldn't save");
+      applySettings(d.settings);
+      flash(true, "✓ Email settings saved.");
+    } catch (e) {
+      flash(false, e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/v1/admin/email-settings/test", { method: "POST", headers: authHeaders(true), body: JSON.stringify({ to: testTo }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || d.error || "Couldn't send");
+      if (d.outbox.status === "FAILED") flash(false, `Sending failed: ${d.outbox.error}`);
+      else flash(true, d.outbox.status === "SENT" ? `✓ Test email sent to ${testTo}.` : "✓ Test email captured in the outbox (no SMTP server set, so nothing was sent).");
+      loadOutbox();
+    } catch (e) {
+      flash(false, e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openPreview = async (id: string) => {
+    const res = await fetch(`/api/v1/admin/email-outbox/${id}`, { headers: authHeaders() });
+    if (res.ok) {
+      const d = await res.json();
+      setPreview({ subject: d.entry.subject, html: d.entry.html });
+    }
+  };
+
+  const field = (key: keyof typeof form, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <input
+        value={form[key] as string}
+        onChange={(e) => {
+          setForm((f) => ({ ...f, [key]: e.target.value }));
+          if (key === "smtp_password") setPasswordTouched(true);
+        }}
+        style={inputStyle}
+        {...props}
+      />
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      {notice && (
+        <div
+          style={{
+            backgroundColor: notice.ok ? "#052e16" : "#450a0a",
+            border: `1px solid ${notice.ok ? "#16a34a" : "#991b1b"}`,
+            color: notice.ok ? "#86efac" : "#fca5a5",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            fontSize: "12px",
+          }}
+        >
+          {notice.text}
+        </div>
+      )}
+
+      <section style={{ backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: "8px", padding: "16px" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: "14px", color: "#e2e8f0" }}>Outgoing mail server (SMTP)</h3>
+        <p style={{ margin: "0 0 12px", fontSize: "11px", color: "#64748b" }}>Used for report emails. Ask your IT team or email provider for these details.</p>
+        {settings?.delivery === "capture_only" && (
+          <div style={{ fontSize: "12px", color: "#fde68a", backgroundColor: "#78350f", border: "1px solid #92400e", borderRadius: "6px", padding: "8px 10px", marginBottom: "12px" }}>
+            No mail server is set, so report emails are only captured in the outbox below, not sent.
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "10px" }}>
+          {field("smtp_host", "SMTP HOST", { placeholder: "smtp.example.com" })}
+          {field("smtp_port", "PORT", { placeholder: form.smtp_secure ? "465" : "587", inputMode: "numeric" })}
+          {field("smtp_user", "USERNAME", { autoComplete: "off" })}
+          {field("smtp_password", "PASSWORD", {
+            type: "password",
+            autoComplete: "new-password",
+            placeholder: settings?.has_password ? "•••••••• (saved — type to replace)" : "",
+          })}
+          {field("from", "FROM ADDRESS", { placeholder: "Testify <qa@example.com>" })}
+          <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "6px", marginTop: "20px", cursor: "pointer" }}>
+            <input type="checkbox" checked={form.smtp_secure} onChange={(e) => setForm((f) => ({ ...f, smtp_secure: e.target.checked }))} />
+            Use TLS from the start (usually port 465)
+          </label>
+        </div>
+        <div style={{ marginTop: "10px" }}>
+          {field("public_url", "TESTIFY ADDRESS FOR LINKS IN EMAILS", { placeholder: "https://testify.example.com" })}
+        </div>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={save} disabled={busy} style={{ ...buttonStyle, backgroundColor: "#0284c7", border: "none", color: "#fff" }}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+          {settings?.has_password && (
+            <button
+              onClick={() => {
+                setForm((f) => ({ ...f, smtp_password: "" }));
+                setPasswordTouched(true);
+              }}
+              style={buttonStyle}
+              title="Remove the saved password when you next save"
+            >
+              Clear saved password
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" style={{ ...inputStyle, width: "220px" }} />
+          <button onClick={sendTest} disabled={busy || !testTo.trim()} style={buttonStyle}>
+            Send test email
+          </button>
+        </div>
+      </section>
+
+      <section style={{ backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: "8px", padding: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+          <h3 style={{ margin: 0, fontSize: "14px", color: "#e2e8f0", flex: 1 }}>Outbox ({outboxTotal})</h3>
+          <button onClick={loadOutbox} style={{ ...buttonStyle, padding: "4px 10px", fontSize: "11px" }}>
+            Refresh
+          </button>
+        </div>
+        {outbox.length === 0 ? (
+          <div style={{ fontSize: "12px", color: "#64748b" }}>No emails yet.</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+            <thead>
+              <tr>
+                {["When", "Subject", "To", "Status"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", fontSize: "10px", color: "#64748b", padding: "6px", borderBottom: "1px solid #1f2937", textTransform: "uppercase" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {outbox.map((e) => (
+                <tr key={e.id} onClick={() => openPreview(e.id)} style={{ cursor: "pointer" }} title="Preview this email">
+                  <td style={{ padding: "6px", color: "#94a3b8", whiteSpace: "nowrap", borderBottom: "1px solid #131c2e" }}>{new Date(e.created_at).toLocaleString()}</td>
+                  <td style={{ padding: "6px", color: "#e2e8f0", borderBottom: "1px solid #131c2e" }}>
+                    {e.subject}
+                    {e.schedule_id && <span style={{ color: "#64748b", fontSize: "10px" }}> · scheduled</span>}
+                  </td>
+                  <td style={{ padding: "6px", color: "#94a3b8", borderBottom: "1px solid #131c2e" }} title={e.recipients.join(", ")}>
+                    {e.recipients.length === 1 ? e.recipients[0] : `${e.recipients[0]} +${e.recipients.length - 1}`}
+                  </td>
+                  <td style={{ padding: "6px", borderBottom: "1px solid #131c2e", whiteSpace: "nowrap" }}>
+                    <span style={{ color: STATUS_COLORS[e.status], fontWeight: 700, fontSize: "11px" }}>{e.status === "CAPTURED" ? "Captured (not sent)" : e.status === "SENT" ? "Sent" : "Failed"}</span>
+                    {e.error && <div style={{ color: "#fca5a5", fontSize: "11px" }}>{e.error}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {preview && <EmailPreviewModal subject={preview.subject} html={preview.html} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+/** Shows an email exactly as rendered, in a sandboxed iframe (no scripts, no same-origin access). */
+export function EmailPreviewModal({ subject, html, onClose, actions }: { subject: string; html: string; onClose: () => void; actions?: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, backgroundColor: "rgba(2, 6, 23, 0.7)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(820px, 94vw)", height: "88vh", backgroundColor: "#0f172a", border: "1px solid #334155", borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", borderBottom: "1px solid #1e293b" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "10px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>Email preview</div>
+            <div style={{ fontSize: "13px", color: "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subject}</div>
+          </div>
+          {actions}
+          <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#94a3b8", fontSize: "20px", cursor: "pointer" }}>
+            ×
+          </button>
+        </div>
+        {/* Links open in a new tab (base target) so "Open in Testify" can be checked from here. */}
+        <iframe
+          title="Email preview"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={html.replace(/<html>/i, '<html><head><base target="_blank"></head>')}
+          style={{ flex: 1, border: "none", backgroundColor: "#fff" }}
+        />
+      </div>
+    </div>
+  );
+}

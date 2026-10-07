@@ -2944,6 +2944,8 @@ export default function App() {
     userPermissions.includes("EXPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
   const hasSpecViewPermission =
     userPermissions.includes("SPEC_VIEW") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasReportEmailPermission =
+    userPermissions.includes("REPORT_EMAIL") || userPermissions.includes("SYSTEM_ADMIN");
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
@@ -3664,6 +3666,8 @@ export default function App() {
           planId={selectedPlanId}
           runId={selectedRunId}
           runs={runsList}
+          plans={plansList}
+          canEmail={hasReportEmailPermission}
           onSelectPlan={setSelectedPlanId}
           onOpenInSpec={(caseId) => {
             setAppView("WORKSPACE");

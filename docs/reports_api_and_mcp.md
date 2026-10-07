@@ -87,6 +87,33 @@ Every tool is read-only and checks `SPEC_VIEW` on the project it's asked about. 
 
 Ask, for example: *"What broke in the latest run of the Release Regression plan, and is any of it flaky?"*
 
+## Emailing reports
+
+People with the `REPORT_EMAIL` permission (Admin and Test Lead by default) can email reports to any address.
+
+- **In the web app:** use **✉ Email this report** in the Reports sidebar, or set up daily or weekly emails in the **Scheduled Emails** tab.
+- **Mail server:** an admin sets it in Admin Panel → ✉ Email. Until a mail server is set, emails are only captured in that tab's outbox, not sent.
+
+API:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/projects/:projectId/report-emails` | Send now. Body: `{ "sections": [{ "report_id", "params" }], "recipients": "a@x.com, b@y.com", "message"?, "preview"? }`. `preview: true` returns `{ subject, html }` without sending. |
+| `GET` / `POST /api/v1/projects/:projectId/report-schedules` | List or create schedules. |
+| `PUT` / `DELETE /api/v1/projects/:projectId/report-schedules/:id` | Change or remove a schedule. |
+| `POST /api/v1/projects/:projectId/report-schedules/:id/send-now` | Send a schedule now. |
+
+A schedule's fields:
+- `name` (used as the email subject).
+- `sections`, each one of:
+  - `{ kind: "overview" }`
+  - `{ kind: "latest_run", plan_id }` (the plan's newest run when it's sent)
+  - `{ kind: "test_health", plan_id }`
+  - `{ kind: "plan_trend", plan_id }`
+- `recipients`, `message`.
+- Timing: `frequency` (`DAILY` | `WEEKLY`), `weekday` (0 = Sunday), `time_of_day` (`HH:MM`), `timezone` (IANA, e.g. `Europe/London`).
+- `only_when_new_run`, `enabled`.
+
 ## Examples
 
 ```bash

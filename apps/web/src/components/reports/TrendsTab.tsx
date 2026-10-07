@@ -15,6 +15,8 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  useEmailContext,
+  type EmailContext,
   type VerdictSummary,
 } from "./shared";
 
@@ -46,6 +48,7 @@ export function TrendsTab({
   runName,
   fields,
   filter,
+  onEmailContext,
 }: {
   projectId: string;
   planId: string;
@@ -53,6 +56,7 @@ export function TrendsTab({
   runName: string | null;
   fields: CaseFilterField[];
   filter: Record<string, unknown> | null;
+  onEmailContext?: (ctx: EmailContext | null) => void;
 }) {
   const [runs, setRuns] = React.useState(10);
   const [groupBy, setGroupBy] = React.useState("suite");
@@ -67,6 +71,16 @@ export function TrendsTab({
     [planId, groupBy, withRun, runId, filter]
   );
   const breakdown = useReport<BreakdownReport>(projectId, "breakdown", groupBy === "tester" && !withRun ? null : breakdownParams);
+  const groupLabel = BUILTIN_GROUPS.find((g) => g.key === groupBy)?.label.replace(/ \(.*\)$/, "").toLowerCase() ?? fields.find((f) => f.key === groupBy)?.label ?? groupBy;
+  useEmailContext(
+    onEmailContext,
+    trendParams
+      ? {
+          what: `Plan trend (last ${runs} runs) and breakdown by ${groupLabel}${filter ? ", limited to your filter" : ""}`,
+          sections: [{ report_id: "plan_trend", params: trendParams }, ...(breakdownParams && !(groupBy === "tester" && !withRun) ? [{ report_id: "breakdown", params: breakdownParams }] : [])],
+        }
+      : null
+  );
 
   const customGroups = fields.filter((f) => f.source !== "builtin");
 

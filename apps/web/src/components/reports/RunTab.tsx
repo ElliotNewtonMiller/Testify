@@ -20,6 +20,8 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  useEmailContext,
+  type EmailContext,
   type CaseRef,
   type RunRef,
   type VerdictSummary,
@@ -79,6 +81,7 @@ export function RunTab({
   onCompareToChange,
   filter,
   onOpenCase,
+  onEmailContext,
 }: {
   projectId: string;
   runId: string;
@@ -87,6 +90,7 @@ export function RunTab({
   onCompareToChange: (c: CompareChoice) => void;
   filter: Record<string, unknown> | null;
   onOpenCase: (caseId: string) => void;
+  onEmailContext?: (ctx: EmailContext | null) => void;
 }) {
   const params = React.useMemo(() => {
     if (!runId) return null;
@@ -97,6 +101,7 @@ export function RunTab({
     return p;
   }, [runId, compareTo, filter]);
   const { data, error, loading } = useReport<RunSummary>(projectId, "run_summary", params);
+  useEmailContext(onEmailContext, params ? { what: `Run summary${data ? ` of ${data.run.name}` : ""}${filter ? ", limited to your filter" : ""}`, sections: [{ report_id: "run_summary", params }] } : null);
   const [copyState, setCopyState] = React.useState<string | null>(null);
   const [openLists, setOpenLists] = React.useState<Record<string, boolean>>({ fixed: true });
 

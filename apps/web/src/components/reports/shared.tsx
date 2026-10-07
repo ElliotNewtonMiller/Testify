@@ -8,6 +8,22 @@ import React from "react";
 
 export type ReportFormat = "json" | "markdown" | "csv";
 
+/** What "Email this report" sends from the current tab: its report(s) with the exact params
+ * on screen, and a short description for the dialog. */
+export interface EmailContext {
+  what: string;
+  sections: Array<{ report_id: string; params: Record<string, unknown> }>;
+}
+
+/** Tabs call this so the Reports view always knows what to email. */
+export function useEmailContext(onEmailContext: ((ctx: EmailContext | null) => void) | undefined, ctx: EmailContext | null) {
+  const key = JSON.stringify(ctx);
+  React.useEffect(() => {
+    onEmailContext?.(key === "null" ? null : (JSON.parse(key) as EmailContext));
+    return () => onEmailContext?.(null); // a tab that's gone has nothing to email
+  }, [key, onEmailContext]);
+}
+
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("auth_token");
   return token ? { Authorization: `Bearer ${token}` } : {};

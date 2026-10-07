@@ -14,6 +14,8 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  useEmailContext,
+  type EmailContext,
   type CaseRef,
 } from "./shared";
 
@@ -30,7 +32,7 @@ interface HealthReport {
 }
 
 /** Problem cases across a plan's recent runs. */
-export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId: string; planId: string; filter: Record<string, unknown> | null; onOpenCase: (caseId: string) => void }) {
+export function HealthTab({ projectId, planId, filter, onOpenCase, onEmailContext }: { projectId: string; planId: string; filter: Record<string, unknown> | null; onOpenCase: (caseId: string) => void; onEmailContext?: (ctx: EmailContext | null) => void }) {
   const [runs, setRuns] = React.useState(10);
   const [staleDays, setStaleDays] = React.useState(30);
   const params = React.useMemo(
@@ -38,6 +40,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase }: { projectId
     [planId, runs, staleDays, filter]
   );
   const { data, error, loading } = useReport<HealthReport>(projectId, "test_health", params);
+  useEmailContext(onEmailContext, params ? { what: `Test health over the last ${runs} runs${filter ? ", limited to your filter" : ""}`, sections: [{ report_id: "test_health", params: { ...params, limit: 10 } }] } : null);
 
   if (!planId) return <Empty>Pick a test plan in the header to see its test health.</Empty>;
 
