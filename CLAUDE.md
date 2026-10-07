@@ -980,6 +980,13 @@ An email is one or more **sections**, each a catalog report plus params, produce
 
 **Verification.** Verified live in the browser: a rendered run-summary email, creating a schedule and Send now (captured), and the Admin Panel Email tab and outbox.
 
+## Fixed: the scheduled-email time zone field only offered one zone (2026-10-07)
+
+`SchedulesTab.tsx` used an `<input list>` + `<datalist>`. A datalist only suggests entries matching what's already typed, and the field was pre-filled with the browser's zone, so the list showed only that one. It's now a `<select>`:
+- Your own zone first, then UTC.
+- Every zone from `Intl.supportedValuesOf('timeZone')` grouped by region in `<optgroup>`s, with a short fallback list for older browsers.
+- A saved zone this browser doesn't list still shows.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

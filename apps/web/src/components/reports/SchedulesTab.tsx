@@ -203,13 +203,27 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
   };
 
   const needsPlan = draft && (draft.kinds.latest_run || draft.kinds.test_health || draft.kinds.plan_trend);
-  const timeZones = React.useMemo(() => {
+  // Every IANA zone the browser knows, grouped by region ("America", "Europe", ...). Falls
+  // back to a short list on browsers without Intl.supportedValuesOf.
+  const timeZoneGroups = React.useMemo(() => {
+    let zones: string[] = [];
     try {
-      return (Intl as any).supportedValuesOf?.("timeZone") as string[] | undefined;
+      zones = ((Intl as any).supportedValuesOf?.("timeZone") as string[] | undefined) ?? [];
     } catch {
-      return undefined;
+      zones = [];
     }
+    if (zones.length === 0) {
+      zones = ["UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Kolkata", "Asia/Tokyo", "Australia/Sydney"];
+    }
+    const groups = new Map<string, string[]>();
+    for (const tz of zones) {
+      if (tz === "UTC") continue; // offered at the top
+      const region = tz.includes("/") ? tz.split("/")[0] : "Other";
+      groups.set(region, [...(groups.get(region) ?? []), tz]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, []);
+  const tzLabel = (tz: string) => tz.replace(/_/g, " ");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -283,14 +297,23 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
               </div>
               <div style={{ flex: 1, minWidth: 180 }}>
                 <label style={labelStyle}>Time zone</label>
-                <input list="testify-timezones" value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })} style={inputStyle} />
-                {timeZones && (
-                  <datalist id="testify-timezones">
-                    {timeZones.map((tz) => (
-                      <option key={tz} value={tz} />
-                    ))}
-                  </datalist>
-                )}
+                <select value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })} style={inputStyle}>
+                  <option value={browserTimeZone()}>Your time zone ({tzLabel(browserTimeZone())})</option>
+                  {browserTimeZone() !== "UTC" && <option value="UTC">UTC</option>}
+                  {/* A saved zone this browser doesn't list (e.g. renamed) still shows. */}
+                  {draft.timezone !== browserTimeZone() && !timeZoneGroups.some(([, zones]) => zones.includes(draft.timezone)) && (
+                    <option value={draft.timezone}>{tzLabel(draft.timezone)}</option>
+                  )}
+                  {timeZoneGroups.map(([region, zones]) => (
+                    <optgroup key={region} label={region}>
+                      {zones.map((tz) => (
+                        <option key={tz} value={tz}>
+                          {tzLabel(tz)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
             </div>
             <div>
