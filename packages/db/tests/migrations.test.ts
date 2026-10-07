@@ -22,13 +22,14 @@ describe('migrateToLatest', () => {
   });
 
   it('builds a fresh database, records it, and does nothing when run again (a restart)', async () => {
-    expect(await migrateToLatest(db)).toEqual(['001_initial_schema']);
-    expect(await appliedMigrations(db)).toEqual(['001_initial_schema']);
+    const all = Object.keys(MIGRATIONS);
+    expect(await migrateToLatest(db)).toEqual(all);
+    expect(await appliedMigrations(db)).toEqual(all);
 
     // The second run used to crash ("relation already exists"); now it's a no-op.
     expect(await migrateToLatest(db)).toEqual([]);
     expect(await migrateToLatest(db)).toEqual([]);
-    expect(await appliedMigrations(db)).toEqual(['001_initial_schema']);
+    expect(await appliedMigrations(db)).toEqual(all);
 
     // The schema is really there.
     await db.insertInto('projects').values({ id: 'p1', name: 'P', prefix: 'P', description: null, settings: '{}', created_at: 'x', updated_at: 'x' }).execute();
@@ -39,8 +40,9 @@ describe('migrateToLatest', () => {
     await initialSchema.up(db); // what the server used to do on every start
     await db.insertInto('projects').values({ id: 'p1', name: 'Kept', prefix: 'K', description: null, settings: '{}', created_at: 'x', updated_at: 'x' }).execute();
 
-    expect(await migrateToLatest(db)).toEqual([]);
-    expect(await appliedMigrations(db)).toEqual(['001_initial_schema']);
+    // 001 is recorded as already applied; only the later migrations run.
+    expect(await migrateToLatest(db)).toEqual(Object.keys(MIGRATIONS).slice(1));
+    expect(await appliedMigrations(db)).toEqual(Object.keys(MIGRATIONS));
     expect(await db.selectFrom('projects').select('name').execute()).toEqual([{ name: 'Kept' }]);
   });
 

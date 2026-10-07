@@ -42,7 +42,16 @@ export class UserRepository {
   /**
    * Seeds initial omnipotent superuser (admin / password) on startup if no users exist.
    */
-  async seedInitialAdmin(): Promise<User> {
+  async hasAnyUser(): Promise<boolean> {
+    return !!(await this.db.selectFrom('users').select('id').executeTakeFirst());
+  }
+
+  /**
+   * Creates the first admin user (username `admin`) when there are no users at all; otherwise
+   * does nothing and returns the first user. The caller chooses the password: there is no
+   * built-in default (see apps/server/src/config.ts for how the server picks one).
+   */
+  async seedInitialAdmin(options: { password: string; mustChangePassword?: boolean }): Promise<User> {
     const existing = await this.db.selectFrom('users').selectAll().executeTakeFirst();
     if (existing) {
       return existing;
@@ -50,7 +59,7 @@ export class UserRepository {
 
     const now = new Date().toISOString();
     const adminId = '0191c4d0-0000-7000-8000-000000000001';
-    const { hash, salt } = hashPassword('password');
+    const { hash, salt } = hashPassword(options.password);
 
     const adminUser: NewUser = {
       id: adminId,
@@ -58,6 +67,7 @@ export class UserRepository {
       email: 'admin@testify.local',
       password_hash: `${salt}:${hash}`,
       status: 'ACTIVE',
+      must_change_password: options.mustChangePassword ?? false,
       created_at: now,
       updated_at: now,
     };
@@ -152,6 +162,7 @@ export class UserRepository {
       }
       const { hash, salt } = hashPassword(input.newPassword);
       updateData.password_hash = `${salt}:${hash}`;
+      updateData.must_change_password = false;
     }
 
     await this.db.updateTable('users').set(updateData).where('id', '=', input.userId).execute();
@@ -162,6 +173,13 @@ export class UserRepository {
     const now = new Date().toISOString();
     await this.db.updateTable('users').set({ status, updated_at: now }).where('id', '=', userId).execute();
     return (await this.findById(userId))!;
+  }
+
+  /** True when `password` is this user's current password. */
+  async isCurrentPassword(userId: string, password: string): Promise<boolean> {
+    const user = await this.findById(userId);
+    const [salt, storedHash] = user?.password_hash.split(':') ?? [];
+    return !!salt && !!storedHash && verifyPassword(password, storedHash, salt);
   }
 
   async verifyCredentials(identifier: string, password: string): Promise<User | null> {

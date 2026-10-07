@@ -21,6 +21,7 @@ import { ImportWizardModal } from "./components/ImportWizardModal";
 import { ExportModal } from "./components/ExportModal";
 import { ReportsView, parseReportsHash } from "./components/reports/ReportsView";
 import { LoginPage } from "./components/LoginPage";
+import { ForcedPasswordChange } from "./components/ForcedPasswordChange";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
 import {
   CaseFilterPanel,
@@ -1594,7 +1595,8 @@ export default function App() {
   // token) -- (re)load it whenever a session is established, whether from a restored
   // token on mount or a fresh login.
   useEffect(() => {
-    if (currentUser) {
+    // Not until a forced password change is done: the server refuses everything else until then.
+    if (currentUser && !currentUser.must_change_password) {
       loadProjects();
     }
   }, [currentUser, loadProjects]);
@@ -2656,6 +2658,21 @@ export default function App() {
           showToast(`Welcome back, ${user.username}!`);
           // No explicit loadWorkspace() call needed here -- the currentUser-keyed effects
           // above pick up the new session and load projects/plans/workspace automatically.
+        }}
+      />
+    );
+  }
+
+  // The server refuses everything else until a user who must change their password does so.
+  if (currentUser.must_change_password) {
+    return (
+      <ForcedPasswordChange
+        user={currentUser}
+        onLogout={handleLogout}
+        onChanged={(user) => {
+          setCurrentUser(user);
+          setUserPermissions(user.permissions || []);
+          showToast("Password changed.");
         }}
       />
     );

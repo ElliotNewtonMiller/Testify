@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { createDbClient } from '../src/client.js';
 import type { Database } from '../src/types.js';
 import * as initialSchema from '../src/migrations/001_initial_schema.js';
+import { migrateToLatest } from '../src/migrations/index.js';
 import { seedRbacRegistry } from '../src/seeds/seed_rbac_registry.js';
 import { UserRepository, RoleRepository, ProjectRepository } from '../src/repositories/index.js';
 import { DEFAULT_ROLE_PERMISSIONS, DEFAULT_ROLE_NAMES, PERMISSION_KEYS } from '../../core/src/index.js';
@@ -15,7 +16,7 @@ describe('Role templates & permission overrides', () => {
 
   beforeEach(async () => {
     db = createDbClient();
-    await initialSchema.up(db);
+    await migrateToLatest(db);
     await seedRbacRegistry(db);
 
     roleRepo = new RoleRepository(db);
@@ -207,7 +208,7 @@ describe('Role templates & permission overrides', () => {
   });
 
   it('evaluatePermissions: an override can revoke a key from an otherwise-SYSTEM_ADMIN user', async () => {
-    const admin = await userRepo.seedInitialAdmin();
+    const admin = await userRepo.seedInitialAdmin({ password: 'password' });
 
     const fullPerms = await roleRepo.evaluatePermissions(admin.id);
     expect(fullPerms.sort()).toEqual([...PERMISSION_KEYS].sort());

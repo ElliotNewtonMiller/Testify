@@ -6,8 +6,10 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
-  const [username, setUsername] = useState<string>('admin');
-  const [password, setPassword] = useState<string>('password');
+  // Pre-filled only in the Vite dev build, for the throwaway in-memory dev database's admin.
+  // A production build starts empty: a real database has no well-known admin password.
+  const [username, setUsername] = useState<string>(import.meta.env.DEV ? 'admin' : '');
+  const [password, setPassword] = useState<string>(import.meta.env.DEV ? 'password' : '');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -321,24 +323,6 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
             {isLoading ? 'Authenticating...' : 'Log In'}
           </button>
         </form>
-
-        {/* HINT CALLOUT FOR DEFAULT ADMIN */}
-        <div
-          style={{
-            marginTop: '24px',
-            padding: '10px 12px',
-            backgroundColor: 'rgba(30, 41, 59, 0.6)',
-            border: '1px solid rgba(51, 65, 85, 0.6)',
-            borderRadius: '6px',
-            fontSize: '12px',
-            color: '#94a3b8',
-            textAlign: 'center',
-          }}
-        >
-          💡 Initial Administrator Credentials:<br />
-          <code style={{ color: '#38bdf8', fontWeight: 600 }}>admin</code> /{' '}
-          <code style={{ color: '#38bdf8', fontWeight: 600 }}>password</code>
-        </div>
       </div>
 
       {/* FORGOT PASSWORD MODAL */}
@@ -374,24 +358,11 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
                 Password Reset Assistance
               </h3>
             </div>
-            <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: '1.5', marginBottom: '16px' }}>
+            <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: '1.5', marginBottom: '20px' }}>
               Self-service user registration and automated password resets are disabled for security compliance.
               <br /><br />
               Please contact your <strong>Testify System Administrator</strong> or user manager to issue new credentials or reset your account password.
             </p>
-            <div
-              style={{
-                backgroundColor: '#1e293b',
-                padding: '10px',
-                borderRadius: '6px',
-                fontSize: '12px',
-                color: '#cbd5e1',
-                marginBottom: '20px',
-                borderLeft: '3px solid #38bdf8',
-              }}
-            >
-              Default Administrator: <code>admin</code> / <code>password</code>
-            </div>
             <button
               onClick={() => setShowForgotPasswordModal(false)}
               style={{

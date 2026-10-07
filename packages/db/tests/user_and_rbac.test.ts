@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { createDbClient } from '../src/client.js';
 import type { Database } from '../src/types.js';
 import * as initialSchema from '../src/migrations/001_initial_schema.js';
+import { migrateToLatest } from '../src/migrations/index.js';
 import { UserRepository, RoleRepository, ProjectRepository } from '../src/repositories/index.js';
 import { validatePasswordPolicy } from '../../core/src/security/passwordPolicy.js';
 import { seedRbacRegistry } from '../src/seeds/seed_rbac_registry.js';
@@ -36,7 +37,7 @@ describe('User & Role Repositories', () => {
 
   beforeEach(async () => {
     db = createDbClient();
-    await initialSchema.up(db);
+    await migrateToLatest(db);
     // Roles/permissions are now DB-backed (see role.repository.ts) rather than a hardcoded
     // in-memory map -- evaluatePermissions needs the built-in role templates seeded.
     await seedRbacRegistry(db);
@@ -54,7 +55,7 @@ describe('User & Role Repositories', () => {
   });
 
   it('seeds initial omnipotent superuser (admin / password)', async () => {
-    const admin = await userRepo.seedInitialAdmin();
+    const admin = await userRepo.seedInitialAdmin({ password: 'password' });
     expect(admin).not.toBeNull();
     expect(admin.username).toBe('admin');
     expect(admin.email).toBe('admin@testify.local');
@@ -72,8 +73,25 @@ describe('User & Role Repositories', () => {
     expect(authed?.id).toBe(admin.id);
   });
 
+  it('seeds the first admin with the given password, optionally requiring a change, which a new password clears', async () => {
+    const admin = await userRepo.seedInitialAdmin({ password: 'Generated-Secret-123', mustChangePassword: true });
+    expect(admin.must_change_password).toBe(true);
+    expect(await userRepo.verifyCredentials('admin', 'password')).toBeNull();
+    expect(await userRepo.isCurrentPassword(admin.id, 'Generated-Secret-123')).toBe(true);
+
+    // Only creates when there are no users at all.
+    const again = await userRepo.seedInitialAdmin({ password: 'something-else-entirely' });
+    expect(again.id).toBe(admin.id);
+    expect(await userRepo.isCurrentPassword(admin.id, 'something-else-entirely')).toBe(false);
+
+    const updated = await userRepo.updateCredentials({ userId: admin.id, newEmail: 'root@testify.local' });
+    expect(updated.must_change_password).toBe(true); // not cleared by other changes
+    const changed = await userRepo.updateCredentials({ userId: admin.id, newPassword: 'my-own-long-passphrase' });
+    expect(changed.must_change_password).toBe(false);
+  });
+
   it('allows user creation and self-service credential changes', async () => {
-    await userRepo.seedInitialAdmin();
+    await userRepo.seedInitialAdmin({ password: 'password' });
 
     const newUser = await userRepo.create({
       username: 'tester_john',

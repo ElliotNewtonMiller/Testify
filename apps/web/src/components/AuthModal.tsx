@@ -7,6 +7,8 @@ export interface UserProfile {
   email: string;
   global_role: string;
   permissions: string[];
+  /** Must choose a new password before using the app (e.g. the first admin's generated one). */
+  must_change_password?: boolean;
 }
 
 interface AuthModalProps {

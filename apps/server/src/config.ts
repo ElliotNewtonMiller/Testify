@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import { validatePasswordPolicy } from '@testify/core';
+
 /**
  * Where the server keeps its data, read from DATABASE_URL at startup. There's deliberately no
  * silent default: a missing DATABASE_URL used to fall back to a throwaway in-memory database,
@@ -43,4 +46,33 @@ export function resolveDatabaseConfig(env: NodeJS.ProcessEnv = process.env): Dat
     );
   }
   return { connectionString: url, inMemory: false };
+}
+
+/**
+ * The password for the first admin user (username `admin`), created only when the database has
+ * no users at all. There's no built-in default for a real database:
+ *
+ * - `ADMIN_PASSWORD` set: that password (it must meet the password policy). Not forced to change.
+ * - In-memory database (development/tests): `password`. That data is thrown away anyway.
+ * - Otherwise: a random password, printed once at startup, which must be changed at first sign-in.
+ */
+export interface InitialAdminPassword {
+  password: string;
+  mustChangePassword: boolean;
+  source: 'env' | 'in_memory_default' | 'generated';
+}
+
+export function resolveInitialAdminPassword(
+  { inMemory }: { inMemory: boolean },
+  env: NodeJS.ProcessEnv = process.env
+): InitialAdminPassword {
+  const fromEnv = env.ADMIN_PASSWORD;
+  if (fromEnv) {
+    const check = validatePasswordPolicy(fromEnv);
+    if (!check.valid) throw new ConfigError(`ADMIN_PASSWORD doesn't meet the password policy: ${check.reason}`);
+    return { password: fromEnv, mustChangePassword: false, source: 'env' };
+  }
+  if (inMemory) return { password: 'password', mustChangePassword: false, source: 'in_memory_default' };
+  // 24 characters: long enough that the policy needs no particular character types.
+  return { password: randomBytes(18).toString('base64url'), mustChangePassword: true, source: 'generated' };
 }

@@ -11,6 +11,9 @@ export interface AuthenticatedUser {
   email: string;
   global_role: string;
   permissions: string[];
+  /** The user must choose a new password; until then only the routes in
+   * PASSWORD_CHANGE_ALLOWED_ROUTES work. Never set for API tokens. */
+  must_change_password?: boolean;
   /** Present only when authenticated via a machine API token (see authenticateApiToken
    * below). Lets project-binding-sensitive routes (ingestion.ts, batchExecution.ts)
    * enforce "this token may only touch its own project." Absent for JWT-authenticated
@@ -94,6 +97,9 @@ async function authenticateApiToken(
   return authUser;
 }
 
+/** What a user who must change their password can still reach: who am I, change it, sign out. */
+const PASSWORD_CHANGE_ALLOWED_ROUTES = new Set(['/api/v1/auth/me', '/api/v1/auth/credentials']);
+
 /**
  * Authenticates a request from its `Authorization: Bearer <...>` header -- either a
  * human JWT or a machine API token (tf_ci_...), dispatched by prefix.
@@ -140,6 +146,11 @@ export async function authenticateRequest(
     return null;
   }
 
+  if (user.must_change_password && !PASSWORD_CHANGE_ALLOWED_ROUTES.has(request.url.split('?')[0])) {
+    reply.status(403).send({ error: 'You must choose a new password before continuing.', code: 'PASSWORD_CHANGE_REQUIRED' });
+    return null;
+  }
+
   const globalRole = await roleRepo.getUserGlobalRole(user.id);
   const projectId = (request.query as any)?.project_id || (request.params as any)?.projectId || null;
   const permissions = await roleRepo.evaluatePermissions(user.id, projectId);
@@ -150,6 +161,7 @@ export async function authenticateRequest(
     email: user.email,
     global_role: globalRole,
     permissions,
+    must_change_password: user.must_change_password,
   };
 
   request.user = authUser;

@@ -204,6 +204,8 @@ export interface UsersTable {
   email: string;
   password_hash: string;
   status: Generated<string>;
+  /** Set when the user must choose a new password before using the app (migration 002). */
+  must_change_password: Generated<boolean>;
   created_at: string;
   updated_at: string;
 }

@@ -18,9 +18,6 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
       return reply.status(400).send({ error: 'Username/email and password are required' });
     }
 
-    // Ensure initial admin is seeded on startup
-    await userRepo.seedInitialAdmin();
-
     const user = await userRepo.verifyCredentials(identifier, password);
     if (!user) {
       return reply.status(401).send({ error: 'Invalid credentials or user account disabled' });
@@ -40,6 +37,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
         email: user.email,
         global_role: globalRole,
         permissions,
+        must_change_password: user.must_change_password,
       },
     });
   });
@@ -63,6 +61,17 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     if (!activeUser) return;
 
     const { newUsername, newPassword, newEmail } = (request.body as any) || {};
+
+    // A user who must change their password (e.g. the first admin's generated one) has to pick
+    // a new, different one; that's the only change they can make until they do.
+    if (activeUser.must_change_password) {
+      if (!newPassword) {
+        return reply.status(400).send({ error: 'Choose a new password before continuing.', code: 'PASSWORD_CHANGE_REQUIRED' });
+      }
+      if (await userRepo.isCurrentPassword(activeUser.id, newPassword)) {
+        return reply.status(400).send({ error: 'The new password must be different from the current one.', code: 'PASSWORD_UNCHANGED' });
+      }
+    }
 
     if (newUsername && newUsername !== activeUser.username) {
       const globalRole = await roleRepo.getUserGlobalRole(activeUser.id);
@@ -96,7 +105,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
           action: 'CREDENTIALS_CHANGED',
           resource_type: 'user',
           resource_id: activeUser.id,
-          diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email }),
+          diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email, password_changed: !!newPassword }),
           ip_address: '127.0.0.1',
           user_agent: 'TestifyAuthService',
           created_at: now,
@@ -113,6 +122,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
           email: updatedUser.email,
           global_role: globalRole,
           permissions,
+          must_change_password: updatedUser.must_change_password,
         },
       });
     } catch (err: any) {

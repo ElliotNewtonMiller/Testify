@@ -31,7 +31,7 @@ import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
-import { resolveDatabaseConfig, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, ConfigError } from './config.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
@@ -71,8 +71,28 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   await seedRbacRegistry(db);
   const seedSampleData = process.env.NODE_ENV === 'test' || process.env.SEED_SAMPLE_DATA === 'true';
   const seed = seedSampleData ? await seedCoreLoopData(db) : null;
+  // The first admin, only when there are no users yet. Its password comes from ADMIN_PASSWORD,
+  // or is generated and printed once (see config.ts) -- never a well-known default on a real database.
   const userRepo = new UserRepository(db);
-  await userRepo.seedInitialAdmin();
+  if (!(await userRepo.hasAnyUser())) {
+    const initialAdmin = resolveInitialAdminPassword({ inMemory: !connectionString });
+    await userRepo.seedInitialAdmin(initialAdmin);
+    if (initialAdmin.source === 'generated') {
+      console.warn(
+        [
+          '',
+          '[testify] ============================================================',
+          '[testify] Created the first admin user. Sign in with:',
+          '[testify]   username: admin',
+          `[testify]   password: ${initialAdmin.password}`,
+          '[testify] This is shown only once. You will be asked to choose a new',
+          '[testify] password at first sign-in. (Set ADMIN_PASSWORD to choose it yourself.)',
+          '[testify] ============================================================',
+          '',
+        ].join('\n')
+      );
+    }
+  }
 
   // Extra local-dev-only fixtures (users covering every role plus a permission override; no
   // sample projects) -- gives you real users to test roles with instead of only the admin. Never runs in tests
@@ -349,13 +369,16 @@ export async function createServer(connectionString?: string, options: { db?: Ky
 if (process.env.NODE_ENV !== 'test') {
   // Refuse to start without an explicit database (see config.ts) rather than quietly using a
   // throwaway one.
-  let dbConfig;
-  try {
-    dbConfig = resolveDatabaseConfig();
-  } catch (err) {
+  const exitOnConfigError = (err: unknown): never => {
     if (!(err instanceof ConfigError)) throw err;
     console.error(`[testify] ${err.message}`);
     process.exit(1);
+  };
+  let dbConfig: ReturnType<typeof resolveDatabaseConfig>;
+  try {
+    dbConfig = resolveDatabaseConfig();
+  } catch (err) {
+    dbConfig = exitOnConfigError(err);
   }
   if (dbConfig.inMemory) {
     console.warn(
@@ -363,7 +386,7 @@ if (process.env.NODE_ENV !== 'test') {
         'Set DATABASE_URL to a PostgreSQL connection string to keep your data.'
     );
   }
-  const { app, db } = await createServer(dbConfig.connectionString);
+  const { app, db } = await createServer(dbConfig.connectionString).catch(exitOnConfigError);
   const port = Number(process.env.PORT) || 3001;
   app.listen({ port, host: '0.0.0.0' }, (err, address) => {
     if (err) {
