@@ -25,6 +25,9 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
+import { registerReportEmailRoutes } from './routes/reportEmail.js';
+import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
+import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
 import { UserRepository } from '@testify/db';
@@ -88,6 +91,8 @@ export async function createServer(connectionString?: string) {
   await registerReportRoutes(app, db, jwtSecret);
   await registerCaseSearchRoutes(app, db, jwtSecret);
   await registerMcpRoutes(app, db, jwtSecret);
+  await registerReportEmailRoutes(app, db, jwtSecret);
+  await registerEmailAdminRoutes(app, db, jwtSecret);
 
   // GET /api/v1/workspace - legacy hydration route hardwired to the sample core-loop project.
   // Only meaningful when that sample is seeded (tests / SEED_SAMPLE_DATA=true); the UI uses
@@ -320,7 +325,7 @@ export async function createServer(connectionString?: string) {
 }
 
 if (process.env.NODE_ENV !== 'test') {
-  const { app } = await createServer(process.env.DATABASE_URL);
+  const { app, db } = await createServer(process.env.DATABASE_URL);
   const port = Number(process.env.PORT) || 3001;
   app.listen({ port, host: '0.0.0.0' }, (err, address) => {
     if (err) {
@@ -329,4 +334,11 @@ if (process.env.NODE_ENV !== 'test') {
     }
     console.log(`Core Loop Fastify Server listening on ${address}`);
   });
+
+  // Scheduled report emails: check for due schedules once a minute. (Tests call
+  // runDueSchedules directly instead.) Claims are compare-and-set, so several instances
+  // polling the same database never send a schedule twice.
+  setInterval(() => {
+    runDueSchedules(db).catch((err) => console.error('Report email scheduler failed:', err));
+  }, 60_000);
 }

@@ -74,7 +74,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     }
   });
 
-  it('GET /api/v1/admin/permissions returns the 18-key registry', async () => {
+  it('GET /api/v1/admin/permissions returns the 19-key registry', async () => {
     const { app } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
@@ -85,7 +85,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     });
     expect(res.statusCode).toBe(200);
     const permissions = JSON.parse(res.payload).permissions;
-    expect(permissions).toHaveLength(18);
+    expect(permissions).toHaveLength(19);
     expect(permissions.map((p: any) => p.key)).toContain('SYSTEM_ADMIN');
   });
 

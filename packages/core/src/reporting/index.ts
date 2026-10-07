@@ -8,3 +8,6 @@ export * from './trend.js';
 export * from './csv.js';
 export * from './markdown.js';
 export * from './catalog.js';
+export * from './email.js';
+export * from './schedule.js';
+export * from './emailAddress.js';

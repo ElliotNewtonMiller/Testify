@@ -34,6 +34,7 @@ export const PERMISSION_REGISTRY: PermissionDefinition[] = [
   { key: 'EXECUTE_OVERWRITE', description: 'Re-record a verdict for a test case that already has one.', module: 'Execution' },
   { key: 'IMPORT_DATA', description: 'Bulk-import test suites and cases from XML/CSV/JSON.', module: 'Data' },
   { key: 'EXPORT_DATA', description: 'Export test data out of the project.', module: 'Data' },
+  { key: 'REPORT_EMAIL', description: 'Email reports to anyone and manage scheduled report emails.', module: 'Data' },
 ];
 
 export const PERMISSION_KEYS: string[] = PERMISSION_REGISTRY.map((p) => p.key);
@@ -64,6 +65,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'EXPORT_DATA',
     'API_TOKEN_MANAGE',
     'CUSTOM_FIELD_MANAGE',
+    'REPORT_EMAIL',
   ],
   'Test Lead': [
     'SPEC_VIEW',
@@ -79,6 +81,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'IMPORT_DATA',
     'EXPORT_DATA',
     'API_TOKEN_MANAGE',
+    'REPORT_EMAIL',
   ],
   Tester: ['SPEC_VIEW', 'SPEC_CREATE', 'SPEC_EDIT', 'EXECUTE_RUN', 'EXPORT_DATA'],
   Viewer: ['SPEC_VIEW', 'EXPORT_DATA'],

@@ -17,10 +17,12 @@
     "@testify/core": "*",
     "@testify/db": "*",
     "fastify": "^5.2.1",
+    "nodemailer": "^10.0.15",
     "uuid": "^11.0.5"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "^4.19.3",
     "typescript": "^5.5.4"
   }

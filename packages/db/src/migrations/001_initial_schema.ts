@@ -360,6 +360,50 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
     .execute();
 
+  // 24. Scheduled report emails. Deleting a project deletes its schedules.
+  await db.schema
+    .createTable('report_schedules')
+    .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
+    .addColumn('project_id', 'varchar(36)', (col) => col.notNull().references('projects.id').onDelete('cascade'))
+    .addColumn('name', 'varchar(255)', (col) => col.notNull())
+    .addColumn('sections', 'text', (col) => col.notNull()) // JSON: [{ kind, plan_id?, filter? }]
+    .addColumn('recipients', 'text', (col) => col.notNull()) // JSON: string[]
+    .addColumn('message', 'text')
+    .addColumn('frequency', 'varchar(10)', (col) => col.notNull()) // DAILY | WEEKLY
+    .addColumn('weekday', 'integer') // 0 = Sunday .. 6, WEEKLY only
+    .addColumn('time_of_day', 'varchar(5)', (col) => col.notNull()) // HH:MM
+    .addColumn('timezone', 'varchar(64)', (col) => col.notNull())
+    .addColumn('only_when_new_run', 'boolean', (col) => col.notNull().defaultTo(false))
+    .addColumn('enabled', 'boolean', (col) => col.notNull().defaultTo(true))
+    .addColumn('next_run_at', 'varchar(30)', (col) => col.notNull())
+    .addColumn('last_run_at', 'varchar(30)')
+    .addColumn('last_status', 'varchar(10)') // SENT | CAPTURED | FAILED | SKIPPED
+    .addColumn('last_error', 'text')
+    .addColumn('last_sent_run_ids', 'text') // JSON: run ids the last email reported on
+    .addColumn('created_by', 'varchar(36)', (col) => col.notNull())
+    .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
+    .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
+    .execute();
+  await db.schema.createIndex('idx_report_schedules_due').on('report_schedules').columns(['enabled', 'next_run_at']).execute();
+
+  // 25. Email outbox: every email Testify sends (or, with no SMTP server configured, only
+  // captures). Kept when its project or schedule is deleted.
+  await db.schema
+    .createTable('email_outbox')
+    .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
+    .addColumn('project_id', 'varchar(36)', (col) => col.references('projects.id').onDelete('set null'))
+    .addColumn('schedule_id', 'varchar(36)', (col) => col.references('report_schedules.id').onDelete('set null'))
+    .addColumn('subject', 'text', (col) => col.notNull())
+    .addColumn('recipients', 'text', (col) => col.notNull()) // JSON: string[]
+    .addColumn('html', 'text', (col) => col.notNull())
+    .addColumn('text_body', 'text', (col) => col.notNull())
+    .addColumn('status', 'varchar(10)', (col) => col.notNull()) // SENT | CAPTURED | FAILED
+    .addColumn('error', 'text')
+    .addColumn('sent_by', 'varchar(36)')
+    .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
+    .execute();
+  await db.schema.createIndex('idx_email_outbox_created').on('email_outbox').column('created_at').execute();
+
   // Install the audit_logs append-only immutability trigger. Testify only targets
   // Postgres-compatible SQL (PGlite locally, real Postgres in production), so there's a
   // single trigger implementation here rather than a per-dialect branch.
@@ -386,6 +430,8 @@ export async function up(db: Kysely<any>): Promise<void> {
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema.dropTable('email_outbox').ifExists().execute();
+  await db.schema.dropTable('report_schedules').ifExists().execute();
   await db.schema.dropTable('system_settings').ifExists().execute();
   // user_permission_overrides FKs to users, so it must drop before users does.
   await db.schema.dropTable('user_permission_overrides').ifExists().execute();

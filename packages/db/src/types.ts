@@ -249,6 +249,43 @@ export interface SystemSettingsTable {
   updated_at: string;
 }
 
+export interface ReportSchedulesTable {
+  id: string;
+  project_id: string;
+  name: string;
+  sections: string; // JSON
+  recipients: string; // JSON string[]
+  message: string | null;
+  frequency: string; // DAILY | WEEKLY
+  weekday: number | null;
+  time_of_day: string;
+  timezone: string;
+  only_when_new_run: Generated<boolean>;
+  enabled: Generated<boolean>;
+  next_run_at: string;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_sent_run_ids: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailOutboxTable {
+  id: string;
+  project_id: string | null;
+  schedule_id: string | null;
+  subject: string;
+  recipients: string; // JSON string[]
+  html: string;
+  text_body: string;
+  status: string; // SENT | CAPTURED | FAILED
+  error: string | null;
+  sent_by: string | null;
+  created_at: string;
+}
+
 export interface Database {
   projects: ProjectsTable;
   test_suites: TestSuitesTable;
@@ -273,4 +310,6 @@ export interface Database {
   user_permission_overrides: UserPermissionOverridesTable;
   api_tokens: ApiTokensTable;
   system_settings: SystemSettingsTable;
+  report_schedules: ReportSchedulesTable;
+  email_outbox: EmailOutboxTable;
 }

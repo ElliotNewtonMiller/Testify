@@ -8,10 +8,10 @@ import {
 } from '../src/index.js';
 
 describe('RBAC permission registry', () => {
-  it('has exactly 18 entries, all with unique keys', () => {
-    expect(PERMISSION_REGISTRY).toHaveLength(18);
-    expect(PERMISSION_KEYS).toHaveLength(18);
-    expect(new Set(PERMISSION_KEYS).size).toBe(18);
+  it('has exactly 19 entries, all with unique keys', () => {
+    expect(PERMISSION_REGISTRY).toHaveLength(19);
+    expect(PERMISSION_KEYS).toHaveLength(19);
+    expect(new Set(PERMISSION_KEYS).size).toBe(19);
   });
 
   it('every entry has a non-empty key, description, and module', () => {
