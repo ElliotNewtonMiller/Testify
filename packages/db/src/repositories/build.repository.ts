@@ -94,13 +94,24 @@ export class BuildRepository {
     const totalCases = Number(total?.n ?? 0);
     if (totalCases === 0) return false;
 
+    // Cases in the plan that have a result in this run -- through any of their links, so a
+    // case removed and re-added still counts the result its earlier link recorded here.
     const covered = await this.db
-      .selectFrom('executions')
-      .innerJoin('test_plan_cases', 'test_plan_cases.id', 'executions.test_plan_case_id')
-      .select((eb) => eb.fn.count('executions.test_plan_case_id').distinct().as('n'))
-      .where('executions.build_id', '=', id)
-      .where('test_plan_cases.test_plan_id', '=', build.test_plan_id)
-      .where('test_plan_cases.removed_at', 'is', null)
+      .selectFrom('test_plan_cases as active')
+      .select((eb) => eb.fn.count('active.test_case_id').distinct().as('n'))
+      .where('active.test_plan_id', '=', build.test_plan_id)
+      .where('active.removed_at', 'is', null)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('executions as e')
+            .innerJoin('test_plan_cases as link', 'link.id', 'e.test_plan_case_id')
+            .select('e.id')
+            .where('e.build_id', '=', id)
+            .where('link.test_plan_id', '=', build.test_plan_id)
+            .whereRef('link.test_case_id', '=', 'active.test_case_id')
+        )
+      )
       .executeTakeFirst();
     if (Number(covered?.n ?? 0) < totalCases) return false;
 

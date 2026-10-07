@@ -221,12 +221,16 @@ describe('ExecutionRepository reporting queries', () => {
       await insertExecution({ id: 'y2', build_id: run2.id, test_plan_case_id: planCaseB.id, verdict: 'PASSED', ts: '2026-01-02T10:00:00.000Z' });
       expect(await buildRepo.closeIfComplete(run2.id)).toBe(true);
 
-      // Re-added: one row per case per run -- the old run keeps the link with its result.
+      // Re-added: one row per case per run. The old run still shows the earlier result, but
+      // the row now carries the active link, so new results can be recorded there.
       const fresh = await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
       const again = await executionRepo.getFinalResultsForRuns(plan.id, [run1.id]);
       const aRows = again.filter((r) => r.test_case_id === caseA.id);
       expect(aRows).toHaveLength(1);
-      expect(aRows[0]).toMatchObject({ plan_case_id: planCaseA.id, verdict: 'FAILED' });
+      expect(aRows[0]).toMatchObject({ plan_case_id: fresh.id, removed_from_plan: false, verdict: 'FAILED', attempts: 1 });
+      await insertExecution({ id: 'y3', build_id: run1.id, test_plan_case_id: fresh.id, verdict: 'PASSED', ts: '2026-01-03T10:00:00.000Z' });
+      const latest = (await executionRepo.getFinalResultsForRuns(plan.id, [run1.id])).find((r) => r.test_case_id === caseA.id);
+      expect(latest).toMatchObject({ plan_case_id: fresh.id, verdict: 'PASSED', attempts: 2, had_pass: true, had_fail: true });
       const run3 = await buildRepo.create({ test_plan_id: plan.id, name: 'R3' });
       const r3 = await executionRepo.getFinalResultsForRuns(plan.id, [run3.id]);
       expect(r3.find((r) => r.test_case_id === caseA.id)).toMatchObject({ plan_case_id: fresh.id, removed_from_plan: false, verdict: null });

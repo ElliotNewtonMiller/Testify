@@ -1495,8 +1495,13 @@ export default function App() {
           const body = await res.json();
           const parts: string[] = [];
           if (body.added) parts.push(`${body.added} added`);
-          if (body.removed || body.retired) parts.push(`${(body.removed || 0) + (body.retired || 0)} removed`);
-          if (body.retired) parts.push(`results kept in earlier runs for ${body.retired}`);
+          const removedTotal = (body.removed || 0) + (body.retired || 0);
+          if (removedTotal) {
+            parts.push(
+              `${removedTotal} removed from the plan` +
+                (body.retired ? ` (${body.retired === removedTotal ? (removedTotal === 1 ? "it keeps its" : "all keep their") : `${body.retired} keep their`} results in earlier runs)` : ""),
+            );
+          }
           if (body.skipped?.length) parts.push(`${body.skipped.length} skipped`);
           showToast(parts.length > 0 ? parts.join(", ") : "No changes");
           await refreshSpecTree();

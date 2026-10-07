@@ -1061,6 +1061,26 @@ Per direct request:
 
 Also answered (no code change): "Not run this time" only lists cases that **had a result in the compared run** and have none in this one. A brand-new case (untested in both runs) and a case skipped now but untested before both count as "unchanged", so they appear in no bucket.
 
+## Changed: a re-added case can be tested again in older runs; clearer suite-removal toast (2026-10-07)
+
+Per direct request, after testing the retire feature (entry above). A case removed from a plan and then added back used to stay "REMOVED" and read-only in older runs, because their results belonged to the retired link.
+
+`ExecutionRepository.getFinalResultsForRuns` now builds one row per case per run:
+- The row shows the case's **latest result in that run from any of its links**.
+- It carries the case's **active** link whenever the case is in the plan, so new results are recorded against current membership, even in an old run.
+- Only a case that's currently out of the plan is `removed_from_plan` (read-only).
+- `attempts` / `had_pass` / `had_fail` combine across the case's links in that run.
+
+`BuildRepository.closeIfComplete` likewise counts a case as covered if any of its links has a result in the run.
+
+The suite-removal toast now reads e.g. "4 removed from the plan (3 keep their results in earlier runs)", or "(all keep their results…)", instead of "4 removed, results kept in earlier runs for 3".
+
+**Tests:**
+- The db test now asserts that the old run's row carries the fresh link with the earlier result, and that recording on it becomes the latest result (`attempts` 2, pass+fail).
+- The server lifecycle test re-records in the old run after re-adding and checks case history shows both links' results.
+
+**Verification.** Verified live: remove → re-add DEMO2-2. Run 1.0.7 showed it Passed with no REMOVED tag and active buttons; Skip recorded and replaced it as the latest result.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

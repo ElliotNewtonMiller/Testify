@@ -363,9 +363,18 @@ describe('Specification / Plan Curation Routes', () => {
     const fresh = (await queue(newRunId)).find((c: any) => c.case_id === caseId);
     expect(fresh).toMatchObject({ removed_from_plan: false, latest_verdict: 'UNTESTED' });
     expect(fresh.plan_case_id).not.toBe(linkId);
+    // The old run shows its earlier result once, and -- now that the case is back in the plan --
+    // accepts new results, recorded against the fresh link.
     const oldAgain = (await queue(seed.buildId)).filter((c: any) => c.case_id === caseId);
-    expect(oldAgain).toHaveLength(1); // one row per case per run
-    expect(oldAgain[0]).toMatchObject({ plan_case_id: linkId, latest_verdict: 'FAILED' });
+    expect(oldAgain).toHaveLength(1);
+    expect(oldAgain[0]).toMatchObject({ plan_case_id: fresh.plan_case_id, removed_from_plan: false, latest_verdict: 'FAILED' });
+    const rerecord = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: fresh.plan_case_id, verdict: 'PASSED' } });
+    expect(rerecord.statusCode).toBe(201);
+    expect((await queue(seed.buildId)).find((c: any) => c.case_id === caseId)).toMatchObject({ latest_verdict: 'PASSED', removed_from_plan: false });
+    const history = JSON.parse(
+      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/case_history`, headers: auth, payload: { case_id: caseId } })).payload
+    );
+    expect(history.executions.map((e: any) => e.verdict)).toEqual(['PASSED', 'FAILED']); // both links' results
   });
 
   it('suite cascade remove asks to confirm when cases have results, then retires those and unlinks the rest', async () => {

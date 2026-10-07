@@ -273,11 +273,13 @@ export class ExecutionRepository {
    * or failed (pass-after-retry flakiness needs those). Plan cases with no execution in a run
    * get an all-null UNTESTED row, so totals reflect the plan's current case list.
    *
-   * Which cases a run contains: every active link, plus any **retired** link (a case removed
-   * from the plan after it had results) that has a result in that run -- so old runs keep the
-   * results they recorded and later runs don't list the case. One row per case per run: if a
-   * case was removed and re-added (two links), the link with a result in that run wins,
-   * otherwise the active one. Rows are returned in `runIds` order.
+   * Which cases a run contains: every case with an active link, plus a case removed from the
+   * plan (only retired links) if it has a result in that run -- so old runs keep the results
+   * they recorded and later runs don't list it. One row per case per run, showing its latest
+   * result in that run from any of its links. While the case is in the plan the row carries
+   * its **active** link (so new results are recorded against current membership, even in an
+   * old run); only a case that's out of the plan is `removed_from_plan` (read-only). Rows
+   * are returned in `runIds` order.
    */
   async getFinalResultsForRuns(planId: string, runIds: string[]): Promise<FinalResultRow[]> {
     if (runIds.length === 0) return [];
@@ -334,31 +336,20 @@ export class ExecutionRepository {
     const byKey = new Map(ranked.map((r) => [`${r.run_id}|${r.plan_case_id}`, r]));
     const results: FinalResultRow[] = [];
     for (const runId of runIds) {
-      // Pick this run's link per case (see the doc comment above).
-      const chosen = new Map<string, (typeof planCases)[number]>();
-      for (const pc of planCases) {
-        const hasResult = byKey.has(`${runId}|${pc.plan_case_id}`);
-        if (pc.removed_at && !hasResult) continue; // retired and never run here
-        const current = chosen.get(pc.test_case_id);
-        if (!current) {
-          chosen.set(pc.test_case_id, pc);
-          continue;
-        }
-        const currentResult = byKey.get(`${runId}|${current.plan_case_id}`);
-        const thisResult = byKey.get(`${runId}|${pc.plan_case_id}`);
-        if (thisResult && (!currentResult || (thisResult.execution_timestamp ?? '') > (currentResult.execution_timestamp ?? ''))) {
-          chosen.set(pc.test_case_id, pc);
-        } else if (!thisResult && !currentResult && !pc.removed_at) {
-          chosen.set(pc.test_case_id, pc);
-        }
-      }
-      for (const pc of chosen.values()) {
-        const r = byKey.get(`${runId}|${pc.plan_case_id}`);
+      // One row per case (see the doc comment above): its latest result in this run from any
+      // of its links, recorded against its active link when it has one.
+      const byCase = new Map<string, Array<(typeof planCases)[number]>>();
+      for (const pc of planCases) byCase.set(pc.test_case_id, [...(byCase.get(pc.test_case_id) ?? []), pc]);
+      for (const [testCaseId, links] of byCase) {
+        const active = links.find((l) => !l.removed_at);
+        const withResults = links.map((l) => byKey.get(`${runId}|${l.plan_case_id}`)).filter((r): r is NonNullable<typeof r> => Boolean(r));
+        if (!active && withResults.length === 0) continue; // removed, and never run here
+        const r = withResults.sort((x, y) => (y.execution_timestamp ?? '').localeCompare(x.execution_timestamp ?? ''))[0];
         results.push({
-          removed_from_plan: Boolean(pc.removed_at),
+          removed_from_plan: !active,
           run_id: runId,
-          plan_case_id: pc.plan_case_id,
-          test_case_id: pc.test_case_id,
+          plan_case_id: active ? active.plan_case_id : r!.plan_case_id,
+          test_case_id: testCaseId,
           execution_id: r?.execution_id ?? null,
           verdict: r?.verdict ?? null,
           execution_duration_ms: r?.execution_duration_ms ?? null,
@@ -368,9 +359,9 @@ export class ExecutionRepository {
           source: r?.source ?? null,
           runner: r?.runner ?? null,
           execution_timestamp: r?.execution_timestamp ?? null,
-          attempts: r ? Number(r.attempts) : 0,
-          had_pass: Boolean(r?.had_pass),
-          had_fail: Boolean(r?.had_fail),
+          attempts: withResults.reduce((n, x) => n + Number(x.attempts), 0),
+          had_pass: withResults.some((x) => Boolean(x.had_pass)),
+          had_fail: withResults.some((x) => Boolean(x.had_fail)),
         });
       }
     }
