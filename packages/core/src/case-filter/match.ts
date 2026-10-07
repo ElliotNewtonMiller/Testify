@@ -62,14 +62,17 @@ function matchesFilter(record: CaseFilterRecord, filter: NormalizedCaseFilter): 
   return chain.some((sv) => matchesValue(filter, sv));
 }
 
-/** AND across every filter; `q` is a case-insensitive substring match on external id or
- * title. Pure and synchronous -- the route loads everything first, then runs this per case. */
+/** AND across every filter; `q` is a case-insensitive substring match on the external id,
+ * title, or any of the record's `search_text` (suite names). Pure and
+ * synchronous -- the caller loads everything first, then runs this per case. */
 export function matchesCase(record: CaseFilterRecord, request: NormalizedCaseFilterRequest): boolean {
   if (request.q) {
     const q = request.q.toLowerCase();
-    if (!record.external_id.toLowerCase().includes(q) && !record.title.toLowerCase().includes(q)) {
-      return false;
-    }
+    const hit =
+      record.external_id.toLowerCase().includes(q) ||
+      record.title.toLowerCase().includes(q) ||
+      (record.search_text ?? []).some((t) => t.toLowerCase().includes(q));
+    if (!hit) return false;
   }
   return request.filters.every((f) => matchesFilter(record, f));
 }

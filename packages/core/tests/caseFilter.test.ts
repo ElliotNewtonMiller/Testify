@@ -81,6 +81,12 @@ describe('matchesCase', () => {
     expect(match({ q: 'logout' }, record({}))).toBe(false);
   });
 
+  it('q also matches the extra search text (suite names)', () => {
+    const rec = { ...record({}), search_text: ['Checkout', 'Payments'] };
+    expect(match({ q: 'payme' }, rec)).toBe(true);
+    expect(match({ q: 'shipping' }, rec)).toBe(false);
+  });
+
   it('ANDs filters together', () => {
     const rec = record({ priority: 'HIGH', in_plan: false });
     expect(match({ filters: [{ field: 'priority', op: 'any_of', value: ['HIGH'] }] }, rec)).toBe(true);

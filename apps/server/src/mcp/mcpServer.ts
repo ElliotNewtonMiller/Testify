@@ -148,12 +148,12 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
     },
     {
       name: 'search_cases',
-      description: 'Find test cases by text (external id or title) and/or property filters. Returns case ids, external ids, titles, suite paths, priority, execution type and status.',
+      description: 'Find test cases by text (external id, title, or the name of a suite they are in) and/or property filters. Returns case ids, external ids, titles, suite paths, priority, execution type and status.',
       inputSchema: {
         type: 'object',
         properties: {
           project_id: { type: 'string' },
-          q: { type: 'string', description: 'Matches external id or title.' },
+          q: { type: 'string', description: 'Matches external id, title, or the name of the case\'s suite or any suite above it.' },
           filters: { type: 'array', items: { type: 'object' }, description: 'See list_report_fields.' },
           plan_id: { type: 'string', description: "Needed for the 'in_plan' filter." },
           run_id: { type: 'string', description: "Needed for the 'verdict' filter." },

@@ -32,7 +32,7 @@ export interface ReportDefinition {
 const FILTER_PARAM: ReportParamSchema = {
   type: 'object',
   description:
-    'Optional case filter, same shape as the case-search API: { "q"?: string (matches external id or title), "filters"?: [{ "field", "op", "value" }] }. ' +
+    'Optional case filter, same shape as the case-search API: { "q"?: string (matches external id, title, or the name of any suite the case is in), "filters"?: [{ "field", "op", "value" }] }. ' +
     'Field keys and operators come from GET /api/v1/projects/:projectId/case-search/fields. Limits the report to matching cases.',
 };
 

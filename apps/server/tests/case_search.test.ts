@@ -79,6 +79,30 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
     expect(none.body.suite_ids).toEqual([]);
   });
 
+  it('q matches the name of a case\'s suite or any suite above it, and shows matching empty suites', async () => {
+    const { app, seed, db } = serverInstance;
+    const token = await loginAsAdmin(app);
+    const suiteRepo = new TestSuiteRepository(db);
+    const caseRepo = new TestCaseRepository(db);
+    const parent = await suiteRepo.create({ project_id: seed.projectId, name: 'Payments Area' });
+    const child = await suiteRepo.create({ project_id: seed.projectId, name: 'Refunds', parent_suite_id: parent.id });
+    const emptyChild = await suiteRepo.create({ project_id: seed.projectId, name: 'Disputes', parent_suite_id: parent.id });
+    const inChild = await caseRepo.create({ project_id: seed.projectId, test_suite_id: child.id, external_id: 'SHOP-900', title: 'Partial refund' });
+
+    const res = await search(app, token, seed.projectId, { q: 'payments area' });
+    expect(res.status).toBe(200);
+    expect(res.body.case_ids).toEqual([inChild.id]); // via its parent suite's name
+    expect(res.body.suite_ids.sort()).toEqual([parent.id, child.id, emptyChild.id].sort());
+
+    const byChild = await search(app, token, seed.projectId, { q: 'refunds' });
+    expect(byChild.body.case_ids).toEqual([inChild.id]);
+    expect(byChild.body.suite_ids.sort()).toEqual([parent.id, child.id].sort()); // not the sibling
+
+    // A filter on a case property still applies on top of the suite-name match.
+    const filtered = await search(app, token, seed.projectId, { q: 'payments area', filters: [{ field: 'priority', op: 'any_of', value: ['LOW'] }] });
+    expect(filtered.body.case_ids).toEqual([]);
+  });
+
   it('filters by built-in fields, in_plan and verdict', async () => {
     const { app, seed, db } = serverInstance;
     const token = await loginAsAdmin(app);

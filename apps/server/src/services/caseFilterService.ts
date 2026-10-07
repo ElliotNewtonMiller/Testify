@@ -174,9 +174,11 @@ export class CaseFilterService {
     // Suite parent map (for suite_cf: inheritance and suite_ids ancestry).
     const tree = await this.suiteRepo.getTree(projectId);
     const parentBySuite = new Map<string, string | null>();
+    const nameBySuite = new Map<string, string>();
     const walk = (nodes: TestSuiteNode[]) => {
       for (const n of nodes) {
         parentBySuite.set(n.id, n.parent_suite_id);
+        nameBySuite.set(n.id, n.name);
         walk(n.children);
       }
     };
@@ -193,6 +195,7 @@ export class CaseFilterService {
       return chain;
     };
 
+    const hasQ = Boolean(filterRequest.q);
     const needsCaseCf = [...usedFields].some((f) => f.startsWith('cf:'));
     const needsSuiteCf = [...usedFields].some((f) => f.startsWith('suite_cf:'));
     const [caseValues, suiteValues, pinned, latestExecs] = await Promise.all([
@@ -216,6 +219,10 @@ export class CaseFilterService {
     for (const [suiteId, entries] of suiteValues as Map<string, Array<{ definition: { id: string }; value: unknown }>>) {
       suiteValueMaps.set(suiteId, new Map(entries.map((e) => [e.definition.id, e.value])));
     }
+
+    // Besides a case's id and title, the free-text search matches the name of its suite and of
+    // every suite above it -- searching a suite's name finds everything inside it.
+    const chainSearchText = (chain: string[]) => chain.map((sid) => nameBySuite.get(sid) ?? '');
 
     const matchedCaseIds: string[] = [];
     const matchedSuiteIds = new Set<string>();
@@ -242,16 +249,18 @@ export class CaseFilterService {
       }
 
       const record: CaseFilterRecord = { external_id: c.external_id, title: c.title, values };
+      if (hasQ) record.search_text = chainSearchText(chain);
       if (matchesCase(record, filterRequest)) {
         matchedCaseIds.push(c.id);
         for (const sid of chain) matchedSuiteIds.add(sid);
       }
     }
 
-    // When every filter is a suite filter (and there's no text search), a suite that itself
-    // satisfies them is shown even if it has no cases -- otherwise e.g. an empty suite with
-    // its box unticked would vanish under "No" just because the tree is built from cases.
-    const suiteOnly = !filterRequest.q && filterRequest.filters.length > 0 && filterRequest.filters.every((f) => f.inherited);
+    // When every filter is a suite filter, a suite that itself satisfies them -- and the text
+    // search, matched against its own and its parents' names -- is shown even
+    // if it has no cases. Otherwise e.g. an empty suite with its box unticked would vanish under
+    // "No", or searching a suite's name wouldn't show that suite when it's empty.
+    const suiteOnly = (hasQ || filterRequest.filters.length > 0) && filterRequest.filters.every((f) => f.inherited);
     if (suiteOnly) {
       for (const suiteId of parentBySuite.keys()) {
         if (matchedSuiteIds.has(suiteId)) continue;
@@ -261,7 +270,7 @@ export class CaseFilterService {
           const defId = f.field.slice('suite_cf:'.length);
           values[f.field] = chain.map((sid) => suiteValueMaps.get(sid)?.get(defId) ?? null);
         }
-        if (matchesCase({ external_id: '', title: '', values }, filterRequest)) {
+        if (matchesCase({ external_id: '', title: '', values, search_text: hasQ ? chainSearchText(chain) : undefined }, filterRequest)) {
           for (const sid of chain) matchedSuiteIds.add(sid);
         }
       }

@@ -78,6 +78,9 @@ export interface CaseFilterRecord {
   external_id: string;
   title: string;
   values: Record<string, unknown>;
+  /** Extra text the free-text search `q` also matches -- the names of the case's suite and
+   * every suite above it. */
+  search_text?: string[];
 }
 
 export const OPS_BY_KIND: Record<CaseFilterValueKind, CaseFilterOp[]> = {

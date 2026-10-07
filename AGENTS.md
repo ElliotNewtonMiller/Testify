@@ -670,7 +670,7 @@ Follow-up the same day: every custom-field filter row (case or suite field) now 
 
 Second follow-up: dropped the "Suite: " label prefix from suite fields in `GET .../case-search/fields` (the picker already groups them under "Suite fields"; `source` says it for API callers). Fixed suite CHECKBOX filtering, reproduced against live data: a box that was never set has **no value** (null), not `false` -- and that's every case/suite created while the field's default is unchecked, since the Admin Panel saves an unchecked default as no default (`default_value: null`), so `seedDefaultValueForAllEntities` seeds nothing and `getValuesForEntities` reads null. (Explicitly unticking in `CustomFieldEditor` does send and store a real `false`; an earlier draft of this note wrongly said unticking stored null.) "No" only matched explicit `false`, so it missed every never-set box. A CHECKBOX `is` filter now treats null as "No" (it displays unticked), for case and suite fields alike; `is_empty` still distinguishes unset from explicit `false` via the API. Suite CHECKBOX filters also no longer inherit from ancestors -- every suite shows a definite ticked/unticked box, so inheriting made a child that visibly shows unticked still match "Yes" through a ticked parent; every other suite field type still inherits. And when **only** suite filters are active (no text search), a suite matching on its own values is included in `suite_ids` even if it has no cases, so an empty unticked suite still shows under "No".
 
-Not built: no searching summary/preconditions/step text (decided: ID + title only).
+Not built: no searching summary/preconditions/step text (decided: ID + title only; suite names were added 2026-10-06).
 
 ## Changed: DRAFT version indicator is an outline, not a fill (2026-10-01)
 
@@ -906,6 +906,17 @@ Per direct request, the explanatory text in the Reports view (tab descriptions, 
 ## Fixed: "new failures" / "still failing" toggles in the Run report showed nothing (2026-10-06)
 
 `RunTab.tsx` deliberately skipped those two buckets when expanded (their cases are also in the Failures table below), so clicking "1 still failing ▸" looked broken. Every diff bucket now expands. Failing cases also show their error message and flaky badge. The headings now read "Run: run4" / "Plan: plan2 · open" and "Changes since: run3", per direct request.
+
+## Changed: search also matches suite names (2026-10-06)
+
+Per direct request, the free-text search (`q`) now matches a case's external id, title, **or the name of its suite or any suite above it**. Searching "Login" finds every case anywhere under a Login suite.
+- **Empty suites match too.** When every filter is a suite filter (or there are none), a suite whose own or ancestors' name matches is listed in `suite_ids` even with no cases, so an empty "Login / Lockout" still shows in the tree.
+- **Case filters still apply.** A case-property filter narrows the suite-name match as usual.
+- **Where it lives.** `CaseFilterRecord` gained optional `search_text` (`matchesCase` matches `q` against it). `CaseFilterService.evaluate` fills it with the suite chain's names, so the UI, every report's `filter`, and MCP `search_cases` all get it.
+- **Custom field values are deliberately not searched.** Elliot asked for them first, then retracted.
+- **Wording.** The placeholder reads "Search ID, title or suite". The catalog and MCP descriptions were updated to match.
+
+Tests: `caseFilter.test.ts` +1; `case_search.test.ts` +1 (parent-name match, sibling excluded, empty sub-suite listed, case filter still applies).
 
 ## Implementation status vs. the roadmap
 

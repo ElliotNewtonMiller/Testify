@@ -324,7 +324,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
         onKeyDown={(e) => {
           if (e.key === "Escape") (e.target as HTMLInputElement).blur();
         }}
-        placeholder="Search ID or title  ( / )"
+        placeholder="Search ID, title or suite  ( / )"
         style={{ ...inputStyle, width: "100%", padding: "5px 8px" }}
       />
 

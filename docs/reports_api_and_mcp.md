@@ -41,7 +41,7 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 | `test_health` | `plan_id`, `runs`, `stale_days`, `filter?`, `limit?` | Five lists: flaky, slowest, getting slower, always failing, and stale cases. |
 | `breakdown` | `plan_id`, `run_id?`, `group_by`, `filter?` | Compares groups of cases. Group by `suite`, `priority`, `execution_type`, `version_status`, `tester` or a custom field (`cf:<id>` / `suite_cf:<id>`). Without `run_id` it shows plan coverage; with it, verdicts per group. |
 
-**`filter`** has the same shape as the case-search API: `{ "q": "login", "filters": [{ "field": "priority", "op": "any_of", "value": ["HIGH"] }] }`. Field keys and operators come from `GET /api/v1/projects/:projectId/case-search/fields`.
+**`filter`** has the same shape as the case-search API (`q` matches a case's external id, title, or the name of any suite it's in): `{ "q": "login", "filters": [{ "field": "priority", "op": "any_of", "value": ["HIGH"] }] }`. Field keys and operators come from `GET /api/v1/projects/:projectId/case-search/fields`.
 
 ## Definitions (short version — the catalog has the full text)
 
