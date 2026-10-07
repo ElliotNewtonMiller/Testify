@@ -14,6 +14,7 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  runLabel,
   useEmailContext,
   type EmailContext,
   type CaseRef,
@@ -140,7 +141,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase, onEmailContex
               data.always_failing,
               [
                 { label: "In a row", render: (r) => `${r.consecutive_failures} runs` },
-                { label: "Since", render: (r) => r.failing_since?.run_name ?? "—" },
+                { label: "Since", render: (r) => r.failing_since ? runLabel(r.failing_since.run_name) : "—" },
                 { label: "Last error", render: (r) => <span style={{ color: "#fca5a5", whiteSpace: "normal" }}>{r.last_failure_message ?? "—"}</span> },
               ],
               "Nothing has been failing run after run.",

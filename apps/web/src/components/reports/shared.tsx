@@ -141,6 +141,10 @@ export function verdictColor(v: string | null | undefined): string {
   return VERDICT_COLORS[v ?? "UNTESTED"] ?? VERDICT_COLORS.OTHER;
 }
 
+/** Test runs are "runs" in the UI. Names that start with "Build" (CI build names, older
+ * data) are shown as "Run ..." -- the same rule as the header's Run picker. */
+export const runLabel = (name: string | null | undefined) => (name ?? "").replace(/^Build\s+/i, "Run ");
+
 export const pct = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${Math.round(n * 1000) / 10}%`);
 
 export function fmtMs(ms: number | null | undefined): string {

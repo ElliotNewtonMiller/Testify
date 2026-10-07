@@ -15,6 +15,7 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  runLabel,
   useEmailContext,
   type EmailContext,
   type VerdictSummary,
@@ -86,7 +87,7 @@ export function TrendsTab({
 
   if (!planId) return <Empty>Pick a test plan in the header to see its trend.</Empty>;
 
-  const chartData = (trend.data?.points ?? []).map((p) => ({ ...p, pass_rate_pct: Math.round(p.pass_rate * 1000) / 10 }));
+  const chartData = (trend.data?.points ?? []).map((p) => ({ ...p, run_name: runLabel(p.run_name), pass_rate_pct: Math.round(p.pass_rate * 1000) / 10 }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>

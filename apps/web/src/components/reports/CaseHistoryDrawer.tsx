@@ -1,5 +1,5 @@
 import React from "react";
-import { ErrorNote, Kpi, Loading, VerdictPill, buttonStyle, downloadReportCsv, fmtMs, fmtWhen, pct, runReport, type CaseRef } from "./shared";
+import { ErrorNote, Kpi, Loading, VerdictPill, buttonStyle, downloadReportCsv, fmtMs, fmtWhen, pct, runLabel, runReport, type CaseRef } from "./shared";
 
 interface Execution {
   execution_id: string;
@@ -151,7 +151,7 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
                       <li key={e.execution_id} style={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "8px 10px" }}>
                         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                           <VerdictPill verdict={e.verdict} />
-                          <span style={{ fontSize: "12px", color: "#e2e8f0", fontWeight: 600 }}>{e.run.name}</span>
+                          <span style={{ fontSize: "12px", color: "#e2e8f0", fontWeight: 600 }}>{runLabel(e.run.name)}</span>
                           <span style={{ fontSize: "11px", color: "#64748b" }}>
                             {e.plan.name}
                             {e.version_number ? ` · v${e.version_number}` : ""}

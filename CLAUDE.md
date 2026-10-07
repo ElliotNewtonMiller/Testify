@@ -1052,6 +1052,15 @@ The run summary, trend, diff, overview, breakdown-with-run, case-search `verdict
 - `npm test`: 620/624. All 4 failures are in `.claude/worktrees/vigilant-haslett-05b0d0/`, whose route code now also breaks on the removed `removeCase` method because it resolves `@testify/db` to this repo.
 - Verified live: confirm banner → remove → DEMO-2 is "+ Add" in Spec, and still listed with its result, tagged and read-only, in run 1.0.7.
 
+## Changed: Reports say "run", not "build"; no bubble on "Changes since" (2026-10-07)
+
+Per direct request:
+- **Run names.** Reports now show run names with the same rule as the header's Run picker: a name starting with "Build" displays as "Run …". The helper is `runLabel` in `reports/shared.tsx`, used in the Run tab title, "Changes since", failing-since, the Overview cards, the trend chart and table, test health and case history.
+- **Demo data.** `report-demo.ts` now names its runs "Run 1.0.x".
+- **Bubble removed.** The info bubble on the "Changes since" heading is gone.
+
+Also answered (no code change): "Not run this time" only lists cases that **had a result in the compared run** and have none in this one. A brand-new case (untested in both runs) and a case skipped now but untested before both count as "unchanged", so they appear in no bucket.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

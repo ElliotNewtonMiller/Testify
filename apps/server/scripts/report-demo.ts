@@ -111,7 +111,7 @@ async function main() {
   for (let run = 0; run < RUNS; run++) {
     const runStart = Date.now() - (RUNS - run) * day;
     const { build } = await api('POST', `/api/v1/projects/${pid}/plans/${plan.id}/builds`, jwt, {
-      name: `Build 1.0.${run + 1}`,
+      name: `Run 1.0.${run + 1}`,
       release_date: new Date(runStart).toISOString().slice(0, 10),
     });
     const at = (offsetMin: number) => new Date(runStart + offsetMin * 60_000).toISOString();
@@ -147,7 +147,7 @@ async function main() {
       const pc = planCases.find((x: any) => x.external_id === `${prefix}-${i + 1}`);
       await api('POST', '/api/v1/executions', jwt, { build_id: build.id, test_plan_case_id: pc.plan_case_id ?? pc.id, verdict: 'PASSED', notes: 'Checked by hand' });
     }
-    console.log(`  Build 1.0.${run + 1}: ${executions.length} automated results`);
+    console.log(`  Run 1.0.${run + 1}: ${executions.length} automated results`);
   }
 
   console.log(`\nDone. Project id: ${pid}`);

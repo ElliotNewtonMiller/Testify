@@ -13,6 +13,7 @@ import {
   pct,
   selectStyle,
   useReport,
+  runLabel,
   useEmailContext,
   type EmailContext,
   type CaseRef,
@@ -78,7 +79,7 @@ export function OverviewTab({ projectId, onOpenRun, onOpenCase, onEmailContext }
                 ) : (
                   <>
                     <div style={{ fontSize: "11px", color: "#64748b", margin: "2px 0 8px" }}>
-                      {p.latest_run.name}
+                      {runLabel(p.latest_run.name)}
                       {p.latest_run.status === "CLOSED" ? " · closed" : ""}
                     </div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>

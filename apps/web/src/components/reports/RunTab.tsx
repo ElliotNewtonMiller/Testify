@@ -20,6 +20,7 @@ import {
   tdStyle,
   thStyle,
   useReport,
+  runLabel,
   useEmailContext,
   type EmailContext,
   type CaseRef,
@@ -101,7 +102,7 @@ export function RunTab({
     return p;
   }, [runId, compareTo, filter]);
   const { data, error, loading } = useReport<RunSummary>(projectId, "run_summary", params);
-  useEmailContext(onEmailContext, params ? { what: `Run summary${data ? ` of ${data.run.name}` : ""}${filter ? ", limited to your filter" : ""}`, sections: [{ report_id: "run_summary", params }] } : null);
+  useEmailContext(onEmailContext, params ? { what: `Run summary${data ? ` of ${runLabel(data.run.name)}` : ""}${filter ? ", limited to your filter" : ""}`, sections: [{ report_id: "run_summary", params }] } : null);
   const [copyState, setCopyState] = React.useState<string | null>(null);
   const [openLists, setOpenLists] = React.useState<Record<string, boolean>>({ fixed: true });
 
@@ -127,7 +128,7 @@ export function RunTab({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
       <Section
-        title={`Run: ${data.run.name}`}
+        title={`Run: ${runLabel(data.run.name)}`}
         subtitle={
           <>
             Plan: {data.run.plan_name} · {data.run.status === "CLOSED" ? "closed" : "open"}
@@ -153,7 +154,7 @@ export function RunTab({
             <button style={buttonStyle} onClick={copyMarkdown} title="Copy this summary as Markdown, for a PR comment, chat message or ticket">
               {copyState ?? "Copy as Markdown"}
             </button>
-            <button style={buttonStyle} onClick={() => downloadReportCsv(projectId, "run_summary", params!, `run-${data.run.name}.csv`)}>
+            <button style={buttonStyle} onClick={() => downloadReportCsv(projectId, "run_summary", params!, `run-${runLabel(data.run.name)}.csv`)}>
               CSV
             </button>
           </>
@@ -191,8 +192,7 @@ export function RunTab({
       </Section>
 
       {data.compared_to && (
-        <Section title={`Changes since: ${data.compared_to.name}`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan: ${data.compared_to.plan_name}` : undefined}
-          info="How each case's result changed since the compared run. Click a count to list its cases.">
+        <Section title={`Changes since: ${runLabel(data.compared_to.name)}`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan: ${data.compared_to.plan_name}` : undefined}>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
             {DIFF_LABELS.filter((d) => (d.key !== "added" && d.key !== "removed") || data.diff.counts[d.key] > 0).map((d) => (
               <button
@@ -273,7 +273,7 @@ export function RunTab({
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
                         {f.failing_since ? (
                           <>
-                            {f.failing_since.run_name}
+                            {runLabel(f.failing_since.run_name)}
                             <div style={{ fontSize: "10px", color: "#64748b" }}>
                               {f.failing_since.runs} run{f.failing_since.runs === 1 ? "" : "s"}
                             </div>
