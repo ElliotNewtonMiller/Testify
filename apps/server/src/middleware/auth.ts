@@ -28,6 +28,61 @@ declare module 'fastify' {
 }
 
 /**
+ * The project a request acts on, so that API-token project binding and per-project role
+ * assignments/overrides apply to every route -- not only those nested under
+ * /projects/:projectId.
+ *
+ * - An explicit project (`:projectId`, `?project_id`, or an import's `target_project_id` in the
+ *   query or JSON body) wins. Routes nested under a project already check that their other ids
+ *   belong to it.
+ * - Otherwise it's derived from the resource ids the route names (`:planId`, `:buildId`,
+ *   `:caseId`, `:suiteId`, and `build_id`/`plan_id` in the query or JSON body). If those
+ *   belong to different projects the request is refused.
+ *
+ * Returns undefined when the request names no project at all (e.g. GET /api/v1/projects), and
+ * ids that don't exist are ignored (the route answers 404 for them).
+ */
+export type ResolvedProject = { projectId: string | null } | { conflict: string[] };
+
+export async function resolveRequestProject(request: FastifyRequest, db: Kysely<Database>): Promise<ResolvedProject> {
+  const params = (request.params as Record<string, string | undefined>) || {};
+  const query = (request.query as Record<string, string | undefined>) || {};
+  const body = request.body && typeof request.body === 'object' ? (request.body as Record<string, unknown>) : {};
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+
+  const explicit = params.projectId || query.project_id || query.target_project_id || str(body.target_project_id) || str(body.project_id);
+  if (explicit) return { projectId: explicit };
+
+  const found = new Set<string>();
+  const add = (row: { project_id: string } | undefined) => row && found.add(row.project_id);
+  const planId = params.planId || query.plan_id || str(body.plan_id);
+  const buildId = params.buildId || query.build_id || str(body.build_id);
+  if (planId) add(await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst());
+  if (buildId) {
+    add(
+      await db
+        .selectFrom('builds')
+        .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
+        .select('test_plans.project_id')
+        .where('builds.id', '=', buildId)
+        .executeTakeFirst()
+    );
+  }
+  if (params.caseId) add(await db.selectFrom('test_cases').select('project_id').where('id', '=', params.caseId).executeTakeFirst());
+  if (params.suiteId) add(await db.selectFrom('test_suites').select('project_id').where('id', '=', params.suiteId).executeTakeFirst());
+
+  if (found.size > 1) return { conflict: [...found] };
+  return { projectId: found.size === 1 ? [...found][0] : null };
+}
+
+/** A caller's permissions within one project: an API token's are fixed; a user's are
+ * re-evaluated so their per-project role and overrides apply. */
+export async function permissionsInProject(user: AuthenticatedUser, projectId: string, db: Kysely<Database>): Promise<string[]> {
+  if (user.api_token) return user.permissions;
+  return new RoleRepository(db).evaluatePermissions(user.id, projectId);
+}
+
+/**
  * Authenticates a request presenting a machine API token (Authorization: Bearer
  * tf_ci_...) instead of a JWT. Produces the same AuthenticatedUser shape as the JWT path
  * so every downstream consumer (request.user!.id/.permissions/etc.) keeps working
@@ -45,7 +100,8 @@ async function authenticateApiToken(
   rawToken: string,
   request: FastifyRequest,
   reply: FastifyReply,
-  db: Kysely<Database>
+  db: Kysely<Database>,
+  requestedProjectId: string | null
 ): Promise<AuthenticatedUser | null> {
   const tokenRepo = new ApiTokenRepository(db);
   const tokenHash = hashToken(rawToken);
@@ -64,10 +120,8 @@ async function authenticateApiToken(
     return null;
   }
 
-  // A token belongs to one project. Every project-scoped route is nested under
-  // /projects/:projectId (or takes ?project_id), so refuse a token aimed at any other
-  // project here, once, rather than relying on each route to remember to check.
-  const requestedProjectId = (request.params as any)?.projectId || (request.query as any)?.project_id || null;
+  // A token belongs to one project. Refuse a token aimed at any other project here, once,
+  // rather than relying on each route to remember to check (see resolveRequestProject).
   if (requestedProjectId && requestedProjectId !== token.project_id) {
     sendTokenProjectMismatchError(reply, token.project_id, requestedProjectId, request.url);
     return null;
@@ -128,8 +182,19 @@ export async function authenticateRequest(
 
   const token = authHeader.substring(7);
 
+  const resolved = await resolveRequestProject(request, db);
+  if ('conflict' in resolved) {
+    reply.status(400).send({
+      error: 'The ids in this request belong to different projects.',
+      code: 'PROJECTS_DIFFER',
+      project_ids: resolved.conflict,
+    });
+    return null;
+  }
+  const projectId = resolved.projectId;
+
   if (token.startsWith(API_TOKEN_PREFIX)) {
-    return authenticateApiToken(token, request, reply, db);
+    return authenticateApiToken(token, request, reply, db, projectId);
   }
 
   const result = verifyJwt(token, jwtSecret);
@@ -152,7 +217,6 @@ export async function authenticateRequest(
   }
 
   const globalRole = await roleRepo.getUserGlobalRole(user.id);
-  const projectId = (request.query as any)?.project_id || (request.params as any)?.projectId || null;
   const permissions = await roleRepo.evaluatePermissions(user.id, projectId);
 
   const authUser: AuthenticatedUser = {

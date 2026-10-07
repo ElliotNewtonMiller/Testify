@@ -1147,6 +1147,16 @@ New `apps/server/src/services/adminGuard.ts` (`AdminGuard`, `AdminGuardError`) a
 
 New tests: `apps/server/tests/admin_privilege_guard.test.ts` (4 -- a user manager can't escalate through a SYSTEM_ADMIN role, the Admin role globally or per project, a SYSTEM_ADMIN override globally or per project, creating an admin account, adding keys to their own role, or clearing an admin's deny override on themselves; can't disable, demote or override an admin, or edit/delete the Admin role, but can manage users at their own level; the last admin can't be disabled, demoted, denied SYSTEM_ADMIN or have it removed from the Admin role, and every attempt is rolled back; with a second admin the first can step down; an admin can still grant SYSTEM_ADMIN). 486/486 tests in this repo pass.
 
+## Fixed: project scoping could be bypassed on routes not nested under a project (2026-10-07)
+
+Audit item 6 (`docs/audit_2026-10-07.md`). The API-token project check and per-project permission evaluation both read the project only from `:projectId` / `?project_id`. Routes without one -- `POST /api/v1/executions`, `GET`/`POST`/`DELETE /api/v1/test-plans/:planId/cases[/:caseId]`, the suite cascade, `GET /api/v1/test-cases/:caseId/latest-version`, and the case/suite custom-field-value routes -- therefore let a token for project B read and change project A, and evaluated users' permissions globally, ignoring per-project roles and overrides.
+
+- New `resolveRequestProject(request, db)` (`middleware/auth.ts`), called once by `authenticateRequest` for every request. An explicit project (`:projectId`, `?project_id`, or an import's `target_project_id` in the query or JSON body, or `project_id` in a JSON body) wins; nested routes already check their other ids belong to it. Otherwise the project comes from the ids the route names: `:planId`, `:buildId`, `:caseId`, `:suiteId`, and `build_id`/`plan_id` in the query or JSON body. Ids that belong to different projects get `400 PROJECTS_DIFFER`; unknown ids are ignored (the route then 404s); a request naming no project (e.g. `GET /api/v1/projects`) behaves as before.
+- That project now drives both the token binding (`403 TOKEN_PROJECT_MISMATCH`) and `evaluatePermissions(user, projectId)`, so `requirePermission` honours per-project roles/overrides on these routes too.
+- Imports: a multipart upload's project field isn't read until the handler runs, so `ingestion.ts`'s dry-run/execute now check `IMPORT_DATA` after resolving the target project, via the new `permissionsInProject(user, projectId, db)` (an API token's capabilities as-is; a user re-evaluated in that project).
+
+New tests: `apps/server/tests/project_scoping.test.ts` (3 -- a project-B token gets 403 on all eight project-A routes and changes nothing, while still working on its own project; a Tester gains plan curation through a per-project Test Lead role and loses result recording through a per-project deny override; a cascade naming a plan and a suite from different projects gets 400). All three fail on the previous middleware. 489/489 tests in this repo pass.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

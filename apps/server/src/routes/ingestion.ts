@@ -23,7 +23,7 @@ import {
   type HierarchyPreviewNode,
   type SkippedCustomFieldValueWarning,
 } from '@testify/core';
-import { authenticateRequest, type AuthenticatedUser } from '../middleware/auth.js';
+import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
 import { sendTokenProjectMismatchError } from '../errors.js';
 
 // The web wizard sends the file base64-encoded inside a JSON body (~1.33x the file size).
@@ -151,14 +151,17 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   app.post('/api/v1/imports/dry-run', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
-    if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {
-      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
-    }
 
     try {
       const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
       const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
       if (!targetProjectId) return;
+      // Checked in the target project, so per-project roles and overrides apply (a multipart
+      // upload's project field is only known once the body has been read).
+      const importPerms = await permissionsInProject(user, targetProjectId, db);
+      if (!importPerms.includes('IMPORT_DATA') && !importPerms.includes('SYSTEM_ADMIN')) {
+        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+      }
 
       // Verify project exists
       const project = await db
@@ -367,15 +370,18 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   app.post('/api/v1/imports/execute', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
-    if (!user.permissions.includes('IMPORT_DATA') && !user.permissions.includes('SYSTEM_ADMIN')) {
-      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
-    }
 
     const startTime = Date.now();
     try {
       const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
       const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
       if (!targetProjectId) return;
+      // Checked in the target project, so per-project roles and overrides apply (a multipart
+      // upload's project field is only known once the body has been read).
+      const importPerms = await permissionsInProject(user, targetProjectId, db);
+      if (!importPerms.includes('IMPORT_DATA') && !importPerms.includes('SYSTEM_ADMIN')) {
+        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+      }
 
       const project = await db
         .selectFrom('projects')
