@@ -4,10 +4,34 @@ import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError } from '../errors.js';
+import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
+
+/** Replies for a guard violation (see services/adminGuard.ts); returns false for any other error. */
+function sendGuardError(reply: any, err: unknown): boolean {
+  if (!(err instanceof AdminGuardError)) return false;
+  reply.status(err.status).send({ error: err.message, code: err.code, ...err.details });
+  return true;
+}
 
 export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
+  const guard = new AdminGuard(db);
+
+  /** You can't edit or delete a role that grants more than you have (e.g. a user manager
+   * editing the Admin role). */
+  async function assertRoleWithinCeiling(actor: any, role: { name: string; permission_keys: string[] }) {
+    const ceiling = new Set(await guard.ceiling(actor, null));
+    const beyond = role.permission_keys.filter((k) => !ceiling.has(k));
+    if (beyond.length > 0) {
+      throw new AdminGuardError(
+        403,
+        'ROLE_OUTRANKS_ACTOR',
+        `You can't change the role '${role.name}': it grants permissions you don't have (${beyond.join(', ')}).`,
+        { permissions: beyond }
+      );
+    }
+  }
 
   // GET /api/v1/admin/users - List all system users & assigned roles (Gated by USER_MANAGE)
   app.get('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
@@ -49,6 +73,19 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const resolvedGlobalRole = (global_role as RoleName) || 'Tester';
     if (!(await roleRepo.roleExists(resolvedGlobalRole))) {
       return reply.status(400).send({ error: `UNKNOWN_ROLE: '${resolvedGlobalRole}' is not a valid role name` });
+    }
+
+    // A new user can't be given more than the person creating them has.
+    try {
+      await guard.assertCanGrant(activeUser, await roleRepo.getRolePermissions(resolvedGlobalRole));
+      for (const pr of Array.isArray(project_roles) ? project_roles : []) {
+        if (pr?.project_id && pr?.role) {
+          await guard.assertCanGrant(activeUser, await roleRepo.getRolePermissions(pr.role), pr.project_id);
+        }
+      }
+    } catch (err) {
+      if (sendGuardError(reply, err)) return;
+      throw err;
     }
 
     try {
@@ -121,23 +158,27 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       return reply.status(404).send({ error: 'User not found' });
     }
 
+    const projectRoleChanges = (Array.isArray(project_roles) ? project_roles : []).filter((pr: any) => pr?.project_id);
     try {
-      if (global_role) {
-        await roleRepo.assignGlobalRole(userId, global_role as RoleName);
-      }
-
-      if (project_roles && Array.isArray(project_roles)) {
-        for (const pr of project_roles) {
-          if (pr.project_id) {
+      await guard.run(
+        activeUser,
+        [{ userId, projectId: null }, ...projectRoleChanges.map((pr: any) => ({ userId, projectId: pr.project_id as string }))],
+        async (trx) => {
+          const roles = new RoleRepository(trx);
+          if (global_role) {
+            await roles.assignGlobalRole(userId, global_role as RoleName);
+          }
+          for (const pr of projectRoleChanges) {
             if (pr.role) {
-              await roleRepo.assignProjectRole(userId, pr.project_id, pr.role as RoleName);
+              await roles.assignProjectRole(userId, pr.project_id, pr.role as RoleName);
             } else {
-              await roleRepo.revokeProjectRole(userId, pr.project_id);
+              await roles.revokeProjectRole(userId, pr.project_id);
             }
           }
         }
-      }
+      );
     } catch (err: any) {
+      if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_ROLE')) {
         return reply.status(400).send({ error: err.message });
       }
@@ -189,7 +230,19 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       return reply.status(400).send({ error: 'Status must be ACTIVE or DISABLED' });
     }
 
-    const updatedUser = await userRepo.updateStatus(userId, status);
+    if (!(await userRepo.findById(userId))) {
+      return reply.status(404).send({ error: 'User not found' });
+    }
+
+    let updatedUser;
+    try {
+      updatedUser = await guard.run(activeUser, [{ userId, projectId: null }], (trx) =>
+        new UserRepository(trx).updateStatus(userId, status)
+      );
+    } catch (err) {
+      if (sendGuardError(reply, err)) return;
+      throw err;
+    }
 
     const now = new Date().toISOString();
     await db
@@ -269,6 +322,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     }
 
     try {
+      await guard.assertCanGrant(activeUser, permission_keys);
       const role = await roleRepo.createRole({ name, description: description ?? null, permission_keys });
 
       const now = new Date().toISOString();
@@ -290,6 +344,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
       return reply.status(201).send({ role });
     } catch (err: any) {
+      if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
         return reply.status(400).send({ error: err.message });
       }
@@ -306,16 +361,26 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const { roleId } = request.params as { roleId: string };
     const { name, description, permission_keys } = (request.body as any) || {};
 
-    try {
-      const role = await roleRepo.updateRole(roleId, {
-        name: typeof name === 'string' ? name : undefined,
-        description: description !== undefined ? description : undefined,
-        permission_keys: Array.isArray(permission_keys) ? permission_keys : undefined,
-      });
+    const existing = await roleRepo.getRole(roleId);
+    if (!existing) {
+      return reply.status(404).send({ error: 'Role not found' });
+    }
 
-      if (!role) {
-        return reply.status(404).send({ error: 'Role not found' });
-      }
+    try {
+      await assertRoleWithinCeiling(activeUser, existing);
+      if (Array.isArray(permission_keys)) await guard.assertCanGrant(activeUser, permission_keys);
+      // Everyone holding the role is affected: none of them may gain more than the editor has,
+      // and removing SYSTEM_ADMIN from it mustn't leave the system without an admin.
+      const role = await guard.run(
+        activeUser,
+        (trx) => new RoleRepository(trx).getRoleHolders(existing.name),
+        (trx) =>
+          new RoleRepository(trx).updateRole(roleId, {
+            name: typeof name === 'string' ? name : undefined,
+            description: description !== undefined ? description : undefined,
+            permission_keys: Array.isArray(permission_keys) ? permission_keys : undefined,
+          })
+      );
 
       const now = new Date().toISOString();
       await db
@@ -336,6 +401,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
       return reply.status(200).send({ role });
     } catch (err: any) {
+      if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
         return reply.status(400).send({ error: err.message });
       }
@@ -352,6 +418,17 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   app.delete('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { roleId } = request.params as { roleId: string };
+
+    const existing = await roleRepo.getRole(roleId);
+    if (!existing) {
+      return reply.status(404).send({ error: 'Role not found' });
+    }
+    try {
+      await assertRoleWithinCeiling(activeUser, existing);
+    } catch (err) {
+      if (sendGuardError(reply, err)) return;
+      throw err;
+    }
 
     const result = await roleRepo.deleteRole(roleId);
     if (!result.deleted) {
@@ -420,8 +497,17 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       }
 
       try {
-        await roleRepo.setUserOverrides(userId, projectId || null, overrides);
+        const scope = projectId || null;
+        await guard.assertCanGrant(
+          activeUser,
+          overrides.filter((o: any) => o?.is_granted).map((o: any) => o.permission_key),
+          scope
+        );
+        await guard.run(activeUser, [{ userId, projectId: scope }], (trx) =>
+          new RoleRepository(trx).setUserOverrides(userId, scope, overrides)
+        );
       } catch (err: any) {
+        if (sendGuardError(reply, err)) return;
         if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
           return reply.status(400).send({ error: err.message });
         }

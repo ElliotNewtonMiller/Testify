@@ -479,6 +479,7 @@ export function AdminPanelModal({
 
   const handleToggleStatus = async (userId: string, currentStatus: string) => {
     const nextStatus = currentStatus === "ACTIVE" ? "DISABLED" : "ACTIVE";
+    setErrorMessage(null);
     try {
       const res = await fetch(`/api/v1/admin/users/${userId}/status`, {
         method: "PUT",
@@ -491,9 +492,13 @@ export function AdminPanelModal({
       if (res.ok) {
         fetchUsers();
         fetchAuditLogs();
+      } else {
+        // e.g. disabling the last admin, or a user who has more access than you.
+        const data = await res.json().catch(() => ({}));
+        setErrorMessage(data.error || "Failed to change the user's status");
       }
     } catch {
-      // Handle status toggle error
+      setErrorMessage("Unable to reach the server.");
     }
   };
 

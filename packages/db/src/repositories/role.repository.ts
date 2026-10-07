@@ -42,6 +42,13 @@ export type DeleteRoleResult =
 export class RoleRepository {
   constructor(private db: Kysely<Database>) {}
 
+  /** Runs `fn` in a transaction, or directly inside the caller's one when this repository was
+   * built on a transaction already (Kysely can't nest them). */
+  private async runInTransaction<T>(fn: (trx: Kysely<Database>) => Promise<T>): Promise<T> {
+    if ((this.db as any).isTransaction) return fn(this.db);
+    return this.db.transaction().execute(fn);
+  }
+
   async getUserGlobalRole(userId: string): Promise<RoleName> {
     const roleRow = await this.db
       .selectFrom('user_roles')
@@ -190,7 +197,7 @@ export class RoleRepository {
     const permissionIdByKey = new Map(permissionRows.map((p) => [p.permission_key, p.id]));
     const now = new Date().toISOString();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       let deleteQuery = trx.deleteFrom('user_permission_overrides').where('user_id', '=', userId);
       deleteQuery = projectId
         ? deleteQuery.where('project_id', '=', projectId)
@@ -251,6 +258,29 @@ export class RoleRepository {
     return applyPermissionOverrides(basePermissions, [...globalOverrides, ...projectOverrides]);
   }
 
+  /** Everyone a role is assigned to: globally (projectId null) or per project. */
+  async getRoleHolders(roleName: string): Promise<Array<{ userId: string; projectId: string | null }>> {
+    const global = await this.db.selectFrom('user_roles').select('user_id').where('role', '=', roleName).execute();
+    const perProject = await this.db
+      .selectFrom('user_project_roles')
+      .select(['user_id', 'project_id'])
+      .where('role', '=', roleName)
+      .execute();
+    return [
+      ...global.map((r) => ({ userId: r.user_id, projectId: null })),
+      ...perProject.map((r) => ({ userId: r.user_id, projectId: r.project_id })),
+    ];
+  }
+
+  /** Whether at least one ACTIVE user holds SYSTEM_ADMIN globally (role or override). */
+  async hasActiveSystemAdmin(): Promise<boolean> {
+    const active = await this.db.selectFrom('users').select('id').where('status', '=', 'ACTIVE').execute();
+    for (const u of active) {
+      if ((await this.evaluatePermissions(u.id)).includes('SYSTEM_ADMIN')) return true;
+    }
+    return false;
+  }
+
   listPermissionRegistry(): PermissionDefinition[] {
     return PERMISSION_REGISTRY;
   }
@@ -301,7 +331,7 @@ export class RoleRepository {
     const permissionRows = await this.db.selectFrom('permissions').select(['id', 'permission_key']).execute();
     const permissionIdByKey = new Map(permissionRows.map((p) => [p.permission_key, p.id]));
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx
         .insertInto('roles')
         .values({
@@ -351,7 +381,7 @@ export class RoleRepository {
 
     const now = new Date().toISOString();
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       const updateData: Updateable<RolesTable> = { updated_at: now };
       if (input.name !== undefined) updateData.name = input.name;
       if (input.description !== undefined) updateData.description = input.description;
@@ -409,7 +439,7 @@ export class RoleRepository {
       return { deleted: false, blockedByUserCount, roleName: role.name };
     }
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.deleteFrom('role_permissions').where('role_id', '=', id).execute();
       await trx.deleteFrom('roles').where('id', '=', id).execute();
     });

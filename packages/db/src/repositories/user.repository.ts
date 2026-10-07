@@ -39,6 +39,13 @@ export function verifyPassword(password: string, storedHash: string, salt: strin
 export class UserRepository {
   constructor(private db: Kysely<Database>) {}
 
+  /** Runs `fn` in a transaction, or directly inside the caller's one when this repository was
+   * built on a transaction already (Kysely can't nest them). */
+  private async runInTransaction<T>(fn: (trx: Kysely<Database>) => Promise<T>): Promise<T> {
+    if ((this.db as any).isTransaction) return fn(this.db);
+    return this.db.transaction().execute(fn);
+  }
+
   /**
    * Seeds initial omnipotent superuser (admin / password) on startup if no users exist.
    */
@@ -72,7 +79,7 @@ export class UserRepository {
       updated_at: now,
     };
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.insertInto('users').values(adminUser).execute();
       await trx
         .insertInto('user_roles')
@@ -111,7 +118,7 @@ export class UserRepository {
 
     const globalRole = input.global_role ?? 'Tester';
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.insertInto('users').values(newUser).execute();
       await trx
         .insertInto('user_roles')
