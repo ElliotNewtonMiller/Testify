@@ -95,14 +95,14 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     }
     if (body.preview) return { subject: email.subject, html: email.html };
 
-    const outbox = await sendEmail(db, { to: recipients, subject: email.subject, html: email.html, text: email.text, projectId, sentBy: actor.id });
+    const sent = await sendEmail(db, { to: recipients, subject: email.subject, html: email.html, text: email.text, projectId, sentBy: actor.id });
     await audit(actor, 'REPORT_EMAILED', 'project', projectId, projectId, {
       trigger: 'manual',
       reports: sections.map((s) => s.report_id),
       recipient_count: recipients.length,
-      status: outbox.status,
+      status: sent.status,
     });
-    return reply.status(201).send({ outbox: { id: outbox.id, status: outbox.status, error: outbox.error, subject: outbox.subject, recipients: outbox.recipients } });
+    return reply.status(201).send({ email: { status: sent.status, error: sent.error, subject: sent.subject, recipients: sent.recipients } });
   });
 
   // ---- Schedules ------------------------------------------------------------------------
@@ -200,7 +200,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return {
       status: result.status,
       error: result.error,
-      outbox: result.outbox ? { id: result.outbox.id, status: result.outbox.status, subject: result.outbox.subject } : null,
+      email: result.email ? { status: result.email.status, subject: result.email.subject } : null,
       schedule: await scheduleRepo.findById(id),
     };
   });

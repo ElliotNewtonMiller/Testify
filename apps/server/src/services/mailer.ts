@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import nodemailer, { type Transporter } from 'nodemailer';
-import type { Database, EmailOutboxEntry } from '@testify/db';
-import { EmailOutboxRepository, SystemSettingsRepository } from '@testify/db';
+import type { Database, LastEmail } from '@testify/db';
+import { LastEmailRepository, SystemSettingsRepository } from '@testify/db';
 
 /** system_settings keys for outgoing email. */
 export const EMAIL_SETTING_KEYS = {
@@ -62,14 +62,14 @@ export function setTransportFactoryForTests(factory: TransportFactory | null): v
 }
 
 /**
- * Sends one email and records it in email_outbox, whatever happens. With no SMTP host
- * configured the email is only captured (status CAPTURED) -- that's how dev/test installs
- * see what would have gone out.
+ * Sends one email and records it as the last email, whatever happens (replacing the previous
+ * one -- there's no log). With no SMTP host configured it's only captured (status CAPTURED),
+ * so dev/test installs can still see what would have gone out.
  */
 export async function sendEmail(
   db: Kysely<Database>,
   email: { to: string[]; subject: string; html: string; text: string; projectId: string | null; scheduleId?: string | null; sentBy: string | null }
-): Promise<EmailOutboxEntry> {
+): Promise<LastEmail> {
   const settings = await loadEmailSettings(db);
   let status: 'SENT' | 'CAPTURED' | 'FAILED' = 'CAPTURED';
   let error: string | null = null;
@@ -82,7 +82,7 @@ export async function sendEmail(
       error = err instanceof Error ? err.message : String(err);
     }
   }
-  return new EmailOutboxRepository(db).add({
+  return new LastEmailRepository(db).record({
     project_id: email.projectId,
     schedule_id: email.scheduleId ?? null,
     subject: email.subject,

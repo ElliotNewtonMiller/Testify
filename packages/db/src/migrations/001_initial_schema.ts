@@ -386,10 +386,11 @@ export async function up(db: Kysely<any>): Promise<void> {
     .execute();
   await db.schema.createIndex('idx_report_schedules_due').on('report_schedules').columns(['enabled', 'next_run_at']).execute();
 
-  // 25. Email outbox: every email Testify sends (or, with no SMTP server configured, only
-  // captures). Kept when its project or schedule is deleted.
+  // 25. The last email Testify sent (or, with no SMTP server configured, only captured) --
+  // a single row, replaced by each new email; not a log. Kept when its project or schedule
+  // is deleted.
   await db.schema
-    .createTable('email_outbox')
+    .createTable('last_email')
     .addColumn('id', 'varchar(36)', (col) => col.primaryKey())
     .addColumn('project_id', 'varchar(36)', (col) => col.references('projects.id').onDelete('set null'))
     .addColumn('schedule_id', 'varchar(36)', (col) => col.references('report_schedules.id').onDelete('set null'))
@@ -402,7 +403,6 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('sent_by', 'varchar(36)')
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .execute();
-  await db.schema.createIndex('idx_email_outbox_created').on('email_outbox').column('created_at').execute();
 
   // Install the audit_logs append-only immutability trigger. Testify only targets
   // Postgres-compatible SQL (PGlite locally, real Postgres in production), so there's a
@@ -430,7 +430,7 @@ export async function up(db: Kysely<any>): Promise<void> {
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
-  await db.schema.dropTable('email_outbox').ifExists().execute();
+  await db.schema.dropTable('last_email').ifExists().execute();
   await db.schema.dropTable('report_schedules').ifExists().execute();
   await db.schema.dropTable('system_settings').ifExists().execute();
   // user_permission_overrides FKs to users, so it must drop before users does.

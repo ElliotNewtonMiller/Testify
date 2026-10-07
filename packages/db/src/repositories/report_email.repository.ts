@@ -1,6 +1,6 @@
 import type { Kysely, Selectable } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
-import type { Database, EmailOutboxTable, ReportSchedulesTable } from '../types.js';
+import type { Database, LastEmailTable, ReportSchedulesTable } from '../types.js';
 
 /** Key/value settings stored in system_settings (e.g. the SMTP server for report emails). */
 export class SystemSettingsRepository {
@@ -184,33 +184,21 @@ export class ReportScheduleRepository {
   }
 }
 
-export type EmailOutboxEntry = Omit<Selectable<EmailOutboxTable>, 'recipients'> & { recipients: string[] };
+export type LastEmail = Omit<Selectable<LastEmailTable>, 'recipients'> & { recipients: string[] };
 
-export class EmailOutboxRepository {
+/** The last email Testify sent (or captured): one row, replaced by each new email. */
+export class LastEmailRepository {
   constructor(private db: Kysely<Database>) {}
 
-  async add(entry: Omit<EmailOutboxEntry, 'id' | 'created_at'>): Promise<EmailOutboxEntry> {
+  async record(entry: Omit<LastEmail, 'id' | 'created_at'>): Promise<LastEmail> {
     const row = { ...entry, id: uuidv7(), created_at: new Date().toISOString(), recipients: JSON.stringify(entry.recipients) };
-    await this.db.insertInto('email_outbox').values(row).execute();
+    await this.db.insertInto('last_email').values(row).execute();
+    await this.db.deleteFrom('last_email').where('id', '!=', row.id).execute();
     return { ...row, recipients: entry.recipients };
   }
 
-  /** Newest first, without the bodies. */
-  async list(opts: { limit: number; offset: number }) {
-    const rows = await this.db
-      .selectFrom('email_outbox')
-      .select(['id', 'project_id', 'schedule_id', 'subject', 'recipients', 'status', 'error', 'sent_by', 'created_at'])
-      .orderBy('created_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(opts.limit)
-      .offset(opts.offset)
-      .execute();
-    const total = await this.db.selectFrom('email_outbox').select((eb) => eb.fn.countAll<number>().as('n')).executeTakeFirst();
-    return { entries: rows.map((r) => ({ ...r, recipients: parseList<string>(r.recipients) })), total: Number(total?.n ?? 0) };
-  }
-
-  async findById(id: string): Promise<EmailOutboxEntry | undefined> {
-    const row = await this.db.selectFrom('email_outbox').selectAll().where('id', '=', id).executeTakeFirst();
+  async find(): Promise<LastEmail | undefined> {
+    const row = await this.db.selectFrom('last_email').selectAll().orderBy('created_at', 'desc').executeTakeFirst();
     return row ? { ...row, recipients: parseList<string>(row.recipients) } : undefined;
   }
 }

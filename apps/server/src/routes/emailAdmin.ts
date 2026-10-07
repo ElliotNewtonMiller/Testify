@@ -2,22 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
-import { EmailOutboxRepository, SystemSettingsRepository } from '@testify/db';
+import { LastEmailRepository, SystemSettingsRepository } from '@testify/db';
 import { escapeHtml, isValidEmail } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
 import { EMAIL_SETTING_KEYS, loadEmailSettings, sendEmail } from '../services/mailer.js';
 
 /**
- * Outgoing email settings and the outbox (SYSTEM_ADMIN only):
+ * Outgoing email settings and the last email sent (SYSTEM_ADMIN only):
  *
  * GET/PUT /api/v1/admin/email-settings      -- the password is never returned, only has_password.
  * POST    /api/v1/admin/email-settings/test  { to }
- * GET     /api/v1/admin/email-outbox?limit=&offset=
- * GET     /api/v1/admin/email-outbox/:id     -- with the full HTML, for previewing.
+ * GET     /api/v1/admin/email-last           -- the last email sent or captured (with its HTML), or null.
  */
 export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const settingsRepo = new SystemSettingsRepository(db);
-  const outboxRepo = new EmailOutboxRepository(db);
+  const lastEmailRepo = new LastEmailRepository(db);
   const gate = { preHandler: requirePermission('SYSTEM_ADMIN', db, jwtSecret) };
 
   async function publicSettings() {
@@ -30,7 +29,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
       has_password: Boolean(s.smtp_password),
       from: s.from,
       public_url: s.public_url,
-      // Without a host nothing is actually sent -- emails only land in the outbox.
+      // Without a host nothing is actually sent -- emails are only captured.
       delivery: s.smtp_host ? 'smtp' : 'capture_only',
     };
   }
@@ -94,8 +93,8 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
     const to = String((request.body as any)?.to ?? '').trim().toLowerCase();
     if (!isValidEmail(to)) return reply.status(400).send({ error: 'INVALID_PARAMS', message: 'to must be an email address', details: [{ param: 'to', reason: 'must be an email address' }] });
     const settings = await loadEmailSettings(db);
-    const where = settings.smtp_host ? `via ${settings.smtp_host}` : 'with no SMTP server configured, so it was only captured in the outbox';
-    const outbox = await sendEmail(db, {
+    const where = settings.smtp_host ? `via ${settings.smtp_host}` : 'with no SMTP server configured, so it was only captured, not sent';
+    const sent = await sendEmail(db, {
       to: [to],
       subject: 'Testify test email',
       html: `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a"><h2>Testify can send email</h2><p>This test was sent ${escapeHtml(where)}.</p></body></html>`,
@@ -103,19 +102,8 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
       projectId: null,
       sentBy: request.user!.id,
     });
-    return { outbox: { id: outbox.id, status: outbox.status, error: outbox.error } };
+    return { email: { status: sent.status, error: sent.error } };
   });
 
-  app.get('/api/v1/admin/email-outbox', gate, async (request) => {
-    const q = request.query as { limit?: string; offset?: string };
-    const limit = Math.min(Math.max(parseInt(q.limit || '', 10) || 50, 1), 200);
-    const offset = Math.max(parseInt(q.offset || '', 10) || 0, 0);
-    return outboxRepo.list({ limit, offset });
-  });
-
-  app.get('/api/v1/admin/email-outbox/:id', gate, async (request, reply) => {
-    const entry = await outboxRepo.findById((request.params as { id: string }).id);
-    if (!entry) return reply.status(404).send({ error: 'Not found' });
-    return { entry };
-  });
+  app.get('/api/v1/admin/email-last', gate, async () => ({ email: (await lastEmailRepo.find()) ?? null }));
 }

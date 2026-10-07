@@ -92,7 +92,7 @@ Ask, for example: *"What broke in the latest run of the Release Regression plan,
 People with the `REPORT_EMAIL` permission (Admin and Test Lead by default) can email reports to any address.
 
 - **In the web app:** use **✉ Email this report** in the Reports sidebar, or set up daily or weekly emails in the **Scheduled Emails** tab.
-- **Mail server:** an admin sets it in Admin Panel → ✉ Email. Until a mail server is set, emails are only captured in that tab's outbox, not sent.
+- **Mail server:** an admin sets it in Admin Panel → ✉ Email. Until a mail server is set, emails are only captured, not sent; that tab shows the last email sent or captured.
 
 API:
 

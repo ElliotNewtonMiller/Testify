@@ -987,6 +987,21 @@ An email is one or more **sections**, each a catalog report plus params, produce
 - Every zone from `Intl.supportedValuesOf('timeZone')` grouped by region in `<optgroup>`s, with a short fallback list for older browsers.
 - A saved zone this browser doesn't list still shows.
 
+## Changed: the email outbox log became a single "Last email" (2026-10-07)
+
+Per direct request (no outbox log):
+- **Storage.** The `email_outbox` table is now `last_email` (`001_initial_schema.ts`, in place): one row, replaced by every send. `LastEmailRepository.record` inserts, then deletes every other row; `find()` reads it back.
+- **API.** `GET /api/v1/admin/email-outbox[/:id]` became `GET /api/v1/admin/email-last` (`{ email | null }`, with HTML for preview). Send responses return `email` instead of `outbox`.
+- **Admin Panel.** The Email tab shows a "Last email" section instead of the table: When / Subject / To / Status, plus Preview and Refresh.
+- **Containing long errors** (as asked):
+  - The section is a `max-content | minmax(0, 1fr)` grid, and values use `overflowWrap: anywhere`.
+  - A failure message sits in its own box (`pre-wrap`, max 160px tall, scrolls).
+  - The same wrapping applies to errors in the "Email this report" dialog and the schedules list.
+- **Verified live** with a failed send whose 265-character error contained an unbroken 240-character host name: it wrapped within the section, and no horizontal overflow appeared in the modal or page.
+- **Wording.** "Captured in the outbox" now reads "Captured, not sent -- no mail server is set up yet (Admin Panel → Email)".
+
+Every send is still recorded in the Security Audit Log (`REPORT_EMAILED`).
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

@@ -394,7 +394,7 @@ graph TD
 
 Mitigations:
 - A dedicated `REPORT_EMAIL` permission (Admin and Test Lead by default), project-scoped like every other route.
-- Every send writes a `REPORT_EMAILED` audit row (manual or scheduled, with the recipient count), and the full email is kept in an admin-only outbox.
+- Every send writes a `REPORT_EMAILED` audit row (manual or scheduled, with the recipient count). The most recent email is kept for admins to review.
 - At most 50 recipients per email.
 - Every user- and CI-supplied string is HTML-escaped, so case titles or failure messages can't inject markup into recipients' mail.
 - Scheduled sends re-check, on every send, that the schedule's creator is still active and still allowed to email that project.

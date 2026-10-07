@@ -188,7 +188,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
           r.status === "SENT"
             ? `✓ "${s.name}" sent.`
             : r.status === "CAPTURED"
-              ? `✓ "${s.name}" captured in the Admin Panel outbox (no mail server set up).`
+              ? `✓ "${s.name}" captured, not sent -- no mail server is set up yet (Admin Panel → Email).`
               : r.status === "SKIPPED"
                 ? `Skipped: ${r.error}`
                 : `Sending failed: ${r.error}`
@@ -238,7 +238,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
           )
         }
       >
-        {notice && <div style={{ fontSize: "12px", color: notice.startsWith("⚠️") || notice.startsWith("Sending failed") ? "#f87171" : "#86efac", marginBottom: 8 }}>{notice}</div>}
+        {notice && <div style={{ fontSize: "12px", color: notice.startsWith("⚠️") || notice.startsWith("Sending failed") ? "#f87171" : "#86efac", marginBottom: 8, overflowWrap: "anywhere" }}>{notice}</div>}
 
         {draft && (
           <div style={{ border: "1px solid #334155", borderRadius: "6px", padding: "12px", marginBottom: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -379,7 +379,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
                     {s.sections.map((x) => KIND_LABELS[x.kind]).join(" + ")}
                     {plan ? ` · plan ${plan.name}` : ""} · {describeWhen(s)} · {s.recipients.length} recipient{s.recipients.length === 1 ? "" : "s"}
                   </div>
-                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: 2 }}>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: 2, overflowWrap: "anywhere", minWidth: 0 }}>
                     {s.enabled && <>Next: {fmtWhen(s.next_run_at)}</>}
                     {s.last_run_at && (
                       <>

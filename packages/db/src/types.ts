@@ -272,7 +272,7 @@ export interface ReportSchedulesTable {
   updated_at: string;
 }
 
-export interface EmailOutboxTable {
+export interface LastEmailTable {
   id: string;
   project_id: string | null;
   schedule_id: string | null;
@@ -311,5 +311,5 @@ export interface Database {
   api_tokens: ApiTokensTable;
   system_settings: SystemSettingsTable;
   report_schedules: ReportSchedulesTable;
-  email_outbox: EmailOutboxTable;
+  last_email: LastEmailTable;
 }

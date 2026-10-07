@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely';
-import type { Database, EmailOutboxEntry, ReportSchedule, ReportScheduleSection } from '@testify/db';
+import type { Database, LastEmail, ReportSchedule, ReportScheduleSection } from '@testify/db';
 import { BuildRepository, ProjectRepository, ReportScheduleRepository, RoleRepository, TestPlanRepository, UserRepository } from '@testify/db';
 import { EMAILABLE_REPORTS, findReport, nextRunAt, renderReportEmail, validateReportParams, type EmailSection, type RenderedEmail } from '@testify/core';
 import { ReportError, ReportService } from './reportService.js';
@@ -35,8 +35,8 @@ function reportLink(publicUrl: string | null, projectId: string, reportId: strin
 }
 
 export type ScheduleSendResult =
-  | { status: 'SENT' | 'CAPTURED' | 'FAILED'; error: string | null; outbox: EmailOutboxEntry }
-  | { status: 'SKIPPED' | 'FAILED'; error: string | null; outbox?: undefined };
+  | { status: 'SENT' | 'CAPTURED' | 'FAILED'; error: string | null; email: LastEmail }
+  | { status: 'SKIPPED' | 'FAILED'; error: string | null; email?: undefined };
 
 /**
  * Builds report emails from the same ReportService the UI, REST and MCP use, and sends them
@@ -146,7 +146,7 @@ export class ReportEmailService {
         } else {
           const creator = await this.userRepo.findById(schedule.created_by);
           const email = await this.build(schedule.project_id, requests, { title: schedule.name, message: schedule.message, sentBy: creator?.username ?? null });
-          const outbox = await sendEmail(this.db, {
+          const sent = await sendEmail(this.db, {
             to: schedule.recipients,
             subject: email.subject,
             html: email.html,
@@ -165,14 +165,14 @@ export class ReportEmailService {
               resource_type: 'report_schedule',
               resource_id: schedule.id,
               project_id: schedule.project_id,
-              diff: JSON.stringify({ trigger, schedule_name: schedule.name, recipient_count: schedule.recipients.length, status: outbox.status }),
+              diff: JSON.stringify({ trigger, schedule_name: schedule.name, recipient_count: schedule.recipients.length, status: sent.status }),
               ip_address: null,
               user_agent: 'TestifyReportScheduler',
               created_at: new Date().toISOString(),
             })
             .execute();
-          await this.scheduleRepo.recordResult(schedule.id, { status: outbox.status, error: outbox.error, sentRunIds: outbox.status === 'FAILED' ? undefined : runIds });
-          return { status: outbox.status as 'SENT' | 'CAPTURED' | 'FAILED', error: outbox.error, outbox };
+          await this.scheduleRepo.recordResult(schedule.id, { status: sent.status, error: sent.error, sentRunIds: sent.status === 'FAILED' ? undefined : runIds });
+          return { status: sent.status as 'SENT' | 'CAPTURED' | 'FAILED', error: sent.error, email: sent };
         }
       }
     } catch (err) {

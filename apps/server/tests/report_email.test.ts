@@ -5,7 +5,7 @@ import { setTransportFactoryForTests } from '../src/services/mailer.js';
 import { runDueSchedules } from '../src/services/reportEmailService.js';
 import { ProjectRepository, ReportScheduleRepository, TestPlanRepository } from '@testify/db';
 
-describe('Report emails: settings, outbox, manual sends and schedules', () => {
+describe('Report emails: settings, last email, manual sends and schedules', () => {
   let serverInstance: any;
 
   beforeEach(async () => {
@@ -37,8 +37,8 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
   const call = (app: any, token: string, method: string, url: string, payload?: unknown) =>
     app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload !== undefined ? { payload } : {}) });
 
-  async function outbox(app: any, token: string) {
-    return JSON.parse((await call(app, token, 'GET', '/api/v1/admin/email-outbox')).payload);
+  async function lastEmail(app: any, token: string) {
+    return JSON.parse((await call(app, token, 'GET', '/api/v1/admin/email-last')).payload).email;
   }
 
   function scheduleBody(planId: string, extra: Record<string, unknown> = {}) {
@@ -54,7 +54,7 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
     };
   }
 
-  describe('email settings and the outbox', () => {
+  describe('email settings and the last email', () => {
     it('never returns the password; only admins can read or change settings', async () => {
       const { app } = serverInstance;
       const admin = await loginAsAdmin(app);
@@ -77,7 +77,7 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
 
       const { token: lead } = await createAndLoginAs(app, admin, 'Test Lead');
       expect((await call(app, lead, 'GET', '/api/v1/admin/email-settings')).statusCode).toBe(403);
-      expect((await call(app, lead, 'GET', '/api/v1/admin/email-outbox')).statusCode).toBe(403);
+      expect((await call(app, lead, 'GET', '/api/v1/admin/email-last')).statusCode).toBe(403);
     });
 
     it('test email: captured with no SMTP host, sent through the transport with one, failed when it errors', async () => {
@@ -85,7 +85,7 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
       const admin = await loginAsAdmin(app);
 
       const captured = JSON.parse((await call(app, admin, 'POST', '/api/v1/admin/email-settings/test', { to: 'me@example.com' })).payload);
-      expect(captured.outbox.status).toBe('CAPTURED');
+      expect(captured.email.status).toBe('CAPTURED');
 
       await call(app, admin, 'PUT', '/api/v1/admin/email-settings', { smtp_host: 'smtp.example.com' });
       const sentMessages: any[] = [];
@@ -94,23 +94,24 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
         return { sendMail: async (m: any) => { sentMessages.push(m); return t.sendMail(m); } } as any;
       });
       const sent = JSON.parse((await call(app, admin, 'POST', '/api/v1/admin/email-settings/test', { to: 'me@example.com' })).payload);
-      expect(sent.outbox.status).toBe('SENT');
+      expect(sent.email.status).toBe('SENT');
       expect(sentMessages[0]).toMatchObject({ to: ['me@example.com'], subject: 'Testify test email' });
 
       setTransportFactoryForTests(() => ({ sendMail: async () => { throw new Error('connection refused'); } }) as any);
       const failed = JSON.parse((await call(app, admin, 'POST', '/api/v1/admin/email-settings/test', { to: 'me@example.com' })).payload);
-      expect(failed.outbox).toMatchObject({ status: 'FAILED', error: 'connection refused' });
+      expect(failed.email).toMatchObject({ status: 'FAILED', error: 'connection refused' });
 
-      const list = await outbox(app, admin);
-      expect(list.total).toBe(3);
-      expect(list.entries.map((e: any) => e.status)).toEqual(['FAILED', 'SENT', 'CAPTURED']);
-      const one = JSON.parse((await call(app, admin, 'GET', `/api/v1/admin/email-outbox/${list.entries[0].id}`)).payload);
-      expect(one.entry.html).toContain('Testify can send email');
+      // Only the last email is kept -- no log.
+      const last = await lastEmail(app, admin);
+      expect(last).toMatchObject({ status: 'FAILED', error: 'connection refused', recipients: ['me@example.com'], subject: 'Testify test email' });
+      expect(last.html).toContain('Testify can send email');
+      const rows = await serverInstance.db.selectFrom('last_email').select('id').execute();
+      expect(rows).toHaveLength(1);
     });
   });
 
   describe('Email this report', () => {
-    it('preview renders without sending; sending writes the outbox and an audit row', async () => {
+    it('preview renders without sending; sending becomes the last email and writes an audit row', async () => {
       const { app, seed } = serverInstance;
       const admin = await loginAsAdmin(app);
       await call(app, admin, 'PUT', '/api/v1/admin/email-settings', { public_url: 'https://testify.example.com' });
@@ -122,12 +123,12 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
       const p = JSON.parse(preview.payload);
       expect(p.subject).toMatch(/^Testify · .* · Run /);
       expect(p.html).toContain(`https://testify.example.com/#/reports/run?project=${seed.projectId}`);
-      expect((await outbox(app, admin)).total).toBe(0);
+      expect(await lastEmail(app, admin)).toBeNull();
 
       const sent = await call(app, admin, 'POST', url, { sections, recipients: ['Boss@Example.com', 'boss@example.com', 'qa@example.com'], message: 'Release status' });
       expect(sent.statusCode).toBe(201);
-      expect(JSON.parse(sent.payload).outbox).toMatchObject({ status: 'CAPTURED', recipients: ['boss@example.com', 'qa@example.com'] });
-      expect((await outbox(app, admin)).total).toBe(1);
+      expect(JSON.parse(sent.payload).email).toMatchObject({ status: 'CAPTURED', recipients: ['boss@example.com', 'qa@example.com'] });
+      expect((await lastEmail(app, admin)).recipients).toEqual(['boss@example.com', 'qa@example.com']);
 
       const audit = JSON.parse((await call(app, admin, 'GET', '/api/v1/admin/audit-logs')).payload).audit_logs;
       expect(audit.some((a: any) => a.action === 'REPORT_EMAILED')).toBe(true);
@@ -211,9 +212,7 @@ describe('Report emails: settings, outbox, manual sends and schedules', () => {
       expect(after).toMatchObject({ last_status: 'CAPTURED', last_sent_run_ids: [seed.buildId] });
       expect(await runDueSchedules(db, new Date())).toEqual([]);
 
-      const entries = (await outbox(app, admin)).entries;
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({ subject: expect.stringContaining('Weekly digest'), schedule_id: created.id });
+      expect(await lastEmail(app, admin)).toMatchObject({ subject: expect.stringContaining('Weekly digest'), schedule_id: created.id });
 
       // A second instance holding the stale next_run_at loses the claim.
       expect(await repo.claim(created.id, due, '2099-01-01T00:00:00.000Z')).toBe(false);

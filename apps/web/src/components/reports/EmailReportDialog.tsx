@@ -69,7 +69,7 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
     try {
       const data = await post({ sections, recipients, message: message || null });
       setPreview(null);
-      setDone({ status: data.outbox.status, error: data.outbox.error, count: data.outbox.recipients.length });
+      setDone({ status: data.email.status, error: data.email.error, count: data.email.recipients.length });
     } catch (e) {
       setPreview(null);
       setError(e instanceof Error ? e.message : String(e));
@@ -101,10 +101,15 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
                 color: done.status === "FAILED" ? "#fca5a5" : "#86efac",
                 backgroundColor: done.status === "FAILED" ? "#450a0a" : "#052e16",
                 border: `1px solid ${done.status === "FAILED" ? "#991b1b" : "#16a34a"}`,
+                // A long server error wraps and scrolls instead of widening the dialog.
+                overflowWrap: "anywhere",
+                whiteSpace: "pre-wrap",
+                maxHeight: "200px",
+                overflowY: "auto",
               }}
             >
               {done.status === "SENT" && `✓ Sent to ${done.count} recipient${done.count === 1 ? "" : "s"}.`}
-              {done.status === "CAPTURED" && "✓ Captured in the Admin Panel outbox -- no mail server is set up, so it wasn't actually sent."}
+              {done.status === "CAPTURED" && "✓ Captured, not sent -- no mail server is set up yet (Admin Panel → Email)."}
               {done.status === "FAILED" && `Sending failed: ${done.error}`}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -130,7 +135,7 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
               NOTE (OPTIONAL)
               <textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="A few words shown above the report" maxLength={2000} style={{ ...fieldStyle, marginTop: 4 }} />
             </label>
-            {error && <div style={{ fontSize: "12px", color: "#f87171" }}>⚠️ {error}</div>}
+            {error && <div style={{ fontSize: "12px", color: "#f87171", overflowWrap: "anywhere", maxHeight: "160px", overflowY: "auto" }}>⚠️ {error}</div>}
             <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
               <button onClick={doPreview} disabled={busy} style={buttonStyle}>
                 Preview
