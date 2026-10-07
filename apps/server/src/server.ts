@@ -5,7 +5,7 @@ import multipart from '@fastify/multipart';
 import { v4 as uuidv4 } from 'uuid';
 import {
   createDbClient,
-  migration001,
+  migrateToLatest,
   seedCoreLoopData,
   seedRbacRegistry,
   seedDevFixtures,
@@ -37,12 +37,13 @@ import { UserRepository } from '@testify/db';
 // ephemeral, zero-config PGlite (WASM Postgres) instance -- no server, no native bindings,
 // works identically on every machine. Pass a real connectionString (e.g. from DATABASE_URL)
 // to connect to a real Postgres server for production/team deployments. See AGENTS.md.
-export async function createServer(connectionString?: string) {
+export async function createServer(connectionString?: string, options: { db?: Kysely<Database> } = {}) {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: '*' });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
 
-  const db: Kysely<Database> = createDbClient({ connectionString });
+  // `options.db` lets tests start a second server against the same database -- a restart.
+  const db: Kysely<Database> = options.db ?? createDbClient({ connectionString });
 
   // Signing secret for session JWTs (see packages/core/src/security/jwt.ts). Set JWT_SECRET in
   // production -- every server process serving the same sessions must share it, and it must not
@@ -57,12 +58,14 @@ export async function createServer(connectionString?: string) {
     );
   }
 
-  // Run migrations & seed the RBAC registry (roles/permissions/bundles) before any user or
-  // role row gets written, then the initial omnipotent admin user. The core-loop sample
-  // project (SHOP suite/cases/plan/run) is seeded ONLY for the test suite, which builds on its
-  // fixed ids (`seed`); a dev or real server starts with no projects at all, and SEED_SAMPLE_DATA=true
-  // brings the sample back locally if wanted.
-  await migration001.up(db);
+  // Bring the schema up to date (only migrations that haven't run yet -- safe on every start,
+  // including against a database that's already current), then seed the RBAC registry
+  // (roles/permissions/bundles) before any user or role row gets written, then the initial
+  // omnipotent admin user. Every seed below is idempotent too, so restarting against the same
+  // database is a no-op. The core-loop sample project (SHOP suite/cases/plan/run) is seeded
+  // ONLY for the test suite, which builds on its fixed ids (`seed`); a dev or real server starts
+  // with no projects at all, and SEED_SAMPLE_DATA=true brings the sample back locally if wanted.
+  await migrateToLatest(db);
   await seedRbacRegistry(db);
   const seedSampleData = process.env.NODE_ENV === 'test' || process.env.SEED_SAMPLE_DATA === 'true';
   const seed = seedSampleData ? await seedCoreLoopData(db) : null;

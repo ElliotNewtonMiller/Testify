@@ -45,7 +45,7 @@ npm run dev --workspace=apps/web         # Vite dev server on :3000, proxies /ap
 
 There's no root `dev` script that runs both server and web together — start them in two terminals.
 
-The server reads `process.env.DATABASE_URL` for its connection string; unset (the common local case), it falls back to an ephemeral in-memory PGlite instance, so every server restart starts from a fresh seeded DB unless `DATABASE_URL` points at a real Postgres server. There's still no broader `.env` / config loader (the roadmap's Slice 0 called for one under `apps/server/src/config/`; it doesn't exist) — `DATABASE_URL` is the only env var currently read.
+The server reads `process.env.DATABASE_URL` for its connection string. Unset (the common local case), it falls back to an ephemeral in-memory PGlite instance, so every server restart starts from an empty database (only users and the role registry are seeded; no projects) unless `DATABASE_URL` points at a real Postgres server. On every start, `migrateToLatest` applies any schema migrations that haven't run yet. See "Fixed: the schema can be applied more than once" below. There's still no broader `.env` / config loader (the roadmap's Slice 0 called for one under `apps/server/src/config/`; it doesn't exist) — `DATABASE_URL` is the only env var currently read.
 
 ## SQLite support was dropped (2026-09-11) — Postgres-compatible SQL only, everywhere
 
@@ -1081,6 +1081,26 @@ The suite-removal toast now reads e.g. "4 removed from the plan (3 keep their re
 
 **Verification.** Verified live: remove → re-add DEMO2-2. Run 1.0.7 showed it Passed with no REMOVED tag and active buttons; Skip recorded and replaced it as the latest result.
 
+## Fixed: the schema can be applied more than once -- real migration tracking (2026-10-07)
+
+Audit item 1 (`docs/audit_2026-10-07.md`). `createServer` used to call `migration001.up(db)` on every start. That is plain `createTable` with no record of what had run, so against any persistent database the second start crashed ("relation "projects" already exists", reproduced). Schema changes also had no way to reach an existing database, since every change was edited into 001.
+
+- **New `packages/db/src/migrations/index.ts`** wraps Kysely's built-in `Migrator`:
+  - `MIGRATIONS` is the ordered registry (today just `001_initial_schema`).
+  - `migrateToLatest(db)` runs only migrations not yet recorded in `kysely_migration`, and returns the names it applied.
+  - Concurrent starts are serialised by the Postgres advisory lock Kysely takes.
+  - It throws a clear error naming any migration that failed.
+  - It's exported from `@testify/db`; `server.ts` now calls it instead of `migration001.up`.
+- **Adoption of older databases.** A database built by the old startup (all tables, no `kysely_migration`) has 001 recorded as applied, if it matches the current schema (spot-checks `last_email`, `report_schedules`, `test_plan_cases.removed_at`). Otherwise startup stops with "created by an older Testify build ... recreate it".
+- **`createServer(connectionString?, { db? })`** can reuse an existing database, so tests can do a real restart. Every startup seed was already idempotent; the restart test now proves it.
+- **New convention, replacing the old "edit 001 in place" precedent used by many entries above:** never edit a migration that has shipped. Add `packages/db/src/migrations/00N_<name>.ts` (with `up` and `down`) and register it in `MIGRATIONS`. 001 is frozen as of this entry.
+
+**Tests:**
+- `packages/db/tests/migrations.test.ts` (4): fresh build, then two no-op re-runs; adopting a pre-tracking database with its data kept; refusing an incomplete old one; registry order with up/down present.
+- `apps/server/tests/server_restart.test.ts` (1): start, create a project, start a second server on the same database. No duplicated users or roles, the project survives, and login still works.
+
+`npm test`: 625/629. The 4 failures are all in the stale `.claude/worktrees/vigilant-haslett-05b0d0/`.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -1114,6 +1134,7 @@ As of 2026-09-11, Elliot has authorized Claude sessions to commit directly to th
 
 - Treat `docs/` as the source of intent, but verify against code before relying on a described behavior — the docs describe a fuller system than what's built.
 - When a roadmap slice's core-package module (e.g. `rbac/`, `custom-fields/`, `state-machines/`) doesn't exist yet but the roadmap calls for it, prefer building it as its own testable module under `packages/core/src/...` rather than inlining more logic into routes/repositories, to match the intended architecture.
+- **Schema changes go in a new migration**, never into an existing one. Add `packages/db/src/migrations/00N_<name>.ts` (`up` and `down`) and register it in `MIGRATIONS` (`packages/db/src/migrations/index.ts`). Databases record which migrations they've run, so an edit to an applied migration never reaches them. Older entries in this file mention editing `001_initial_schema.ts` "in place"; that was before tracking existed (2026-10-07) and no longer applies.
 - Don't reintroduce a second SQL dialect (e.g. real SQLite) — see "SQLite support was dropped" above. Postgres-compatible SQL only, everywhere.
 - Keep using `npm run <script> --workspace=<path>` (not `pnpm --filter`) for workspace-scoped commands — this repo is npm workspaces, not pnpm/Turborepo. `docs/01_vertical_slices_roadmap.md` now shows this syntax consistently too (rewritten 2026-09-14).
 - Update this file when you fix one of the "Notable gaps" above or materially change the implementation status of a slice, so it stays a reliable map for the next session.
