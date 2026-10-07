@@ -106,6 +106,19 @@ export function AdminPanelModal({
   const [activeTab, setActiveTab] = useState<
     "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "EMAIL" | "AUDIT"
   >("ROSTER");
+  // Each part of the panel needs its own permission; SYSTEM_ADMIN has them all.
+  const myPermissions = currentUser?.permissions || [];
+  const isSystemAdmin = myPermissions.includes("SYSTEM_ADMIN");
+  const canManageUsers = isSystemAdmin || myPermissions.includes("USER_MANAGE");
+  const canManageFields = isSystemAdmin || myPermissions.includes("CUSTOM_FIELD_MANAGE");
+  const canManageTokens = isSystemAdmin || myPermissions.includes("API_TOKEN_MANAGE");
+  const visibleTabs: Array<typeof activeTab> = [
+    ...(canManageUsers ? (["ROSTER", "MATRIX", "TEMPLATES"] as const) : []),
+    ...(canManageFields ? (["CUSTOM_FIELDS"] as const) : []),
+    ...(canManageTokens ? (["API_TOKENS"] as const) : []),
+    ...(isSystemAdmin ? (["EMAIL"] as const) : []),
+    ...(canManageUsers ? (["AUDIT"] as const) : []),
+  ];
   const [users, setUsers] = useState<UserItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
   const [roles, setRoles] = useState<RoleTemplate[]>([]);
@@ -210,11 +223,16 @@ export function AdminPanelModal({
 
   useEffect(() => {
     if (isOpen) {
-      fetchUsers();
-      fetchAuditLogs();
-      fetchRoles();
+      // Only load what this user may see (each list is refused with a 403 otherwise), and
+      // open on the first tab they can use.
+      if (canManageUsers) {
+        fetchUsers();
+        fetchAuditLogs();
+        fetchRoles();
+      }
       fetchPermissionRegistry();
-      fetchCustomFields();
+      if (canManageFields) fetchCustomFields();
+      if (!visibleTabs.includes(activeTab) && visibleTabs.length > 0) setActiveTab(visibleTabs[0]);
     }
   }, [isOpen]);
 
@@ -516,44 +534,49 @@ export function AdminPanelModal({
     }
   };
 
-  const handleSavePrivileges = async () => {
+  // The Matrix tab saves each change as it's made -- there used to be two save buttons in one
+  // panel, and changing a role then clicking the override grid's button silently dropped the
+  // role change. `change` is either a new global role or one project's role ("" = remove it).
+  const saveRoleChange = async (change: { global_role: string } | { project_id: string; role: string }) => {
     if (!selectedUserId) return;
+    const userId = selectedUserId;
+    const prevGlobal = selectedGlobalRole;
+    const prevProjects = selectedProjectRoles;
+    if ("global_role" in change) {
+      setSelectedGlobalRole(change.global_role);
+    } else {
+      setSelectedProjectRoles((prev) => {
+        const next = { ...prev };
+        if (change.role) next[change.project_id] = change.role;
+        else delete next[change.project_id];
+        return next;
+      });
+    }
     setErrorMessage(null);
     setSuccessMessage(null);
     setIsSavingPrivileges(true);
-
-    const project_roles = Object.entries(selectedProjectRoles).map(
-      ([pId, r]) => ({
-        project_id: pId,
-        role: r,
-      }),
-    );
-
     try {
-      const res = await fetch(`/api/v1/admin/users/${selectedUserId}/roles`, {
+      const res = await fetch(`/api/v1/admin/users/${userId}/roles`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({
-          global_role: selectedGlobalRole,
-          project_roles,
-        }),
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(
+          "global_role" in change ? { global_role: change.global_role } : { project_roles: [change] },
+        ),
       });
-
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to update user privileges");
       }
-
       fetchUsers();
       fetchAuditLogs();
-      if (selectedUserId === currentUser?.id) {
+      if (userId === currentUser?.id) {
         onSelfPermissionsChanged?.();
       }
-      flashSuccess("✓ Privilege delegation saved.");
+      flashSuccess("✓ Role saved.");
     } catch (err: any) {
+      // Put the dropdown back to what's really stored.
+      setSelectedGlobalRole(prevGlobal);
+      setSelectedProjectRoles(prevProjects);
       setErrorMessage(err.message || "Failed to update user privileges");
     } finally {
       setIsSavingPrivileges(false);
@@ -564,52 +587,51 @@ export function AdminPanelModal({
   // adds an override forcing the OPPOSITE of whatever the role currently grants; clicking
   // an already-overridden key removes the override, reverting to the role's own value.
   const toggleOverrideKey = (key: string, roleGrantsIt: boolean) => {
-    setOverrideMap((prev) => {
-      const next = { ...prev };
-      if (key in next) {
-        delete next[key];
-      } else {
-        next[key] = !roleGrantsIt;
-      }
-      return next;
-    });
+    if (!selectedUserId) return;
+    const next = { ...overrideMap };
+    if (key in next) {
+      delete next[key];
+    } else {
+      next[key] = !roleGrantsIt;
+    }
+    setOverrideMap(next);
+    saveOverrides(selectedUserId, overrideScope, next);
   };
 
-  const handleSaveOverrides = async () => {
-    if (!selectedUserId) return;
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    setIsSavingOverrides(true);
-
-    const overrides: PermissionOverride[] = Object.entries(overrideMap).map(
-      ([permission_key, is_granted]) => ({ permission_key, is_granted }),
-    );
-
-    try {
-      const res = await fetch(`/api/v1/admin/users/${selectedUserId}/permission-overrides`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ project_id: overrideScope, overrides }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update permission overrides");
-      }
-
-      fetchUsers();
-      fetchAuditLogs();
-      if (selectedUserId === currentUser?.id) {
-        onSelfPermissionsChanged?.();
-      }
-      flashSuccess(
-        `✓ Permission overrides saved (${overrideScope ? "this project" : "Global"}).`,
+  // Saves run one after another, so quick clicks can't arrive out of order (each one replaces
+  // the whole set for that scope).
+  const overrideSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveOverrides = (userId: string, scope: string | null, map: Record<string, boolean>) => {
+    overrideSaveQueue.current = overrideSaveQueue.current.then(async () => {
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      setIsSavingOverrides(true);
+      const overrides: PermissionOverride[] = Object.entries(map).map(
+        ([permission_key, is_granted]) => ({ permission_key, is_granted }),
       );
-    } catch (err: any) {
-      setErrorMessage(err.message || "Failed to update permission overrides");
-    } finally {
-      setIsSavingOverrides(false);
-    }
+      try {
+        const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ project_id: scope, overrides }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "Failed to update permission overrides");
+        }
+        fetchUsers();
+        fetchAuditLogs();
+        if (userId === currentUser?.id) {
+          onSelfPermissionsChanged?.();
+        }
+        flashSuccess(`✓ Override saved (${scope ? "this project" : "Global"}).`);
+      } catch (err: any) {
+        setErrorMessage(err.message || "Failed to update permission overrides");
+        fetchOverrides(userId, scope); // show what's really stored
+      } finally {
+        setIsSavingOverrides(false);
+      }
+    });
   };
 
   // --- Templates tab handlers ---
@@ -989,82 +1011,92 @@ export function AdminPanelModal({
             marginBottom: "16px",
           }}
         >
-          <button
-            onClick={() => setActiveTab("ROSTER")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "ROSTER" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "ROSTER" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            👥 User Roster ({users.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("MATRIX")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "MATRIX" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "MATRIX" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            🔑 Privilege & Access Matrix
-          </button>
-          <button
-            onClick={() => setActiveTab("TEMPLATES")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "TEMPLATES" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "TEMPLATES" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            🎭 Role Templates ({roles.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("CUSTOM_FIELDS")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "CUSTOM_FIELDS" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "CUSTOM_FIELDS" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            🏷️ Custom Fields ({customFields.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("API_TOKENS")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "API_TOKENS" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "API_TOKENS" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            🔑 API Tokens
-          </button>
-          {currentUser?.permissions?.includes("SYSTEM_ADMIN") && (
+          {canManageUsers && (
+            <button
+              onClick={() => setActiveTab("ROSTER")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "ROSTER" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "ROSTER" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              👥 User Roster ({users.length})
+            </button>
+          )}
+          {canManageUsers && (
+            <button
+              onClick={() => setActiveTab("MATRIX")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "MATRIX" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "MATRIX" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🔑 Privilege & Access Matrix
+            </button>
+          )}
+          {canManageUsers && (
+            <button
+              onClick={() => setActiveTab("TEMPLATES")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "TEMPLATES" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "TEMPLATES" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🎭 Role Templates ({roles.length})
+            </button>
+          )}
+          {canManageFields && (
+            <button
+              onClick={() => setActiveTab("CUSTOM_FIELDS")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "CUSTOM_FIELDS" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "CUSTOM_FIELDS" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🏷️ Custom Fields ({customFields.length})
+            </button>
+          )}
+          {canManageTokens && (
+            <button
+              onClick={() => setActiveTab("API_TOKENS")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "API_TOKENS" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "API_TOKENS" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🔑 API Tokens
+            </button>
+          )}
+          {isSystemAdmin && (
             <button
               onClick={() => setActiveTab("EMAIL")}
               style={{
@@ -1080,21 +1112,23 @@ export function AdminPanelModal({
               ✉ Email
             </button>
           )}
-          <button
-            onClick={() => setActiveTab("AUDIT")}
-            style={{
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              border: "none",
-              borderBottom:
-                activeTab === "AUDIT" ? "2px solid #38bdf8" : "none",
-              color: activeTab === "AUDIT" ? "#38bdf8" : "#94a3b8",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            📋 Security Audit Log
-          </button>
+          {canManageUsers && (
+            <button
+              onClick={() => setActiveTab("AUDIT")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom:
+                  activeTab === "AUDIT" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "AUDIT" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              📋 Security Audit Log
+            </button>
+          )}
         </div>
 
         {errorMessage && (
@@ -1474,6 +1508,10 @@ export function AdminPanelModal({
                     Privilege Delegation for{" "}
                     {users.find((u) => u.id === selectedUserId)?.username}
                   </h3>
+                  <div style={{ fontSize: "11px", color: "#64748b", margin: "-4px 0 12px 0" }}>
+                    Changes on this tab save as soon as you make them.
+                    {(isSavingPrivileges || isSavingOverrides) && <span style={{ color: "#94a3b8" }}> Saving…</span>}
+                  </div>
 
                   <div style={{ marginBottom: "16px" }}>
                     <label
@@ -1489,7 +1527,8 @@ export function AdminPanelModal({
                     </label>
                     <select
                       value={selectedGlobalRole}
-                      onChange={(e) => setSelectedGlobalRole(e.target.value)}
+                      disabled={isSavingPrivileges}
+                      onChange={(e) => saveRoleChange({ global_role: e.target.value })}
                       style={{
                         padding: "6px 12px",
                         backgroundColor: "#0f172a",
@@ -1565,15 +1604,8 @@ export function AdminPanelModal({
                         </div>
                         <select
                           value={selectedProjectRoles[p.id] || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setSelectedProjectRoles((prev) => {
-                              const next = { ...prev };
-                              if (val) next[p.id] = val;
-                              else delete next[p.id];
-                              return next;
-                            });
-                          }}
+                          disabled={isSavingPrivileges}
+                          onChange={(e) => saveRoleChange({ project_id: p.id, role: e.target.value })}
                           style={{
                             padding: "4px 8px",
                             backgroundColor: "#0f172a",
@@ -1593,24 +1625,6 @@ export function AdminPanelModal({
                       </div>
                     ))}
                   </div>
-
-                  <button
-                    onClick={handleSavePrivileges}
-                    disabled={isSavingPrivileges}
-                    style={{
-                      padding: "8px 16px",
-                      backgroundColor: isSavingPrivileges ? "#166534" : "#16a34a",
-                      border: "none",
-                      borderRadius: "4px",
-                      color: "#fff",
-                      fontWeight: 600,
-                      fontSize: "12px",
-                      cursor: isSavingPrivileges ? "default" : "pointer",
-                      opacity: isSavingPrivileges ? 0.8 : 1,
-                    }}
-                  >
-                    {isSavingPrivileges ? "Saving..." : "Save Privilege Delegation"}
-                  </button>
 
                   {/* Individual Permission Overrides -- global or per-project, layered on
                       top of whatever the role above already grants. */}
@@ -1641,7 +1655,7 @@ export function AdminPanelModal({
                     >
                       Force-grant or force-revoke specific permissions for this user, on top
                       of whatever their role already gives them. A project-scoped override
-                      wins over a Global one for the same key.
+                      wins over a Global one for the same key. Each click saves.
                     </span>
 
                     <div style={{ marginBottom: "10px" }}>
@@ -1751,26 +1765,6 @@ export function AdminPanelModal({
                           ),
                         )}
 
-                        <button
-                          onClick={handleSaveOverrides}
-                          disabled={isSavingOverrides}
-                          style={{
-                            padding: "8px 16px",
-                            backgroundColor: isSavingOverrides ? "#92400e" : "#d97706",
-                            border: "none",
-                            borderRadius: "4px",
-                            color: "#fff",
-                            fontWeight: 600,
-                            fontSize: "12px",
-                            cursor: isSavingOverrides ? "default" : "pointer",
-                            opacity: isSavingOverrides ? 0.8 : 1,
-                            marginTop: "8px",
-                          }}
-                        >
-                          {isSavingOverrides
-                            ? "Saving..."
-                            : `Save Overrides (${overrideScope ? "This Project" : "Global"})`}
-                        </button>
                       </>
                     )}
                   </div>

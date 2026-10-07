@@ -53,8 +53,13 @@ describe('Admin: template roles & per-user permission overrides', () => {
     const { token: adminToken } = await loginAsAdmin(app);
     const { token: viewerToken } = await createAndLoginViewer(app, adminToken);
 
+    // Except the permission-name list, which any signed-in user may read (the API Tokens and
+    // Custom Fields tabs need it without USER_MANAGE) -- but not anonymously.
+    const registry = await app.inject({ method: 'GET', url: '/api/v1/admin/permissions', headers: { authorization: `Bearer ${viewerToken}` } });
+    expect(registry.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/admin/permissions' })).statusCode).toBe(401);
+
     const attempts = [
-      { method: 'GET', url: '/api/v1/admin/permissions' },
       { method: 'GET', url: '/api/v1/admin/roles' },
       { method: 'POST', url: '/api/v1/admin/roles', payload: { name: 'X', permission_keys: [] } },
       { method: 'PUT', url: '/api/v1/admin/roles/nonexistent', payload: { name: 'X' } },

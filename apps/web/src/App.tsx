@@ -503,6 +503,9 @@ export default function App() {
   // Shown in the same banner slot as deletePlanPrompt/deleteRunPrompt when the "+ Create New
   // Test Run" button is clicked with no plan selected -- a Run can never exist without one.
   const [noPlanSetWarning, setNoPlanSetWarning] = useState(false);
+  // Shown as a yellow banner when the server refuses to record a result (403): easy to miss as
+  // a status-bar message, especially when recording with the keyboard.
+  const [executionDenied, setExecutionDenied] = useState(false);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -1601,6 +1604,11 @@ export default function App() {
     }
   }, [currentUser, loadProjects]);
 
+  // A refusal in one project says nothing about the next one.
+  useEffect(() => {
+    setExecutionDenied(false);
+  }, [selectedProjectId]);
+
   // Real plan list for whichever project is currently selected.
   useEffect(() => {
     if (currentUser && selectedProjectId) {
@@ -2419,6 +2427,21 @@ export default function App() {
         return { ...prev, cases: updatedCases };
       });
 
+      // If the server doesn't save it, put the case back as it was -- otherwise the grid would
+      // keep showing a result that was never recorded.
+      const revertOptimisticUpdate = () =>
+        setWorkspace((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            cases: prev.cases.map((c) =>
+              c.plan_case_id === targetCase.plan_case_id
+                ? { ...c, latest_verdict: targetCase.latest_verdict, latest_notes: targetCase.latest_notes }
+                : c,
+            ),
+          };
+        });
+
       setSyncStatus(`Syncing verdict for ${targetCase.external_id}...`);
 
       // 2. DISPATCH BACKGROUND API CALL
@@ -2445,6 +2468,7 @@ export default function App() {
         });
 
         if (response.ok) {
+          setExecutionDenied(false);
           setSyncStatus(
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
@@ -2465,11 +2489,15 @@ export default function App() {
           setUserPermissions([]);
           setSyncStatus("Session expired -- please log in again");
         } else if (response.status === 403) {
+          revertOptimisticUpdate();
           setSyncStatus("Not permitted: your role can't record executions");
+          setExecutionDenied(true);
         } else {
+          revertOptimisticUpdate();
           setSyncStatus("API Error recording verdict");
         }
       } catch (err) {
+        revertOptimisticUpdate();
         setSyncStatus("Network Error");
       }
     },
@@ -2604,7 +2632,11 @@ export default function App() {
     onFocusSearch: () => {
       if (searchInputRef.current) searchInputRef.current.focus();
     },
-    onPermissionDeniedToast: (msg) => showToast(msg),
+    onPermissionDeniedToast: (msg) => {
+      // No permission to record results at all: the same yellow banner as a server refusal.
+      if (msg.includes("EXECUTE_RUN")) setExecutionDenied(true);
+      else showToast(msg);
+    },
     blockVerdictsReason: verdictBlockReason ?? undefined,
     notesInputRef,
   });
@@ -2966,6 +2998,12 @@ export default function App() {
   const hasUserManagePermission =
     userPermissions.includes("USER_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
+  // The Admin Panel holds users/roles, custom fields and API tokens -- open to anyone who
+  // manages any of them (each tab is then shown only to those with its permission).
+  const hasAdminPanelAccess =
+    hasUserManagePermission ||
+    userPermissions.includes("CUSTOM_FIELD_MANAGE") ||
+    userPermissions.includes("API_TOKEN_MANAGE");
   const hasPlanManagePermission =
     userPermissions.includes("PLAN_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
@@ -3402,7 +3440,7 @@ export default function App() {
               {appView === "REPORTS" ? "← Back to workspace" : "📊 Reports"}
             </button>
           )}
-          {hasUserManagePermission && (
+          {hasAdminPanelAccess && (
             <button
               onClick={() => setAdminPanelOpen(true)}
               style={{
@@ -3693,6 +3731,44 @@ export default function App() {
             ⚠️ No test run
           </div>
           <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{NO_RUN_MESSAGE}</div>
+        </div>
+      )}
+
+      {executionDenied && (
+        <div
+          role="alert"
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
+            ⚠️ Not permitted
+          </div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
+            Your role can't record executions in this project, so that result was not saved. Ask an administrator if you need to.
+          </div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setExecutionDenied(false)}
+              style={{
+                padding: "5px 12px",
+                backgroundColor: "#334155",
+                border: "none",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              OK
+            </button>
+          </div>
         </div>
       )}
 

@@ -303,7 +303,9 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
   // GET /api/v1/admin/permissions - The permission-key registry, for rendering toggle
   // grids grouped by module. Read-only, no audit entry.
-  app.get('/api/v1/admin/permissions', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+  // Any signed-in user: it's only the list of permission names, and the API Tokens and Custom
+  // Fields tabs (API_TOKEN_MANAGE / CUSTOM_FIELD_MANAGE, not USER_MANAGE) need it too.
+  app.get('/api/v1/admin/permissions', { preHandler: async (request, reply) => { await authenticateRequest(request, reply, db, jwtSecret); } }, async () => {
     return { permissions: roleRepo.listPermissionRegistry() };
   });
 
