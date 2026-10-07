@@ -39,13 +39,13 @@ Workspaces are declared via npm (`package.json` → `"workspaces": ["packages/*"
 npm install                              # root install, hoists workspace deps
 npm test                                 # runs vitest across all workspaces (root script)
 npm run test --workspace=packages/db     # single workspace
-npm run dev --workspace=apps/server      # Fastify API on :3001 (tsx, no build step)
+npm run dev --workspace=apps/server      # Fastify API on :3001 (tsx, no build step; in-memory DB unless DATABASE_URL is set)
 npm run dev --workspace=apps/web         # Vite dev server on :3000, proxies /api -> :3001
 ```
 
 There's no root `dev` script that runs both server and web together — start them in two terminals.
 
-The server reads `process.env.DATABASE_URL` for its connection string. Unset (the common local case), it falls back to an ephemeral in-memory PGlite instance, so every server restart starts from an empty database (only users and the role registry are seeded; no projects) unless `DATABASE_URL` points at a real Postgres server. On every start, `migrateToLatest` applies any schema migrations that haven't run yet. See "Fixed: the schema can be applied more than once" below. There's still no broader `.env` / config loader (the roadmap's Slice 0 called for one under `apps/server/src/config/`; it doesn't exist) — `DATABASE_URL` is the only env var currently read.
+The server reads `DATABASE_URL` at startup (`apps/server/src/config.ts`), and never picks a database silently: `postgres://...`/`postgresql://...` connects to a real Postgres server; `memory` uses a throwaway in-memory PGlite instance (development only, refused when `NODE_ENV=production`, with a startup warning); unset, blank or anything else stops the server with a message saying what to set. `npm run dev --workspace=apps/server` (entry `src/dev.ts`) defaults `DATABASE_URL` to `memory` when it's unset, so local dev still needs no setup and every dev restart starts from an empty database (only users and the role registry are seeded; no projects). `npm start` has no such default. On every start, `migrateToLatest` applies any schema migrations that haven't run yet. See "Fixed: the schema can be applied more than once" and "Fixed: a missing DATABASE_URL no longer silently uses a throwaway database" below. Besides `DATABASE_URL`, the server reads `JWT_SECRET`, `PORT`, `NODE_ENV` and the seeding switches `SEED_SAMPLE_DATA`/`SEED_DEV_FIXTURES`; there's no `.env` loader.
 
 ## SQLite support was dropped (2026-09-11) — Postgres-compatible SQL only, everywhere
 
@@ -1100,6 +1100,16 @@ Audit item 1 (`docs/audit_2026-10-07.md`). `createServer` used to call `migratio
 - `apps/server/tests/server_restart.test.ts` (1): start, create a project, start a second server on the same database. No duplicated users or roles, the project survives, and login still works.
 
 `npm test`: 625/629. The 4 failures are all in the stale `.claude/worktrees/vigilant-haslett-05b0d0/`.
+
+## Fixed: a missing DATABASE_URL no longer silently uses a throwaway database (2026-10-07)
+
+Audit item 2 (`docs/audit_2026-10-07.md`). With `DATABASE_URL` unset the server used to fall back to an in-memory PGlite database without a word, so a deployment that forgot to set it looked healthy and lost all its data on the first restart.
+
+- New `apps/server/src/config.ts` (`resolveDatabaseConfig`, `ConfigError`): `postgres://`/`postgresql://` URLs connect to Postgres; the literal `memory` selects the in-memory database, and is refused when `NODE_ENV=production`; unset, blank or any other value (e.g. a typo) is a `ConfigError` naming what to set. The startup code at the bottom of `server.ts` prints `[testify] <message>` and exits with code 1, before opening any database; with `memory` it prints a warning that data is lost when the server stops.
+- `npm run dev --workspace=apps/server` now runs `src/dev.ts`, which sets `DATABASE_URL=memory` only if it's unset and then loads `server.ts`. This keeps local dev zero-setup without an env-var prefix in the npm script, which wouldn't work on Windows. `npm start` (still `tsx src/server.ts`) requires `DATABASE_URL`. `.claude/launch.json` uses `npm run dev`, so it needed no change.
+- `createServer(connectionString?)` and `createDbClient()` are unchanged: with no connection string they still use in-memory PGlite. That's the programmatic API the tests use; the strictness lives only in the startup path that reads the environment.
+
+New tests: `apps/server/tests/database_config.test.ts` (5 -- unset/blank refused, Postgres URLs accepted and trimmed, `memory` allowed except in production, non-Postgres values rejected, and a real `tsx src/server.ts` child process with no `DATABASE_URL` exits 1 with the message). Verified: the dev server starts through `src/dev.ts` with the in-memory warning in its log.
 
 ## Implementation status vs. the roadmap
 

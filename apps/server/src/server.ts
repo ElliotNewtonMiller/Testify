@@ -31,12 +31,14 @@ import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
+import { resolveDatabaseConfig, ConfigError } from './config.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
 // ephemeral, zero-config PGlite (WASM Postgres) instance -- no server, no native bindings,
-// works identically on every machine. Pass a real connectionString (e.g. from DATABASE_URL)
-// to connect to a real Postgres server for production/team deployments. See AGENTS.md.
+// works identically on every machine; tests rely on that. Pass a real connectionString to
+// connect to a real Postgres server. The startup code at the bottom of this file decides which
+// from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
 export async function createServer(connectionString?: string, options: { db?: Kysely<Database> } = {}) {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: '*' });
@@ -345,7 +347,23 @@ export async function createServer(connectionString?: string, options: { db?: Ky
 }
 
 if (process.env.NODE_ENV !== 'test') {
-  const { app, db } = await createServer(process.env.DATABASE_URL);
+  // Refuse to start without an explicit database (see config.ts) rather than quietly using a
+  // throwaway one.
+  let dbConfig;
+  try {
+    dbConfig = resolveDatabaseConfig();
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    console.error(`[testify] ${err.message}`);
+    process.exit(1);
+  }
+  if (dbConfig.inMemory) {
+    console.warn(
+      '[testify] Using a throwaway in-memory database (DATABASE_URL=memory). All data is lost when the server stops. ' +
+        'Set DATABASE_URL to a PostgreSQL connection string to keep your data.'
+    );
+  }
+  const { app, db } = await createServer(dbConfig.connectionString);
   const port = Number(process.env.PORT) || 3001;
   app.listen({ port, host: '0.0.0.0' }, (err, address) => {
     if (err) {

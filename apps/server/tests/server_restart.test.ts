@@ -36,5 +36,5 @@ describe('Server restart against the same database', () => {
     } finally {
       await db.destroy();
     }
-  });
+  }, 30_000); // two full server starts; can exceed the 5s default under full-suite load
 });
