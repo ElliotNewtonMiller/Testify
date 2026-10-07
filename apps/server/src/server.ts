@@ -349,20 +349,6 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     });
   });
 
-  // GET /api/v1/executions/verify - Verification endpoint for database assertions
-  app.get('/api/v1/executions/verify', async () => {
-    const executions = await db.selectFrom('executions').selectAll().orderBy('created_at', 'desc').execute();
-    const steps = await db.selectFrom('execution_steps').selectAll().execute();
-    const auditLogs = await db.selectFrom('audit_logs').selectAll().execute();
-
-    return {
-      total_executions: executions.length,
-      executions,
-      steps,
-      auditLogs,
-    };
-  });
-
   return { app, db, seed };
 }
 

@@ -1127,6 +1127,10 @@ Audit item 3 (`docs/audit_2026-10-07.md`), and item 25 along with it. Every data
 
 New tests: `apps/server/tests/initial_admin.test.ts` (6 -- the three password sources incl. a weak `ADMIN_PASSWORD`; a flagged user is blocked from `/projects` and MCP but can reach `/auth/me`, can't skip, reuse or weaken the password, then works with the new one and the old one stops working; login doesn't recreate an admin; and a "real database" start prints a generated password that logs in flagged, seeds no dev fixtures, and prints nothing on restart). `packages/db/tests/user_and_rbac.test.ts` +1, `migrations.test.ts` updated for 002. All 589 tests in this repo pass; the old `.claude/worktrees/vigilant-haslett-05b0d0` copy now fails 52 (its server calls `seedInitialAdmin()` the old way) -- audit item 35.
 
+## Removed: the unauthenticated `GET /api/v1/executions/verify` route (2026-10-07)
+
+Audit item 4 (`docs/audit_2026-10-07.md`). The route needed no login and returned every execution, step result and audit log row in the database. Nothing in the app used it since the "DB verification stats" footer was removed (2026-10-01); only `apps/server/tests/core_loop_e2e.test.ts` called it. Deleted from `server.ts` rather than put behind a permission -- audit logs are already available to admins through `GET /api/v1/admin/audit-logs`. The test now reads those tables directly (`readExecutionTables`), and a new case asserts the route returns 404. This also covers the `executions/verify` half of audit item 34; the other legacy route, `GET /api/v1/workspace`, is still there.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

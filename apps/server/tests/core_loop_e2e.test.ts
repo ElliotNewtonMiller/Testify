@@ -14,6 +14,15 @@ describe('Core Operational Loop E2E Integration Test', () => {
     await serverInstance.db.destroy();
   });
 
+  /** Reads every result, step result and audit row straight from the database. (This used to be a
+   * public GET /api/v1/executions/verify route -- removed: it needed no login and dumped everything.) */
+  async function readExecutionTables(db: Kysely<Database>) {
+    const executions = await db.selectFrom('executions').selectAll().orderBy('created_at', 'desc').execute();
+    const steps = await db.selectFrom('execution_steps').selectAll().execute();
+    const auditLogs = await db.selectFrom('audit_logs').selectAll().execute();
+    return { total_executions: executions.length, executions, steps, auditLogs };
+  }
+
   /** Logs in as the seeded initial admin and returns a real, signed Bearer token + user id. */
   async function loginAsAdmin(app: any): Promise<{ token: string; userId: string }> {
     const res = await app.inject({
@@ -95,13 +104,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(failData.verdict).toBe('FAILED');
 
     // 4. Verify Immutable Database Snapshots & Audit Trail
-    const verifyRes = await app.inject({
-      method: 'GET',
-      url: '/api/v1/executions/verify',
-    });
-
-    expect(verifyRes.statusCode).toBe(200);
-    const verification = JSON.parse(verifyRes.body);
+    const verification: any = await readExecutionTables(db);
 
     expect(verification.total_executions).toBe(2);
 
@@ -145,7 +148,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
   });
 
   it('rejects execution recording with no token, and for an authenticated user without EXECUTE_RUN', async () => {
-    const { app, seed } = serverInstance;
+    const { app, db, seed } = serverInstance;
     const { token: adminToken } = await loginAsAdmin(app);
 
     const workspaceRes = await app.inject({ method: 'GET', url: '/api/v1/workspace' });
@@ -189,7 +192,11 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(forbiddenRes.statusCode).toBe(403);
 
     // Neither attempt should have recorded an execution.
-    const verifyRes = await app.inject({ method: 'GET', url: '/api/v1/executions/verify' });
-    expect(JSON.parse(verifyRes.body).total_executions).toBe(0);
+    expect((await readExecutionTables(db)).total_executions).toBe(0);
+  });
+
+  it('has no unauthenticated route that dumps results and audit logs', async () => {
+    const res = await serverInstance.app.inject({ method: 'GET', url: '/api/v1/executions/verify' });
+    expect(res.statusCode).toBe(404);
   });
 });
