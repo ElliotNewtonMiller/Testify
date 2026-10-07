@@ -9,6 +9,8 @@ export interface TestCaseGridItem {
   execution_type?: string;
   version_number?: number;
   latest_verdict: 'UNTESTED' | 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
+  /** Removed from the plan after this run recorded its result: shown read-only. */
+  removed_from_plan?: boolean;
 }
 
 export interface TestCaseQueueGridProps {
@@ -234,6 +236,15 @@ export const TestCaseQueueGrid: React.FC<TestCaseQueueGridProps> = ({
                 >
                   {c.title}
                 </span>
+
+                {c.removed_from_plan && (
+                  <span
+                    title="Removed from this test plan. Its result here is kept, but no new results can be recorded."
+                    style={{ flexShrink: 0, fontSize: '9px', fontWeight: 700, color: '#fbbf24', border: '1px solid #92400e', borderRadius: '3px', padding: '0 4px' }}
+                  >
+                    REMOVED
+                  </span>
+                )}
 
                 {/* Priority Badge */}
                 {c.priority && (

@@ -75,6 +75,9 @@ export interface FinalResultRow {
   source: string | null;
   runner: string | null; // JSON
   execution_timestamp: string | null;
+  /** The case was removed from the plan after it had results; it only appears in runs that
+   * recorded one. */
+  removed_from_plan: boolean;
   /** Executions recorded for this case in this run (re-runs/retries add rows). 0 = untested. */
   attempts: number;
   had_pass: boolean;
@@ -268,15 +271,20 @@ export class ExecutionRepository {
    * window over (run, plan case) picks the latest execution (execution_timestamp desc,
    * created_at desc tie-break) and also counts the attempts and whether any attempt passed
    * or failed (pass-after-retry flakiness needs those). Plan cases with no execution in a run
-   * get an all-null UNTESTED row, so totals always reflect the plan's current case list.
-   * Rows are returned in `runIds` order.
+   * get an all-null UNTESTED row, so totals reflect the plan's current case list.
+   *
+   * Which cases a run contains: every active link, plus any **retired** link (a case removed
+   * from the plan after it had results) that has a result in that run -- so old runs keep the
+   * results they recorded and later runs don't list the case. One row per case per run: if a
+   * case was removed and re-added (two links), the link with a result in that run wins,
+   * otherwise the active one. Rows are returned in `runIds` order.
    */
   async getFinalResultsForRuns(planId: string, runIds: string[]): Promise<FinalResultRow[]> {
     if (runIds.length === 0) return [];
 
     const planCases = await this.db
       .selectFrom('test_plan_cases')
-      .select(['id as plan_case_id', 'test_case_id'])
+      .select(['id as plan_case_id', 'test_case_id', 'removed_at'])
       .where('test_plan_id', '=', planId)
       .orderBy('position', 'asc')
       .orderBy('created_at', 'asc')
@@ -326,9 +334,28 @@ export class ExecutionRepository {
     const byKey = new Map(ranked.map((r) => [`${r.run_id}|${r.plan_case_id}`, r]));
     const results: FinalResultRow[] = [];
     for (const runId of runIds) {
+      // Pick this run's link per case (see the doc comment above).
+      const chosen = new Map<string, (typeof planCases)[number]>();
       for (const pc of planCases) {
+        const hasResult = byKey.has(`${runId}|${pc.plan_case_id}`);
+        if (pc.removed_at && !hasResult) continue; // retired and never run here
+        const current = chosen.get(pc.test_case_id);
+        if (!current) {
+          chosen.set(pc.test_case_id, pc);
+          continue;
+        }
+        const currentResult = byKey.get(`${runId}|${current.plan_case_id}`);
+        const thisResult = byKey.get(`${runId}|${pc.plan_case_id}`);
+        if (thisResult && (!currentResult || (thisResult.execution_timestamp ?? '') > (currentResult.execution_timestamp ?? ''))) {
+          chosen.set(pc.test_case_id, pc);
+        } else if (!thisResult && !currentResult && !pc.removed_at) {
+          chosen.set(pc.test_case_id, pc);
+        }
+      }
+      for (const pc of chosen.values()) {
         const r = byKey.get(`${runId}|${pc.plan_case_id}`);
         results.push({
+          removed_from_plan: Boolean(pc.removed_at),
           run_id: runId,
           plan_case_id: pc.plan_case_id,
           test_case_id: pc.test_case_id,

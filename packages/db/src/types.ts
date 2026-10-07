@@ -91,6 +91,10 @@ export interface TestPlanCasesTable {
   custom_fields_snapshot: Generated<string>;
   created_at: string;
   updated_at: string;
+  /** Set when a case that already had results was removed from the plan (the link is
+   * retired, not deleted, so its results stay in the runs that recorded them). */
+  removed_at: string | null;
+  removed_by: string | null;
 }
 
 export interface ExecutionsTable {

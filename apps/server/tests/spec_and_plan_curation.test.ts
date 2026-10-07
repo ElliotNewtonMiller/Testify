@@ -301,38 +301,91 @@ describe('Specification / Plan Curation Routes', () => {
     expect(pinned[0].test_case_id).toBe(approvedCase.id);
   });
 
-  it('removing a plan-case with recorded executions is rejected with 422 CASE_HAS_EXECUTIONS', async () => {
-    const { app, seed } = serverInstance;
+  it('removing a case that has results asks to confirm, then retires it: old runs keep its result, new runs drop it', async () => {
+    const { app, db, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+    const queue = async (buildId: string) =>
+      JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${buildId}`, headers: auth })).payload).cases;
 
-    const planCasesRes = await app.inject({
-      method: 'GET',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
-      headers: { authorization: `Bearer ${token}` },
-    });
-    const planCases = JSON.parse(planCasesRes.payload).cases;
-    const firstPlanCase = planCases.find((c: any) => c.case_id === seed.caseIds[0]);
-
-    const execRes = await app.inject({
-      method: 'POST',
-      url: '/api/v1/executions',
-      headers: { authorization: `Bearer ${token}` },
-      payload: {
-        build_id: seed.buildId,
-        test_plan_case_id: firstPlanCase.plan_case_id,
-        verdict: 'PASSED',
-      },
-    });
+    const caseId = seed.caseIds[0];
+    const linkId = (await queue(seed.buildId)).find((c: any) => c.case_id === caseId).plan_case_id;
+    const execRes = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: linkId, verdict: 'FAILED' } });
     expect(execRes.statusCode).toBe(201);
 
-    const removeRes = await app.inject({
-      method: 'DELETE',
-      url: `/api/v1/test-plans/${seed.planId}/cases/${seed.caseIds[0]}`,
-      headers: { authorization: `Bearer ${token}` },
-    });
+    // Without force: nothing changes, and the counts come back for a confirmation.
+    const ask = await app.inject({ method: 'DELETE', url: `/api/v1/test-plans/${seed.planId}/cases/${caseId}`, headers: auth });
+    expect(ask.statusCode).toBe(409);
+    const askBody = JSON.parse(ask.payload);
+    expect(askBody.code).toBe('CASE_HAS_RESULTS');
+    expect(askBody.detail).toContain('has 1 result in 1 run');
+    expect((await queue(seed.buildId)).some((c: any) => c.case_id === caseId)).toBe(true);
 
-    expect(removeRes.statusCode).toBe(422);
-    expect(JSON.parse(removeRes.payload).code).toBe('CASE_HAS_EXECUTIONS');
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/test-plans/${seed.planId}/cases/${caseId}?force=true`, headers: auth });
+    expect(removed.statusCode).toBe(204);
+    const link = await db.selectFrom('test_plan_cases').selectAll().where('id', '=', linkId).executeTakeFirstOrThrow();
+    expect(link.removed_at).toBeTruthy();
+    const audit = JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/admin/audit-logs', headers: auth })).payload).audit_logs;
+    expect(audit.some((a: any) => a.action === 'PLAN_CASE_RETIRED')).toBe(true);
+
+    // Gone from the plan (Spec mode's In Plan)...
+    expect((await new TestPlanRepository(db).getPinnedCases(seed.planId)).some((pc) => pc.test_case_id === caseId)).toBe(false);
+    // ...still in the old run with its result, flagged; recording more is refused.
+    const old = (await queue(seed.buildId)).find((c: any) => c.case_id === caseId);
+    expect(old).toMatchObject({ removed_from_plan: true, latest_verdict: 'FAILED' });
+    const again = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: linkId, verdict: 'PASSED' } });
+    expect(again.statusCode).toBe(422);
+    expect(JSON.parse(again.payload).code).toBe('CASE_REMOVED_FROM_PLAN');
+    const extId = (await db.selectFrom('test_cases').select('external_id').where('id', '=', caseId).executeTakeFirstOrThrow()).external_id;
+    const batch = await app.inject({
+      method: 'POST',
+      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+      headers: auth,
+      payload: { executions: [{ case_identifier: { external_id: extId }, verdict: 'PASSED' }] },
+    });
+    expect(JSON.parse(batch.payload).results[0]).toMatchObject({ status: 422, error: expect.stringContaining('removed from this test plan') });
+    expect((await new TestPlanRepository(db).getPinnedCases(seed.planId)).some((pc) => pc.test_case_id === caseId)).toBe(false); // not re-linked
+
+    // The old run's report still counts it; a new run doesn't contain it.
+    const summary = JSON.parse(
+      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/run_summary`, headers: auth, payload: { run_id: seed.buildId } })).payload
+    );
+    expect(summary.summary).toMatchObject({ total: seed.caseIds.length, failed: 1 });
+    const newRun = await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`, headers: auth, payload: { name: 'After removal' } });
+    const newRunId = JSON.parse(newRun.payload).build.id;
+    const newQueue = await queue(newRunId);
+    expect(newQueue).toHaveLength(seed.caseIds.length - 1);
+    expect(newQueue.some((c: any) => c.case_id === caseId)).toBe(false);
+
+    // Adding it back creates a fresh link that new runs pick up; the old run keeps the old one.
+    const readd = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${seed.planId}/cases`, headers: auth, payload: { test_case_id: caseId } });
+    expect(readd.statusCode).toBe(201);
+    const fresh = (await queue(newRunId)).find((c: any) => c.case_id === caseId);
+    expect(fresh).toMatchObject({ removed_from_plan: false, latest_verdict: 'UNTESTED' });
+    expect(fresh.plan_case_id).not.toBe(linkId);
+    const oldAgain = (await queue(seed.buildId)).filter((c: any) => c.case_id === caseId);
+    expect(oldAgain).toHaveLength(1); // one row per case per run
+    expect(oldAgain[0]).toMatchObject({ plan_case_id: linkId, latest_verdict: 'FAILED' });
+  });
+
+  it('suite cascade remove asks to confirm when cases have results, then retires those and unlinks the rest', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const auth = { authorization: `Bearer ${token}` };
+    const cases = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers: auth })).payload).cases;
+    await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: cases[0].plan_case_id, verdict: 'PASSED' } });
+
+    const url = `/api/v1/test-plans/${seed.planId}/suites/${seed.suiteId}/cascade`;
+    const ask = await app.inject({ method: 'POST', url, headers: auth, payload: { action: 'REMOVE' } });
+    expect(ask.statusCode).toBe(409);
+    expect(JSON.parse(ask.payload).detail).toMatch(/^1 case in suite .* has 1 result in 1 run\. Remove it/);
+
+    const done = await app.inject({ method: 'POST', url, headers: auth, payload: { action: 'REMOVE', force: true } });
+    expect(done.statusCode).toBe(200);
+    expect(JSON.parse(done.payload)).toMatchObject({ removed: seed.caseIds.length - 1, retired: 1 });
+    const after = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers: auth })).payload).cases;
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ removed_from_plan: true, latest_verdict: 'PASSED' });
   });
 
   it('GET /api/v1/test-plans/:planId/cases surfaces the latest execution notes, not just the verdict', async () => {

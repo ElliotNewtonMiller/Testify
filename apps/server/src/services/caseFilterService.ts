@@ -232,7 +232,8 @@ export class CaseFilterService {
         execution_type: c.execution_type,
         version_status: c.latest_version?.status ?? null,
         in_plan: inPlanCaseIds.has(c.id),
-        verdict: inPlanCaseIds.has(c.id) ? verdictByCaseId.get(c.id) ?? 'UNTESTED' : null,
+        // Every case the run contains (incl. one removed from the plan that has a result here).
+        verdict: verdictByCaseId.has(c.id) ? verdictByCaseId.get(c.id) ?? 'UNTESTED' : null,
       };
       if (needsCaseCf) {
         for (const e of (caseValues.get(c.id) ?? []) as Array<{ definition: { id: string }; value: unknown }>) {

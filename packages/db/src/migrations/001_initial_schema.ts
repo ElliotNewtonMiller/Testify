@@ -119,8 +119,14 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('custom_fields_snapshot', 'text', (col) => col.notNull().defaultTo('{}'))
     .addColumn('created_at', 'varchar(30)', (col) => col.notNull())
     .addColumn('updated_at', 'varchar(30)', (col) => col.notNull())
-    .addUniqueConstraint('uq_plan_case', ['test_plan_id', 'test_case_id'])
+    // Removing a case that already has results retires its link instead of deleting it: the
+    // results keep pointing here, so old runs keep showing them. See TestPlanRepository.
+    .addColumn('removed_at', 'varchar(30)')
+    .addColumn('removed_by', 'varchar(36)')
     .execute();
+  // One ACTIVE link per case per plan; any number of retired ones (re-adding a removed case
+  // creates a fresh link -- a new version of its plan membership).
+  await sql`CREATE UNIQUE INDEX uq_plan_case_active ON test_plan_cases (test_plan_id, test_case_id) WHERE removed_at IS NULL`.execute(db);
 
   await db.schema.createIndex('idx_plan_cases_assigned').on('test_plan_cases').columns(['test_plan_id', 'assigned_user_id']).execute();
 

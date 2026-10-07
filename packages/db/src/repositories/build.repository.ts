@@ -89,6 +89,7 @@ export class BuildRepository {
       .selectFrom('test_plan_cases')
       .select((eb) => eb.fn.countAll().as('n'))
       .where('test_plan_id', '=', build.test_plan_id)
+      .where('removed_at', 'is', null) // cases removed from the plan never hold a run open
       .executeTakeFirst();
     const totalCases = Number(total?.n ?? 0);
     if (totalCases === 0) return false;
@@ -99,6 +100,7 @@ export class BuildRepository {
       .select((eb) => eb.fn.count('executions.test_plan_case_id').distinct().as('n'))
       .where('executions.build_id', '=', id)
       .where('test_plan_cases.test_plan_id', '=', build.test_plan_id)
+      .where('test_plan_cases.removed_at', 'is', null)
       .executeTakeFirst();
     if (Number(covered?.n ?? 0) < totalCases) return false;
 

@@ -17,7 +17,7 @@ import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import {
   sendPlanLockedError,
   sendCaseVersionNotApprovedError,
-  sendCaseHasExecutionsError,
+  sendCaseHasResultsError,
 } from '../errors.js';
 
 export interface CaseLinkability {
@@ -233,7 +233,13 @@ export async function registerTestPlanCaseRoutes(
     const builds = await buildRepo.findByTestPlan(planId);
     const buildId = requestedBuildId || builds[0]?.id;
 
-    const rawCases = await db
+    // Which cases this run contains, and each one's latest result in it -- the shared rule in
+    // ExecutionRepository.getFinalResultsForRuns: active links, plus cases removed from the
+    // plan that have a result in this run (shown read-only). With no run yet: active links.
+    const finals = buildId ? await executionRepo.getFinalResultsForRuns(planId, [buildId]) : [];
+    const finalByLink = new Map(finals.map((f) => [f.plan_case_id, f]));
+
+    let caseQuery = db
       .selectFrom('test_plan_cases as tpc')
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
       .innerJoin('test_case_versions as tcv', 'tcv.id', 'tpc.test_case_version_id')
@@ -252,36 +258,22 @@ export async function registerTestPlanCaseRoutes(
         'tcv.summary',
         'tcv.preconditions',
       ])
-      .where('tpc.test_plan_id', '=', planId)
-      .orderBy('tpc.position', 'asc')
-      .execute();
+      .where('tpc.test_plan_id', '=', planId);
+    if (buildId && finals.length === 0) return { plan, builds, cases: [] }; // the plan has no cases
+    caseQuery = buildId ? caseQuery.where('tpc.id', 'in', finals.map((f) => f.plan_case_id)) : caseQuery.where('tpc.removed_at', 'is', null);
+    const rawCases = await caseQuery.orderBy('tpc.position', 'asc').execute();
 
     const cases = await Promise.all(
       rawCases.map(async (c) => {
         const steps = await versionRepo.getSteps(c.version_id);
-        let latestVerdict = 'UNTESTED';
-        let latestExecutionId: string | null = null;
-        let latestNotes: string | null = null;
-
-        if (buildId) {
-          const latestExec = await db
-            .selectFrom('executions')
-            .selectAll()
-            .where('test_plan_case_id', '=', c.plan_case_id)
-            .where('build_id', '=', buildId)
-            .orderBy('created_at', 'desc')
-            .executeTakeFirst();
-          latestVerdict = latestExec?.verdict || 'UNTESTED';
-          latestExecutionId = latestExec?.id || null;
-          latestNotes = latestExec?.notes || null;
-        }
-
+        const final = finalByLink.get(c.plan_case_id);
         return {
           ...c,
           steps,
-          latest_verdict: latestVerdict,
-          latest_execution_id: latestExecutionId,
-          latest_notes: latestNotes,
+          latest_verdict: final?.verdict || 'UNTESTED',
+          latest_execution_id: final?.execution_id ?? null,
+          latest_notes: final?.notes ?? null,
+          removed_from_plan: final?.removed_from_plan ?? false,
         };
       })
     );
@@ -359,7 +351,10 @@ export async function registerTestPlanCaseRoutes(
     }
   );
 
-  // DELETE /api/v1/test-plans/:planId/cases/:caseId -- per-case plan-inclusion toggle, OFF.
+  // DELETE /api/v1/test-plans/:planId/cases/:caseId[?force=true] -- per-case plan-inclusion
+  // toggle, OFF. A case with results needs force=true (409 CASE_HAS_RESULTS otherwise, with
+  // counts for a confirmation) and is then retired rather than deleted: its results stay in
+  // the runs that recorded them; future runs don't include it.
   app.delete(
     '/api/v1/test-plans/:planId/cases/:caseId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
@@ -379,16 +374,13 @@ export async function registerTestPlanCaseRoutes(
       if (!planCase) {
         return reply.status(404).send({ error: 'Test case is not in this plan' });
       }
+      const force = (request.query as { force?: string }).force === 'true';
 
-      // executions.test_plan_case_id -> test_plan_cases.id is ON DELETE RESTRICT: a plan-case
-      // with recorded executions can't be deleted at the DB level. Pre-check for a clear 422
-      // instead of letting that constraint throw a raw error.
-      const executions = await executionRepo.findByTestPlanCase(planCase.id);
-      if (executions.length > 0) {
-        return sendCaseHasExecutionsError(reply, caseId, request.url);
+      const outcome = await planRepo.removeCases(planId, [caseId], actor.id, { force });
+      if (outcome.blocked) {
+        const testCase = await caseRepo.findById(caseId);
+        return sendCaseHasResultsError(reply, { label: testCase?.external_id ?? caseId, scope: 'case', ...outcome }, request.url);
       }
-
-      await planRepo.removeCase(planId, caseId);
 
       const now = new Date().toISOString();
       await db
@@ -397,11 +389,11 @@ export async function registerTestPlanCaseRoutes(
           id: uuidv4(),
           actor_id: actor.id,
           actor_type: 'USER',
-          action: 'PLAN_CASE_REMOVED',
+          action: outcome.retired ? 'PLAN_CASE_RETIRED' : 'PLAN_CASE_REMOVED',
           resource_type: 'test_plan_case',
           resource_id: planCase.id,
           project_id: plan.project_id,
-          diff: JSON.stringify({ test_plan_id: planId, test_case_id: caseId }),
+          diff: JSON.stringify({ test_plan_id: planId, test_case_id: caseId, kept_results: outcome.retired > 0 }),
           ip_address: '127.0.0.1',
           user_agent: 'TestifyPlanCurationService',
           created_at: now,
@@ -413,16 +405,17 @@ export async function registerTestPlanCaseRoutes(
   );
 
   // POST /api/v1/test-plans/:planId/suites/:suiteId/cascade -- suite-level toggle, cascading
-  // to every case in the subtree in one call. Partial success: cases that fail the
-  // Approved-only rule (ADD) or have execution history (REMOVE) are skipped and reported,
-  // not treated as a whole-request failure.
+  // to every case in the subtree in one call. ADD skips (and reports) cases that fail the
+  // Approved-only rule. REMOVE: if any case has results, nothing changes without
+  // force: true (409 CASE_HAS_RESULTS with counts); with it, those cases are retired (their
+  // results stay in old runs) and the rest unlinked.
   app.post(
     '/api/v1/test-plans/:planId/suites/:suiteId/cascade',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { planId, suiteId } = request.params as { planId: string; suiteId: string };
-      const { action } = (request.body as { action?: 'ADD' | 'REMOVE' }) || {};
+      const { action, force } = (request.body as { action?: 'ADD' | 'REMOVE'; force?: boolean }) || {};
 
       if (action !== 'ADD' && action !== 'REMOVE') {
         return reply.status(400).send({ error: 'action must be ADD or REMOVE' });
@@ -448,6 +441,7 @@ export async function registerTestPlanCaseRoutes(
       const skipped: Array<{ case_id: string; external_id: string; reason: string }> = [];
       let added = 0;
       let removed = 0;
+      let retired = 0;
 
       if (action === 'ADD') {
         const entries: Array<{ test_case_id: string; test_case_version_id: string }> = [];
@@ -469,22 +463,12 @@ export async function registerTestPlanCaseRoutes(
         await planRepo.addCasesBulk(planId, entries);
         added = entries.filter((e) => !beforeIds.has(e.test_case_id)).length;
       } else {
-        const planCases = await planRepo.getPinnedCases(planId);
-        const planCaseByCaseId = new Map(planCases.map((pc) => [pc.test_case_id, pc]));
-        const removableCaseIds: string[] = [];
-
-        for (const c of cases) {
-          const planCase = planCaseByCaseId.get(c.id);
-          if (!planCase) continue; // not in the plan -- nothing to remove
-          const executions = await executionRepo.findByTestPlanCase(planCase.id);
-          if (executions.length > 0) {
-            skipped.push({ case_id: c.id, external_id: c.external_id, reason: 'HAS_EXECUTIONS' });
-            continue;
-          }
-          removableCaseIds.push(c.id);
+        const outcome = await planRepo.removeCases(planId, cases.map((c) => c.id), actor.id, { force: force === true });
+        if (outcome.blocked) {
+          return sendCaseHasResultsError(reply, { label: `suite ${suite.name}`, scope: 'suite', ...outcome }, request.url);
         }
-
-        removed = await planRepo.removeCasesBulk(planId, removableCaseIds);
+        removed = outcome.removed;
+        retired = outcome.retired;
       }
 
       const now = new Date().toISOString();
@@ -503,6 +487,7 @@ export async function registerTestPlanCaseRoutes(
             suite_id: suiteId,
             added,
             removed,
+            retired,
             skipped_count: skipped.length,
           }),
           ip_address: '127.0.0.1',
@@ -511,7 +496,7 @@ export async function registerTestPlanCaseRoutes(
         })
         .execute();
 
-      return reply.status(200).send({ added, removed, skipped });
+      return reply.status(200).send({ added, removed, retired, skipped });
     }
   );
 }

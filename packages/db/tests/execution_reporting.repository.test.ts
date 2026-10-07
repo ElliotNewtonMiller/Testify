@@ -180,4 +180,56 @@ describe('ExecutionRepository reporting queries', () => {
       expect(await executionRepo.getActivity(project.id, '2026-03-02T00:00:00.000Z')).toEqual([{ day: '2026-03-02', source: 'UI', count: 2 }]);
     });
   });
+
+  describe('removing a case that has results (retired links)', () => {
+    it('unlinks unexecuted cases, blocks then retires executed ones, and allows re-adding', async () => {
+      const { plan, planCaseA, caseA, caseB, versionA } = await makePlanWithTwoCases();
+      const run1 = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      await insertExecution({ id: 'x1', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'FAILED', ts: '2026-01-01T10:00:00.000Z' });
+
+      const blocked = await planRepo.removeCases(plan.id, [caseA.id, caseB.id], 'admin-1');
+      expect(blocked).toEqual({ blocked: true, cases_with_results: 1, result_count: 1, run_count: 1 });
+      expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(2); // nothing changed
+
+      expect(await planRepo.removeCases(plan.id, [caseA.id, caseB.id], 'admin-1', { force: true })).toEqual({ blocked: false, removed: 1, retired: 1 });
+      expect(await planRepo.getPinnedCases(plan.id)).toEqual([]);
+      const retired = await db.selectFrom('test_plan_cases').selectAll().where('id', '=', planCaseA.id).executeTakeFirstOrThrow();
+      expect(retired).toMatchObject({ removed_by: 'admin-1' });
+      expect(retired.removed_at).toBeTruthy();
+
+      // Re-adding makes a fresh active link (the partial unique index allows it).
+      const fresh = await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
+      expect(fresh.id).not.toBe(planCaseA.id);
+      expect((await planRepo.getPinnedCases(plan.id)).map((pc) => pc.id)).toEqual([fresh.id]);
+      await expect(planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id })).rejects.toThrow();
+    });
+
+    it('a run contains a retired case only if it has a result there; auto-close ignores retired cases', async () => {
+      const { plan, planCaseA, planCaseB, caseA, caseB, versionA } = await makePlanWithTwoCases();
+      const run1 = await buildRepo.create({ test_plan_id: plan.id, name: 'R1' });
+      await insertExecution({ id: 'y1', build_id: run1.id, test_plan_case_id: planCaseA.id, verdict: 'FAILED', ts: '2026-01-01T10:00:00.000Z' });
+      await planRepo.removeCases(plan.id, [caseA.id], 'admin-1', { force: true });
+      const run2 = await buildRepo.create({ test_plan_id: plan.id, name: 'R2' });
+
+      const rows = await executionRepo.getFinalResultsForRuns(plan.id, [run1.id, run2.id]);
+      const r1 = rows.filter((r) => r.run_id === run1.id);
+      const r2 = rows.filter((r) => r.run_id === run2.id);
+      expect(r1.map((r) => [r.test_case_id, r.verdict, r.removed_from_plan]).sort()).toEqual([[caseA.id, 'FAILED', true], [caseB.id, null, false]].sort());
+      expect(r2.map((r) => r.test_case_id)).toEqual([caseB.id]);
+
+      // Run 2 closes once its only active case has a result.
+      await insertExecution({ id: 'y2', build_id: run2.id, test_plan_case_id: planCaseB.id, verdict: 'PASSED', ts: '2026-01-02T10:00:00.000Z' });
+      expect(await buildRepo.closeIfComplete(run2.id)).toBe(true);
+
+      // Re-added: one row per case per run -- the old run keeps the link with its result.
+      const fresh = await planRepo.addCase({ test_plan_id: plan.id, test_case_id: caseA.id, test_case_version_id: versionA.id });
+      const again = await executionRepo.getFinalResultsForRuns(plan.id, [run1.id]);
+      const aRows = again.filter((r) => r.test_case_id === caseA.id);
+      expect(aRows).toHaveLength(1);
+      expect(aRows[0]).toMatchObject({ plan_case_id: planCaseA.id, verdict: 'FAILED' });
+      const run3 = await buildRepo.create({ test_plan_id: plan.id, name: 'R3' });
+      const r3 = await executionRepo.getFinalResultsForRuns(plan.id, [run3.id]);
+      expect(r3.find((r) => r.test_case_id === caseA.id)).toMatchObject({ plan_case_id: fresh.id, removed_from_plan: false, verdict: null });
+    });
+  });
 });

@@ -25,6 +25,7 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
+import { sendCaseRemovedFromPlanError } from './errors.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
@@ -143,6 +144,7 @@ export async function createServer(connectionString?: string) {
         'tcv.preconditions',
       ])
       .where('tpc.test_plan_id', '=', seed.planId)
+      .where('tpc.removed_at', 'is', null)
       .orderBy('tpc.position', 'asc')
       .execute();
 
@@ -198,12 +200,27 @@ export async function createServer(connectionString?: string) {
     const build = await db
       .selectFrom('builds')
       .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
-      .select(['builds.status as build_status', 'test_plans.status as plan_status', 'test_plans.project_id'])
+      .select(['builds.status as build_status', 'builds.test_plan_id', 'test_plans.status as plan_status', 'test_plans.project_id'])
       .where('builds.id', '=', body.build_id)
       .executeTakeFirst();
 
     if (!build) {
       return reply.status(404).send({ error: 'Build not found' });
+    }
+
+    // The case must be in this run's plan -- and not removed from it (a removed case keeps the
+    // results it already has, read-only).
+    const planCase = await db
+      .selectFrom('test_plan_cases as tpc')
+      .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
+      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tc.external_id'])
+      .where('tpc.id', '=', body.test_plan_case_id)
+      .executeTakeFirst();
+    if (!planCase || planCase.test_plan_id !== build.test_plan_id) {
+      return reply.status(404).send({ error: 'Test case not found in this run\'s plan' });
+    }
+    if (planCase.removed_at) {
+      return sendCaseRemovedFromPlanError(reply, planCase.external_id, request.url);
     }
 
     if (build.build_status === 'CLOSED') {

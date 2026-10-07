@@ -1002,6 +1002,56 @@ Per direct request (no outbox log):
 
 Every send is still recorded in the Security Audit Log (`REPORT_EMAILED`).
 
+## Added: removing an executed test case from a plan retires it -- old runs keep its results (2026-10-07)
+
+Per direct request. Before this, a case with results couldn't be removed from a plan: `executions.test_plan_case_id` references the `test_plan_cases` link with `ON DELETE RESTRICT`, so you got a hard 422 `CASE_HAS_EXECUTIONS`. Now removal **retires** the link instead of deleting it.
+
+Decided with Elliot:
+- Old runs keep the case only where it has a result.
+- It's read-only from then on.
+- Anyone with `PLAN_MANAGE` can do it, after a confirmation.
+
+**Data** (`001_initial_schema.ts`, in place):
+- `test_plan_cases` gained `removed_at` / `removed_by`.
+- The unique `(test_plan_id, test_case_id)` constraint became a partial unique index, `uq_plan_case_active ... WHERE removed_at IS NULL`. Re-adding a removed case creates a fresh link, a new version of its membership, while the retired link keeps its results.
+
+**The one rule for what a run contains** lives in `ExecutionRepository.getFinalResultsForRuns`:
+- Every active link, plus a retired link only in runs where it has a result.
+- One row per case per run: if a case was removed and re-added, the link with a result in that run wins, otherwise the active one.
+- Rows carry `removed_from_plan`.
+
+The run summary, trend, diff, overview, breakdown-with-run, case-search `verdict` filter (now set for every case the run contains) and the Execute-mode queue all follow it.
+
+**Repositories:**
+- `TestPlanRepository.getPinnedCases` / `getPinnedCase` / `updateCaseVersionPin` / `repinCaseInActivePlans` only touch **active** links. Every "is it in the plan" check means current membership; a retired link keeps the version its results were recorded against.
+- `removeCases(planId, caseIds, actorId, {force})`:
+  - Cases with no results are deleted.
+  - Without `force`, cases with results block, and their counts come back (`cases_with_results`, `result_count`, `run_count`).
+  - With `force`, they're retired.
+- `removeCasesBulk` only hard-deletes active links.
+- `BuildRepository.closeIfComplete` counts active links only, so a retired case never holds a run open.
+
+**Server:**
+- **Single-case remove:** `DELETE /api/v1/test-plans/:planId/cases/:caseId[?force=true]` returns 409 `CASE_HAS_RESULTS` (`sendCaseHasResultsError`, e.g. "SHOP-12 has 14 results in 3 runs. Remove it from this plan anyway? Those results stay…") until forced. It then retires the link and writes a `PLAN_CASE_RETIRED` audit row, which is on the admin allowlist.
+- **Suite cascade remove:** works the same way with `force: true` in the body, and returns `retired`. The old `HAS_EXECUTIONS` skip reason is gone.
+- **Execution queue:** `GET /api/v1/test-plans/:planId/cases?build_id=` uses the run rule. It no longer issues a query per case for the latest result, and it adds `removed_from_plan`.
+- **Recording is refused for retired links:**
+  - `POST /api/v1/executions` returns 422 `CASE_REMOVED_FROM_PLAN`. It now also checks that the plan case belongs to the run's plan at all, which it never verified before.
+  - The batch API resolves against active links only and returns a per-item 422 for a case retired from the plan, instead of auto-linking it back.
+- The legacy `/api/v1/workspace` query filters retired links.
+
+**Web:**
+- Spec-mode case and suite toggles show an amber "⚠️ Confirm Removal" banner with the server's message and "Remove anyway", which retries with force. The banner clears if the plan changes.
+- Execute mode: `TestCaseQueueGrid` shows a "REMOVED" tag. A per-case `verdictBlockReason` disables the verdict buttons, Notes and hotkeys, and Pane 3 shows "Removed from plan · read-only".
+
+**Tests:**
+- `execution_reporting.repository.test.ts` (+2): block / force / re-add, run membership, auto-close.
+- `spec_and_plan_curation.test.ts`: the old 422 test was replaced by a full-lifecycle test (409, retire, audit, old vs. new run, manual and batch refusals, run summary, re-add) plus a cascade test.
+
+**Results:**
+- `npm test`: 620/624. All 4 failures are in `.claude/worktrees/vigilant-haslett-05b0d0/`, whose route code now also breaks on the removed `removeCase` method because it resolves `@testify/db` to this repo.
+- Verified live: confirm banner → remove → DEMO-2 is "+ Add" in Spec, and still listed with its result, tagged and read-only, in run 1.0.7.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

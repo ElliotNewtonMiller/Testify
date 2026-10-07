@@ -496,6 +496,9 @@ export default function App() {
   const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
   // Same shape one level down, for test runs (builds) -- see handleDeleteRunClick.
   const [deleteRunPrompt, setDeleteRunPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
+  // Removing a case (or a suite's cases) that already has results asks first: the server
+  // explains how many results it has; confirming retires it from the plan, keeping them.
+  const [removeFromPlanPrompt, setRemoveFromPlanPrompt] = useState<{ kind: "case" | "suite"; id: string; detail: string } | null>(null);
   // Shown in the same banner slot as deletePlanPrompt/deleteRunPrompt when the "+ Create New
   // Test Run" button is clicked with no plan selected -- a Run can never exist without one.
   const [noPlanSetWarning, setNoPlanSetWarning] = useState(false);
@@ -549,6 +552,8 @@ export default function App() {
   // Archived plans are hidden from the Plan dropdown unless revealed by its own last entry.
   const [showArchivedPlans, setShowArchivedPlans] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState<string>(INITIAL_REPORTS_LINK?.plan ?? "");
+  // The remove-from-plan confirmation acts on the selected plan -- drop it if that changes.
+  useEffect(() => setRemoveFromPlanPrompt(null), [selectedPlanId]);
   const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // No fake seed data here (unlike the historical prj_01/pln_01 placeholders elsewhere,
@@ -1306,6 +1311,7 @@ export default function App() {
             latest_verdict: c.latest_verdict || "UNTESTED",
             latest_execution_id: c.latest_execution_id || null,
             latest_notes: c.latest_notes || null,
+            removed_from_plan: Boolean(c.removed_from_plan),
           })),
         });
 
@@ -1428,7 +1434,7 @@ export default function App() {
   // apps/server/src/routes/testPlanCases.ts endpoints, then refresh the spec tree so
   // in_plan/tri-state counts reflect the change.
   const handleToggleCaseInclusion = useCallback(
-    async (testCaseId: string, include: boolean) => {
+    async (testCaseId: string, include: boolean, force = false) => {
       if (!selectedPlanId) {
         showToast("No test plan selected");
         return;
@@ -1438,7 +1444,7 @@ export default function App() {
         const res = await fetch(
           include
             ? `/api/v1/test-plans/${selectedPlanId}/cases`
-            : `/api/v1/test-plans/${selectedPlanId}/cases/${testCaseId}`,
+            : `/api/v1/test-plans/${selectedPlanId}/cases/${testCaseId}${force ? "?force=true" : ""}`,
           {
             method: include ? "POST" : "DELETE",
             // Content-Type: application/json on a bodyless DELETE trips Fastify's JSON body
@@ -1451,8 +1457,11 @@ export default function App() {
           },
         );
         if (res.ok) {
-          showToast(include ? "Added to plan" : "Removed from plan");
+          showToast(include ? "Added to plan" : force ? "Removed from plan -- its results stay in earlier runs" : "Removed from plan");
           await refreshSpecTree();
+        } else if (res.status === 409 && !include) {
+          const body = await res.json().catch(() => ({}) as any);
+          setRemoveFromPlanPrompt({ kind: "case", id: testCaseId, detail: body.detail || "This case has results. Remove it anyway?" });
         } else {
           const body = await res.json().catch(() => ({}) as any);
           showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
@@ -1467,7 +1476,7 @@ export default function App() {
   );
 
   const handleToggleSuiteInclusion = useCallback(
-    async (suiteId: string, action: "ADD" | "REMOVE") => {
+    async (suiteId: string, action: "ADD" | "REMOVE", force = false) => {
       if (!selectedPlanId) {
         showToast("No test plan selected");
         return;
@@ -1479,17 +1488,21 @@ export default function App() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json", ...authHeaders() },
-            body: JSON.stringify({ action }),
+            body: JSON.stringify({ action, ...(force ? { force: true } : {}) }),
           },
         );
         if (res.ok) {
           const body = await res.json();
           const parts: string[] = [];
           if (body.added) parts.push(`${body.added} added`);
-          if (body.removed) parts.push(`${body.removed} removed`);
+          if (body.removed || body.retired) parts.push(`${(body.removed || 0) + (body.retired || 0)} removed`);
+          if (body.retired) parts.push(`results kept in earlier runs for ${body.retired}`);
           if (body.skipped?.length) parts.push(`${body.skipped.length} skipped`);
           showToast(parts.length > 0 ? parts.join(", ") : "No changes");
           await refreshSpecTree();
+        } else if (res.status === 409 && action === "REMOVE") {
+          const body = await res.json().catch(() => ({}) as any);
+          setRemoveFromPlanPrompt({ kind: "suite", id: suiteId, detail: body.detail || "Some cases have results. Remove them anyway?" });
         } else {
           const body = await res.json().catch(() => ({}) as any);
           showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
@@ -2357,11 +2370,15 @@ export default function App() {
   const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
   // Why results can't be recorded right now (null = they can). Drives the verdict buttons,
   // Notes, the hotkey block, and submitVerdict's own guard.
+  // A case removed from the plan (after this run recorded its result) is read-only.
+  const REMOVED_CASE_MESSAGE = "This test case was removed from the plan. Its result is kept, but no new results can be recorded. Add it back to the plan to test it again.";
   const verdictBlockReason: string | null = isRunMissing
     ? NO_RUN_MESSAGE
     : isRunClosed
       ? RUN_CLOSED_MESSAGE
-      : null;
+      : workspaceMode === "EXECUTION" && activeCase?.removed_from_plan
+        ? REMOVED_CASE_MESSAGE
+        : null;
 
   const submitVerdict = useCallback(
     async (
@@ -3548,6 +3565,41 @@ export default function App() {
               }}
             >
               Delete Anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {removeFromPlanPrompt && (
+        <div
+          style={{
+            padding: "10px 16px",
+            borderBottom: "1px solid #92400e",
+            backgroundColor: "#78350f",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>⚠️ Confirm Removal</div>
+          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{removeFromPlanPrompt.detail}</div>
+          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+            <button
+              onClick={() => setRemoveFromPlanPrompt(null)}
+              style={{ padding: "5px 12px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                const prompt = removeFromPlanPrompt;
+                setRemoveFromPlanPrompt(null);
+                if (prompt.kind === "case") handleToggleCaseInclusion(prompt.id, false, true);
+                else handleToggleSuiteInclusion(prompt.id, "REMOVE", true);
+              }}
+              style={{ padding: "5px 12px", backgroundColor: "#dc2626", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+            >
+              Remove anyway
             </button>
           </div>
         </div>
@@ -5181,6 +5233,14 @@ export default function App() {
                   padding: "0 20px",
                 }}
               >
+                {activeCase?.removed_from_plan && (
+                  <span
+                    title={REMOVED_CASE_MESSAGE}
+                    style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginRight: "12px", whiteSpace: "nowrap" }}
+                  >
+                    Removed from plan · read-only
+                  </span>
+                )}
                 {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
                 <div
                   style={{ display: "flex", gap: "10px", opacity: verdictBlockReason ? 0.4 : 1 }}

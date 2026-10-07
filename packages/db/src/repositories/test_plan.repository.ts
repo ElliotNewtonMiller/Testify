@@ -173,7 +173,9 @@ export class TestPlanRepository {
   }
 
   /**
-   * Delete many test_plan_cases rows (by test_case_id) in one call.
+   * Hard-deletes the active links of cases that have no results (by test_case_id). Cases with
+   * results can't be deleted (executions reference the link) -- use removeCases, which
+   * retires those instead.
    */
   async removeCasesBulk(testPlanId: string, testCaseIds: string[]): Promise<number> {
     if (testCaseIds.length === 0) return 0;
@@ -182,26 +184,81 @@ export class TestPlanRepository {
       .deleteFrom('test_plan_cases')
       .where('test_plan_id', '=', testPlanId)
       .where('test_case_id', 'in', testCaseIds)
+      .where('removed_at', 'is', null)
       .executeTakeFirst();
 
     return Number(result.numDeletedRows ?? 0n);
   }
 
-  async removeCase(testPlanId: string, testCaseId: string): Promise<boolean> {
-    const result = await this.db
-      .deleteFrom('test_plan_cases')
+  /**
+   * Removes cases from a plan. A case with no results is simply unlinked. A case that has
+   * results is **retired** instead: its link gets removed_at/removed_by and stays, so its
+   * results keep showing in the runs that recorded them while it's gone from the plan and
+   * every future run. Without `force`, if any of the cases has results nothing changes and
+   * the counts come back so the caller can ask for confirmation.
+   */
+  async removeCases(
+    testPlanId: string,
+    testCaseIds: string[],
+    actorId: string,
+    opts: { force?: boolean } = {}
+  ): Promise<
+    | { blocked: true; cases_with_results: number; result_count: number; run_count: number }
+    | { blocked: false; removed: number; retired: number }
+  > {
+    if (testCaseIds.length === 0) return { blocked: false, removed: 0, retired: 0 };
+    const links = await this.db
+      .selectFrom('test_plan_cases')
+      .select(['id', 'test_case_id'])
       .where('test_plan_id', '=', testPlanId)
-      .where('test_case_id', '=', testCaseId)
-      .executeTakeFirst();
+      .where('test_case_id', 'in', testCaseIds)
+      .where('removed_at', 'is', null)
+      .execute();
+    if (links.length === 0) return { blocked: false, removed: 0, retired: 0 };
 
-    return (result.numDeletedRows ?? 0n) > 0n;
+    const usage = await this.db
+      .selectFrom('executions')
+      .select((eb) => ['test_plan_case_id', eb.fn.countAll<number>().as('results')])
+      .where('test_plan_case_id', 'in', links.map((l) => l.id))
+      .groupBy('test_plan_case_id')
+      .execute();
+    const executedIds = new Set(usage.map((u) => u.test_plan_case_id));
+
+    if (executedIds.size > 0 && !opts.force) {
+      return {
+        blocked: true,
+        cases_with_results: executedIds.size,
+        result_count: usage.reduce((n, u) => n + Number(u.results), 0),
+        run_count: await this.distinctRunCount([...executedIds]),
+      };
+    }
+
+    const now = new Date().toISOString();
+    const toDelete = links.filter((l) => !executedIds.has(l.id)).map((l) => l.id);
+    const toRetire = links.filter((l) => executedIds.has(l.id)).map((l) => l.id);
+    if (toDelete.length) await this.db.deleteFrom('test_plan_cases').where('id', 'in', toDelete).execute();
+    if (toRetire.length) {
+      await this.db.updateTable('test_plan_cases').set({ removed_at: now, removed_by: actorId, updated_at: now }).where('id', 'in', toRetire).execute();
+    }
+    return { blocked: false, removed: toDelete.length, retired: toRetire.length };
   }
 
+  private async distinctRunCount(planCaseIds: string[]): Promise<number> {
+    const row = await this.db
+      .selectFrom('executions')
+      .select((eb) => eb.fn.count<number>('build_id').distinct().as('n'))
+      .where('test_plan_case_id', 'in', planCaseIds)
+      .executeTakeFirst();
+    return Number(row?.n ?? 0);
+  }
+
+  /** The plan's current cases (active links only -- retired links are history). */
   async getPinnedCases(testPlanId: string): Promise<TestPlanCase[]> {
     return await this.db
       .selectFrom('test_plan_cases')
       .selectAll()
       .where('test_plan_id', '=', testPlanId)
+      .where('removed_at', 'is', null)
       .orderBy('position', 'asc')
       .execute();
   }
@@ -212,6 +269,7 @@ export class TestPlanRepository {
       .selectAll()
       .where('test_plan_id', '=', testPlanId)
       .where('test_case_id', '=', testCaseId)
+      .where('removed_at', 'is', null)
       .executeTakeFirst();
   }
 
@@ -229,6 +287,7 @@ export class TestPlanRepository {
       .updateTable('test_plan_cases')
       .set({ test_case_version_id: newTestCaseVersionId, updated_at: now })
       .where('test_case_id', '=', testCaseId)
+      .where('removed_at', 'is', null) // a retired link keeps the version its results were recorded against
       .where('test_case_version_id', '!=', newTestCaseVersionId)
       .where('test_plan_id', 'in', (eb) =>
         eb.selectFrom('test_plans').select('id').where('status', '=', 'ACTIVE')
@@ -251,6 +310,7 @@ export class TestPlanRepository {
       })
       .where('test_plan_id', '=', testPlanId)
       .where('test_case_id', '=', testCaseId)
+      .where('removed_at', 'is', null)
       .execute();
 
     return this.getPinnedCase(testPlanId, testCaseId);

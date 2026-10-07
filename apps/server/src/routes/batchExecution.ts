@@ -89,7 +89,21 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           'ts.path as suite_path',
         ])
         .where('tpc.test_plan_id', '=', planId)
+        .where('tpc.removed_at', 'is', null)
         .execute();
+
+      // Cases deliberately removed from this plan (after they had results). Results for them
+      // are refused -- CI auto-linking must not quietly put them back.
+      const removedCaseIds = new Set(
+        (
+          await db
+            .selectFrom('test_plan_cases')
+            .select('test_case_id')
+            .where('test_plan_id', '=', planId)
+            .where('removed_at', 'is not', null)
+            .execute()
+        ).map((r) => r.test_case_id)
+      );
 
       const planCasesByExternalId = new Map<string, typeof existingPlanCases[0]>();
       const planCasesByUuid = new Map<string, typeof existingPlanCases[0]>();
@@ -159,6 +173,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
         }
 
         // If not found in test_plan_cases, check if test_cases exists in project to auto-link
+        let removedFromPlan: string | null = null;
         if (!resolvedPlanCase) {
           let tcCandidate = await db
             .selectFrom('test_cases')
@@ -173,7 +188,9 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             })
             .executeTakeFirst();
 
-          if (tcCandidate) {
+          if (tcCandidate && removedCaseIds.has(tcCandidate.id)) {
+            removedFromPlan = tcCandidate.external_id;
+          } else if (tcCandidate) {
             // Same Approved-only-unless-allow_draft_plan_linking rule the explicit
             // Specification-mode toggle UI enforces (see routes/testPlanCases.ts) -- a case
             // that can't be linked via the UI shouldn't be silently auto-linkable via batch
@@ -229,17 +246,20 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
 
         if (!resolvedPlanCase) {
           failedCount++;
+          const reason = removedFromPlan
+            ? `${removedFromPlan} was removed from this test plan; no new results can be recorded for it`
+            : 'Case identifier not found in test plan';
           if (allOrNothing) {
             return reply.status(422).send({
-              type: 'https://api.testify.dev/errors/VALIDATION_FAILED',
+              type: `https://api.testify.dev/errors/${removedFromPlan ? 'CASE_REMOVED_FROM_PLAN' : 'VALIDATION_FAILED'}`,
               title: 'Unprocessable Entity',
               status: 422,
-              code: 'VALIDATION_FAILED',
-              detail: `Batch execution failed in atomic mode: item at index ${i} could not resolve case identifier.`,
+              code: removedFromPlan ? 'CASE_REMOVED_FROM_PLAN' : 'VALIDATION_FAILED',
+              detail: `Batch execution failed in atomic mode: item at index ${i}: ${reason}.`,
               invalid_params: [
                 {
                   name: `executions[${i}].case_identifier`,
-                  reason: 'Case identifier not found in test plan',
+                  reason,
                 },
               ],
             });
@@ -247,7 +267,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             results.push({
               index: i,
               status: 422,
-              error: 'Case identifier could not be resolved',
+              error: removedFromPlan ? reason : 'Case identifier could not be resolved',
             });
             continue;
           }

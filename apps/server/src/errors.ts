@@ -89,17 +89,40 @@ export function sendRequiredCustomFieldsMissingError(
   });
 }
 
-export function sendCaseHasExecutionsError(reply: FastifyReply, testCaseId: string, instance?: string) {
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** 409 asking to confirm removing case(s) that already have results (retry with force=true). */
+export function sendCaseHasResultsError(
+  reply: FastifyReply,
+  what: { label: string; scope: 'case' | 'suite'; cases_with_results: number; result_count: number; run_count: number },
+  instance?: string
+) {
+  const subject =
+    what.scope === 'case'
+      ? `${what.label} has`
+      : `${plural(what.cases_with_results, 'case')} in ${what.label} ${what.cases_with_results === 1 ? 'has' : 'have'}`;
   return sendProblemDetails(reply, {
-    code: 'CASE_HAS_EXECUTIONS',
-    detail: `Test Case (ID: ${testCaseId}) has recorded executions in this Test Plan and cannot be unlinked. Executions retain their original version reference permanently.`,
+    code: 'CASE_HAS_RESULTS',
+    status: 409,
+    title: 'Conflict',
+    detail:
+      `${subject} ${plural(what.result_count, 'result')} in ${plural(what.run_count, 'run')}. ` +
+      `Remove ${what.cases_with_results === 1 ? 'it' : 'them'} from this plan anyway? Those results stay in the runs that recorded them; future runs won't include ${what.cases_with_results === 1 ? 'it' : 'them'}.`,
     instance,
     invalid_params: [
-      {
-        name: 'test_case_id',
-        reason: 'Existing executions reference this plan-case row',
-      },
+      { name: 'cases_with_results', reason: String(what.cases_with_results) },
+      { name: 'result_count', reason: String(what.result_count) },
+      { name: 'run_count', reason: String(what.run_count) },
     ],
+  });
+}
+
+/** A result can't be recorded for a case that was removed from the plan. */
+export function sendCaseRemovedFromPlanError(reply: FastifyReply, label: string, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'CASE_REMOVED_FROM_PLAN',
+    detail: `${label} was removed from this test plan. Its earlier results are kept, but no new results can be recorded for it. Add it back to the plan to test it again.`,
+    instance,
   });
 }
 
