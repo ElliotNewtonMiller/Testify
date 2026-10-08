@@ -129,6 +129,17 @@ export class ApiTokenRepository {
     return rows.map(toApiToken);
   }
 
+  /** Revokes every live token a user issued (when their account is disabled). Returns how many. */
+  async revokeAllIssuedBy(userId: string): Promise<number> {
+    const result = await this.db
+      .updateTable('api_tokens')
+      .set({ is_revoked: 1 })
+      .where('created_by', '=', userId)
+      .where('is_revoked', '=', 0)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
+  }
+
   /** Best-effort -- a failure here must never fail the request it's attached to. */
   async touchLastUsed(id: string): Promise<void> {
     await this.db

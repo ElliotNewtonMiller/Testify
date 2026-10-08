@@ -86,6 +86,12 @@ interface ApiTokenItem {
   is_revoked: boolean;
   last_used_at: string | null;
   created_at: string;
+  /** Who issued it. A token works only while its issuer is active and still manages API tokens here. */
+  issued_by?: string | null;
+  issuer_active?: boolean;
+  inactive_reason?: "ISSUER_DISABLED" | "ISSUER_LOST_ACCESS" | null;
+  /** What it can actually do now: its capabilities that its issuer still has. */
+  effective_capabilities?: string[];
 }
 
 interface AdminPanelModalProps {
@@ -2718,7 +2724,7 @@ export function AdminPanelModal({
                         backgroundColor: "#0f172a",
                         border: "1px solid #334155",
                         borderRadius: "6px",
-                        opacity: t.is_revoked ? 0.5 : 1,
+                        opacity: t.is_revoked || t.issuer_active === false || (t.expires_at && new Date(t.expires_at) < new Date()) ? 0.5 : 1,
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -2728,6 +2734,23 @@ export function AdminPanelModal({
                             {t.is_revoked && (
                               <span style={{ marginLeft: "8px", fontSize: "10px", color: "#f87171", fontWeight: 700 }}>
                                 REVOKED
+                              </span>
+                            )}
+                            {!t.is_revoked && t.expires_at && new Date(t.expires_at) < new Date() && (
+                              <span style={{ marginLeft: "8px", fontSize: "10px", color: "#f87171", fontWeight: 700 }}>
+                                EXPIRED
+                              </span>
+                            )}
+                            {!t.is_revoked && t.issuer_active === false && (
+                              <span
+                                title={
+                                  t.inactive_reason === "ISSUER_DISABLED"
+                                    ? "The account that issued this token is disabled."
+                                    : "The person who issued this token no longer manages API tokens on this project."
+                                }
+                                style={{ marginLeft: "8px", fontSize: "10px", color: "#fbbf24", fontWeight: 700 }}
+                              >
+                                INACTIVE · {t.inactive_reason === "ISSUER_DISABLED" ? "issuer disabled" : "issuer lost access"}
                               </span>
                             )}
                           </div>
@@ -2752,24 +2775,31 @@ export function AdminPanelModal({
                         )}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px" }}>
-                        {t.capabilities.map((c) => (
-                          <span
-                            key={c}
-                            style={{
-                              padding: "2px 6px",
-                              borderRadius: "4px",
-                              fontSize: "10px",
-                              fontWeight: 700,
-                              border: "1px solid #4b5563",
-                              color: "#9ca3af",
-                            }}
-                          >
-                            {c}
-                          </span>
-                        ))}
+                        {t.capabilities.map((c) => {
+                          // A capability its issuer no longer has doesn't work any more.
+                          const lost = t.issuer_active === true && !!t.effective_capabilities && !t.effective_capabilities.includes(c);
+                          return (
+                            <span
+                              key={c}
+                              title={lost ? "Its issuer no longer has this, so the token can't use it." : undefined}
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: "4px",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                border: "1px solid #4b5563",
+                                color: lost ? "#6b7280" : "#9ca3af",
+                                textDecoration: lost ? "line-through" : undefined,
+                              }}
+                            >
+                              {c}
+                            </span>
+                          );
+                        })}
                       </div>
                       <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px" }}>
                         Created {new Date(t.created_at).toLocaleString()}
+                        {t.issued_by && ` by ${t.issued_by}`}
                         {t.expires_at && ` · Expires ${new Date(t.expires_at).toLocaleString()}`}
                         {t.last_used_at
                           ? ` · Last used ${new Date(t.last_used_at).toLocaleString()}`
@@ -2821,7 +2851,7 @@ export function AdminPanelModal({
                   style={{
                     width: "100%",
                     padding: "8px",
-                    marginBottom: "12px",
+                    marginBottom: "4px",
                     backgroundColor: "#0f172a",
                     border: "1px solid #334155",
                     borderRadius: "4px",
@@ -2830,6 +2860,11 @@ export function AdminPanelModal({
                     boxSizing: "border-box",
                   }}
                 />
+                <div style={{ fontSize: "10px", color: "#64748b", marginBottom: "12px", lineHeight: 1.4 }}>
+                  Leave empty to keep it working for as long as you can manage API tokens on this project.
+                  It stops if your account is disabled or loses that permission, and can only do what you
+                  still can.
+                </div>
 
                 <div style={{ fontSize: "11px", fontWeight: 700, color: "#e2e8f0", marginBottom: "6px" }}>
                   Capabilities

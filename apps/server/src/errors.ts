@@ -290,6 +290,19 @@ export function sendTokenExpiredError(reply: FastifyReply, instance?: string) {
   });
 }
 
+export function sendTokenIssuerInactiveError(reply: FastifyReply, reason: 'ISSUER_DISABLED' | 'ISSUER_LOST_ACCESS', instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'TOKEN_ISSUER_INACTIVE',
+    status: 401,
+    title: 'Unauthorized',
+    detail:
+      reason === 'ISSUER_DISABLED'
+        ? "This API token stopped working because the account that issued it is disabled. Ask an administrator for a new token."
+        : "This API token stopped working because the person who issued it no longer manages API tokens on this project. Ask an administrator for a new token.",
+    instance,
+  });
+}
+
 export function sendTokenProjectMismatchError(
   reply: FastifyReply,
   tokenProjectId: string,

@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
-import { ApiTokenRepository } from '@testify/db';
+import { ApiTokenRepository, UserRepository } from '@testify/db';
 import { PERMISSION_KEYS } from '@testify/core';
-import { requirePermission } from '../middleware/auth.js';
+import { requirePermission, apiTokenIssuerAccess } from '../middleware/auth.js';
 import { sendCapabilityCeilingExceededError } from '../errors.js';
 
 /**
@@ -93,7 +93,21 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
     async (request) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
-      const tokens = await tokenRepo.listByProject(projectId);
+      // Each token says whether it still works: it stops when its issuer is disabled or no longer
+      // manages tokens here, and only keeps the abilities its issuer still has.
+      const userRepo = new UserRepository(db);
+      const tokens = await Promise.all(
+        (await tokenRepo.listByProject(projectId)).map(async (t) => {
+          const access = await apiTokenIssuerAccess(t, db);
+          return {
+            ...t,
+            issued_by: (await userRepo.findById(t.created_by))?.username ?? null,
+            issuer_active: access.active,
+            inactive_reason: access.active ? null : access.reason,
+            effective_capabilities: access.active ? access.capabilities : [],
+          };
+        })
+      );
       const issuerCapabilityCeiling = actor.permissions.filter((k) => k !== 'SYSTEM_ADMIN');
       return { tokens, issuer_capability_ceiling: issuerCapabilityCeiling };
     }

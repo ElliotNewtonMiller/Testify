@@ -1229,6 +1229,17 @@ Audit item 11 (`docs/audit_2026-10-07.md`). `createServer` registered `@fastify/
 
 New tests: `apps/server/tests/cors.test.ts` (3 -- parsing and refusals; by default a foreign origin gets no allow header on a request or a preflight; with `CORS_ORIGINS` set, exactly that origin is allowed and others still aren't). 509/509.
 
+## Fixed: API tokens outlived their issuer's access (2026-10-08)
+
+Audit item 12 (`docs/audit_2026-10-07.md`). A token kept its mint-time capabilities forever (no expiry by default) and kept working after the admin who issued it was disabled or demoted. Decided with Elliot: rather than forcing every token to expire, a token lasts as long as its issuer could still issue it.
+
+- **Bound to the issuer, checked on every use** (`apiTokenIssuerAccess`, `middleware/auth.ts`, called from `authenticateApiToken`): the issuer (`api_tokens.created_by`) must be active and still hold `API_TOKEN_MANAGE` (or `SYSTEM_ADMIN`) on the token's project -- per-project roles and overrides included -- otherwise `401 TOKEN_ISSUER_INACTIVE` (`sendTokenIssuerInactiveError`, reason disabled vs. lost access). The token's permissions are its capabilities **intersected with the issuer's current permissions** there, so narrowing the issuer narrows their tokens immediately. A demotion only suspends: give the permission back and the token works again.
+- **Disabling the issuer revokes their tokens for good** (`ApiTokenRepository.revokeAllIssuedBy`, in the same AdminGuard transaction that ends their sessions; the `USER_DISABLED` audit diff records `api_tokens_revoked`), since disabling is usually offboarding and re-enabling shouldn't revive them.
+- **No expiry stays the default**; the optional expiry date still works. That's acceptable now because a token can never exceed what an active, authorised person currently has, and it can be revoked in one click with its last-used time visible.
+- **List/UI**: `GET .../api-tokens` adds `issued_by`, `issuer_active`, `inactive_reason`, `effective_capabilities`. The API Tokens tab shows "INACTIVE · issuer disabled / issuer lost access" and "EXPIRED" badges (dimmed like revoked), "Created … by <user>", strikes through capabilities the issuer no longer has, and explains under the expiry field what leaving it empty means.
+
+New tests: `apps/server/tests/api_token_issuer.test.ts` (3 -- a demoted issuer's token gets 401 and is listed inactive, works again when the role is restored, and a per-project `API_TOKEN_MANAGE` deny also stops it; an issuer losing `EXECUTE_RUN` leaves the token able to read but not record, with `effective_capabilities` showing it; disabling the issuer revokes the token, which stays revoked after re-enabling, and the audit row counts it). 512/512.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

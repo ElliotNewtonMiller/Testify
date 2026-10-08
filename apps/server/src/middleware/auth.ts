@@ -3,7 +3,13 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, ApiTokenRepository, SessionRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
 import { verifyJwt } from '@testify/core';
-import { sendInvalidTokenError, sendTokenRevokedError, sendTokenExpiredError, sendTokenProjectMismatchError } from '../errors.js';
+import {
+  sendInvalidTokenError,
+  sendTokenRevokedError,
+  sendTokenExpiredError,
+  sendTokenProjectMismatchError,
+  sendTokenIssuerInactiveError,
+} from '../errors.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -93,6 +99,27 @@ export async function permissionsInProject(user: AuthenticatedUser, projectId: s
 }
 
 /**
+ * An API token works only while the person who issued it still could issue it: their account is
+ * active and they still manage API tokens (API_TOKEN_MANAGE, or SYSTEM_ADMIN) on the token's
+ * project. It can then do only what both the token and its issuer are allowed to do, so demoting
+ * the issuer narrows or stops their tokens at once. Checked on every use.
+ */
+export type ApiTokenIssuerAccess =
+  | { active: true; capabilities: string[] }
+  | { active: false; reason: 'ISSUER_DISABLED' | 'ISSUER_LOST_ACCESS' };
+
+export async function apiTokenIssuerAccess(
+  token: { created_by: string; project_id: string; capabilities: string[] },
+  db: Kysely<Database>
+): Promise<ApiTokenIssuerAccess> {
+  const issuer = await new UserRepository(db).findById(token.created_by);
+  if (!issuer || issuer.status !== 'ACTIVE') return { active: false, reason: 'ISSUER_DISABLED' };
+  const held = new Set(await new RoleRepository(db).evaluatePermissions(issuer.id, token.project_id));
+  if (!held.has('API_TOKEN_MANAGE') && !held.has('SYSTEM_ADMIN')) return { active: false, reason: 'ISSUER_LOST_ACCESS' };
+  return { active: true, capabilities: token.capabilities.filter((c) => held.has(c)) };
+}
+
+/**
  * Authenticates a request presenting a machine API token (Authorization: Bearer
  * tf_ci_...) instead of a JWT. Produces the same AuthenticatedUser shape as the JWT path
  * so every downstream consumer (request.user!.id/.permissions/etc.) keeps working
@@ -137,6 +164,12 @@ async function authenticateApiToken(
     return null;
   }
 
+  const issuerAccess = await apiTokenIssuerAccess(token, db);
+  if (!issuerAccess.active) {
+    sendTokenIssuerInactiveError(reply, issuerAccess.reason, request.url);
+    return null;
+  }
+
   try {
     await tokenRepo.touchLastUsed(token.id);
   } catch {
@@ -153,7 +186,7 @@ async function authenticateApiToken(
     username: token.name,
     email: '',
     global_role: 'ServiceAccount',
-    permissions: token.capabilities,
+    permissions: issuerAccess.capabilities,
     api_token: { id: token.id, project_id: token.project_id },
   };
 

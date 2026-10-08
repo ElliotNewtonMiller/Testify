@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository, SessionRepository, RoleName } from '@testify/db';
+import { UserRepository, RoleRepository, SessionRepository, ApiTokenRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
@@ -240,10 +240,16 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const wasLocked = !!target.locked_until && new Date(target.locked_until).getTime() > Date.now();
 
     let updatedUser;
+    let revokedTokens = 0;
     try {
       updatedUser = await guard.run(activeUser, [{ userId, projectId: null }], async (trx) => {
-        // Disabling an account also ends its sessions (re-enabling must not revive them).
-        if (status === 'DISABLED') await new SessionRepository(trx).revokeAllForUser(userId);
+        // Disabling an account (usually offboarding) ends its sessions and revokes the API tokens
+        // it issued, for good: re-enabling the account doesn't revive either. (A demotion only
+        // suspends tokens -- see apiTokenIssuerAccess.)
+        if (status === 'DISABLED') {
+          await new SessionRepository(trx).revokeAllForUser(userId);
+          revokedTokens = await new ApiTokenRepository(trx).revokeAllIssuedBy(userId);
+        }
         if (status === 'ACTIVE') await new UserRepository(trx).resetLoginFailures(userId);
         return new UserRepository(trx).updateStatus(userId, status);
       });
@@ -262,7 +268,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         action: status === 'DISABLED' ? 'USER_DISABLED' : wasLocked ? 'ACCOUNT_UNLOCKED' : 'USER_ACTIVATED',
         resource_type: 'user',
         resource_id: userId,
-        diff: JSON.stringify({ status }),
+        diff: JSON.stringify(status === 'DISABLED' ? { status, api_tokens_revoked: revokedTokens } : { status }),
         ip_address: '127.0.0.1',
         user_agent: 'TestifyAdminService',
         created_at: now,
