@@ -31,7 +31,7 @@ import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
-import { resolveDatabaseConfig, resolveInitialAdminPassword, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, ConfigError } from './config.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
@@ -56,7 +56,12 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     return reply.status(500).send({ error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR', request_id: request.id });
   });
 
-  await app.register(cors, { origin: '*' });
+  // Browser access from other origins only for those listed in CORS_ORIGINS (none by default);
+  // see resolveCorsOrigins in config.ts.
+  const corsOrigins = resolveCorsOrigins();
+  if (corsOrigins.length > 0) {
+    await app.register(cors, { origin: corsOrigins });
+  }
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
 
   // `options.db` lets tests start a second server against the same database -- a restart.

@@ -76,3 +76,33 @@ export function resolveInitialAdminPassword(
   // 24 characters: long enough that the policy needs no particular character types.
   return { password: randomBytes(18).toString('base64url'), mustChangePassword: true, source: 'generated' };
 }
+
+/**
+ * Which other web origins may call the API from a browser (CORS), from CORS_ORIGINS: a
+ * comma-separated list of exact origins, e.g. "https://testify.example.com". Unset means none --
+ * the web app calls the API on its own address (Vite's proxy in development), so it needs no CORS,
+ * and neither do API tokens, CI or MCP clients, which aren't browsers. Set it only when the web
+ * app is served from a different address than the API. "*" is refused: any page could then read
+ * API responses with a token it got hold of.
+ */
+export function resolveCorsOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.CORS_ORIGINS?.trim();
+  if (!raw) return [];
+  const origins: string[] = [];
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    if (entry === '*') {
+      throw new ConfigError('CORS_ORIGINS="*" isn\'t allowed: list the exact origins the web app is served from, e.g. CORS_ORIGINS=https://testify.example.com');
+    }
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new ConfigError(`CORS_ORIGINS: "${entry}" isn't a valid origin. Use e.g. https://testify.example.com`);
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.origin !== entry.replace(/\/$/, '')) {
+      throw new ConfigError(`CORS_ORIGINS: "${entry}" must be just a scheme, host and optional port (no path), e.g. https://testify.example.com`);
+    }
+    origins.push(url.origin);
+  }
+  return [...new Set(origins)];
+}
