@@ -11,9 +11,11 @@
  *   leaves the window. This slows down guessing across many accounts. Behind a reverse proxy,
  *   set TRUST_PROXY=true so the real client address is used instead of the proxy's.
  */
-export const ACCOUNT_LOCK_THRESHOLD = 5;
+export const ACCOUNT_LOCK_THRESHOLD = 20;
 export const ACCOUNT_LOCK_SECONDS = 15 * 60;
-export const IP_FAILURE_LIMIT = 20;
+// Kept above ACCOUNT_LOCK_THRESHOLD: someone locking their own account from one address should
+// see the account lock (which an admin can clear), not an address block nobody can clear.
+export const IP_FAILURE_LIMIT = 50;
 export const IP_WINDOW_SECONDS = 15 * 60;
 
 export class IpFailureLimiter {

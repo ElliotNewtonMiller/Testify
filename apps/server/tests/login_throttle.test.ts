@@ -17,8 +17,8 @@ describe('Sign-in limits', () => {
   let app: any;
   let db: any;
 
-  const login = (username: string, password: string) =>
-    app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username, password } });
+  const login = (username: string, password: string, remoteAddress = '127.0.0.1') =>
+    app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username, password }, remoteAddress });
   const body = (res: any) => JSON.parse(res.payload || '{}');
   const call = (token: string, method: string, url: string, payload?: unknown) =>
     app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, payload });
@@ -38,7 +38,7 @@ describe('Sign-in limits', () => {
     return body(res).user.id as string;
   }
 
-  it('locks an account after repeated wrong passwords, even against the right one, until an admin unlocks it', async () => {
+  it('locks an account after repeated wrong passwords, even against the right one, until an admin unlocks it', { timeout: 60_000 }, async () => {
     const adminToken = body(await login('admin', 'password')).token;
     const userId = await createUser(adminToken, 'alice');
 
@@ -63,23 +63,26 @@ describe('Sign-in limits', () => {
     expect((await login('alice', 'Right-Pass-123')).statusCode).toBe(200);
   });
 
-  it('a successful sign-in resets the count, and the lock expires on its own', async () => {
+  it('a successful sign-in resets the count, and the lock expires on its own', { timeout: 60_000 }, async () => {
     const adminToken = body(await login('admin', 'password')).token;
     const userId = await createUser(adminToken, 'bob');
-    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD - 1; i++) await login('bob', 'wrong');
-    expect((await login('bob', 'Right-Pass-123')).statusCode).toBe(200);
-    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD - 1; i++) await login('bob', 'wrong');
-    expect((await login('bob', 'Right-Pass-123')).statusCode).toBe(200); // never reached the limit in a row
+    // Each phase from its own address, so the per-address limit doesn't get in the way.
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD - 1; i++) await login('bob', 'wrong', '10.0.0.1');
+    expect((await login('bob', 'Right-Pass-123', '10.0.0.1')).statusCode).toBe(200);
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD - 1; i++) await login('bob', 'wrong', '10.0.0.2');
+    expect((await login('bob', 'Right-Pass-123', '10.0.0.2')).statusCode).toBe(200); // never reached the limit in a row
 
-    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i++) await login('bob', 'wrong');
-    expect((await login('bob', 'Right-Pass-123')).statusCode).toBe(429);
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i++) await login('bob', 'wrong', '10.0.0.3');
+    const locked = await login('bob', 'Right-Pass-123', '10.0.0.3');
+    expect(locked.statusCode).toBe(429);
+    expect(JSON.parse(locked.payload).code).toBe('ACCOUNT_LOCKED'); // the account lock, not the address limit
     await db.updateTable('users').set({ locked_until: new Date(Date.now() - 1000).toISOString() }).where('id', '=', userId).execute();
     expect((await login('bob', 'Right-Pass-123')).statusCode).toBe(200);
     const row = await db.selectFrom('users').select(['failed_login_count', 'locked_until']).where('id', '=', userId).executeTakeFirst();
     expect(row).toEqual({ failed_login_count: 0, locked_until: null });
   });
 
-  it('wrong current passwords on the password-change form count toward the lock', async () => {
+  it('wrong current passwords on the password-change form count toward the lock', { timeout: 60_000 }, async () => {
     const adminToken = body(await login('admin', 'password')).token;
     await createUser(adminToken, 'carol');
     const token = body(await login('carol', 'Right-Pass-123')).token;
@@ -102,5 +105,5 @@ describe('Sign-in limits', () => {
     expect(blocked.statusCode).toBe(429);
     expect(body(blocked).code).toBe('TOO_MANY_ATTEMPTS');
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
-  }, 30_000);
+  }, 60_000);
 });
