@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository, RoleName } from '@testify/db';
+import { UserRepository, RoleRepository, SessionRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
@@ -236,9 +236,11 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
     let updatedUser;
     try {
-      updatedUser = await guard.run(activeUser, [{ userId, projectId: null }], (trx) =>
-        new UserRepository(trx).updateStatus(userId, status)
-      );
+      updatedUser = await guard.run(activeUser, [{ userId, projectId: null }], async (trx) => {
+        // Disabling an account also ends its sessions (re-enabling must not revive them).
+        if (status === 'DISABLED') await new SessionRepository(trx).revokeAllForUser(userId);
+        return new UserRepository(trx).updateStatus(userId, status);
+      });
     } catch (err) {
       if (sendGuardError(reply, err)) return;
       throw err;

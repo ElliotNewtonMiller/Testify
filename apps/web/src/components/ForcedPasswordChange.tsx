@@ -35,6 +35,7 @@ const labelStyle: React.CSSProperties = {
  * and printed in the server log.
  */
 export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswordChangeProps) {
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +56,7 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
         },
-        body: JSON.stringify({ newPassword }),
+        body: JSON.stringify({ newPassword, currentPassword }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
@@ -105,6 +106,17 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
           choose your own before continuing. Use at least 16 characters, or 8–15 with a number, an uppercase letter and a symbol.
         </p>
 
+        <label htmlFor="current-password" style={labelStyle}>Current password</label>
+        <input
+          id="current-password"
+          type="password"
+          autoComplete="current-password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          required
+          autoFocus
+          style={{ ...inputStyle, marginBottom: '16px' }}
+        />
         <label htmlFor="new-password" style={labelStyle}>New password</label>
         <input
           id="new-password"
@@ -113,7 +125,6 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           required
-          autoFocus
           style={{ ...inputStyle, marginBottom: '16px' }}
         />
         <label htmlFor="confirm-password" style={labelStyle}>Confirm new password</label>

@@ -6,4 +6,4 @@ export * from './seeds/seed_core_loop.js';
 export * from './seeds/seed_rbac_registry.js';
 export * from './seeds/seed_dev_fixtures.js';
 export * as migration001 from './migrations/001_initial_schema.js';
-export { migrateToLatest, MIGRATIONS } from './migrations/index.js';
+export { migrateToLatest, migrateDownAll, MIGRATIONS } from './migrations/index.js';

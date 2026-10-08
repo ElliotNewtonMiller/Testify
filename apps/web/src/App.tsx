@@ -1579,7 +1579,12 @@ export default function App() {
   // Logout handler
   const handleLogout = useCallback(async () => {
     try {
-      await fetch("/api/v1/auth/logout", { method: "POST" });
+      // Sends the token so the server ends this session (it stops working everywhere).
+      const storedToken = localStorage.getItem("auth_token");
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+        headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {},
+      });
     } catch {
       // Ignore network error on logout
     }

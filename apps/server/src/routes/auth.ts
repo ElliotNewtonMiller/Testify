@@ -1,13 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository } from '@testify/db';
-import { signJwt } from '@testify/core';
+import { UserRepository, RoleRepository, SessionRepository } from '@testify/db';
+import { signJwt, verifyJwt } from '@testify/core';
 import { authenticateRequest } from '../middleware/auth.js';
+
+/** How long a sign-in lasts (the login token and its session expire together). */
+const SESSION_LIFETIME_SECONDS = 60 * 60;
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
+  const sessionRepo = new SessionRepository(db);
 
   // POST /api/v1/auth/login
   app.post('/api/v1/auth/login', async (request, reply) => {
@@ -26,8 +30,10 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const globalRole = await roleRepo.getUserGlobalRole(user.id);
     const permissions = await roleRepo.evaluatePermissions(user.id);
 
-    // Sign a real HMAC-SHA256 JWT (1 hour lifetime) -- see packages/core/src/security/jwt.ts.
-    const token = signJwt({ sub: user.id, username: user.username }, jwtSecret);
+    // Each sign-in gets a server-side session the token names (`sid`), so it can be ended
+    // before the token expires -- see SessionRepository and authenticateRequest.
+    const session = await sessionRepo.create(user.id, SESSION_LIFETIME_SECONDS);
+    const token = signJwt({ sub: user.id, username: user.username, sid: session.id }, jwtSecret, SESSION_LIFETIME_SECONDS);
 
     return reply.status(200).send({
       token,
@@ -42,8 +48,15 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     });
   });
 
-  // POST /api/v1/auth/logout
-  app.post('/api/v1/auth/logout', async (_request, reply) => {
+  // POST /api/v1/auth/logout -- ends the caller's session, so its token stops working. Always
+  // answers 200 (signing out with a missing or already-dead token is still "signed out").
+  app.post('/api/v1/auth/logout', async (request, reply) => {
+    const header = request.headers['authorization'];
+    const result = typeof header === 'string' && header.startsWith('Bearer ') ? verifyJwt(header.substring(7), jwtSecret) : null;
+    const sessionId = result?.valid ? result.payload?.sid : undefined;
+    if (typeof sessionId === 'string' && (await sessionRepo.findActive(sessionId, result!.payload!.sub))) {
+      await sessionRepo.revoke(sessionId);
+    }
     return reply.status(200).send({ message: 'Successfully logged out' });
   });
 
@@ -60,7 +73,18 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const activeUser = await authenticateRequest(request, reply, db, jwtSecret);
     if (!activeUser) return;
 
-    const { newUsername, newPassword, newEmail } = (request.body as any) || {};
+    const { newUsername, newPassword, newEmail, currentPassword } = (request.body as any) || {};
+
+    // A new password needs the current one, so a stolen session token alone can't take over
+    // the account.
+    if (newPassword) {
+      if (!currentPassword) {
+        return reply.status(400).send({ error: 'Enter your current password to set a new one.', code: 'CURRENT_PASSWORD_REQUIRED' });
+      }
+      if (!(await userRepo.isCurrentPassword(activeUser.id, currentPassword))) {
+        return reply.status(403).send({ error: 'Your current password is incorrect.', code: 'CURRENT_PASSWORD_INCORRECT' });
+      }
+    }
 
     // A user who must change their password (e.g. the first admin's generated one) has to pick
     // a new, different one; that's the only change they can make until they do.
@@ -94,6 +118,9 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
         newPassword,
       });
 
+      // A new password ends every other sign-in of this account (this one stays).
+      const endedSessions = newPassword ? await sessionRepo.revokeAllForUser(activeUser.id, activeUser.session_id) : 0;
+
       // Audit credential change
       const now = new Date().toISOString();
       await db
@@ -105,7 +132,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
           action: 'CREDENTIALS_CHANGED',
           resource_type: 'user',
           resource_id: activeUser.id,
-          diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email, password_changed: !!newPassword }),
+          diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email, password_changed: !!newPassword, other_sessions_ended: endedSessions }),
           ip_address: '127.0.0.1',
           user_agent: 'TestifyAuthService',
           created_at: now,

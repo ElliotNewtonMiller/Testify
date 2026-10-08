@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository, ApiTokenRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
+import { UserRepository, RoleRepository, ApiTokenRepository, SessionRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
 import { verifyJwt } from '@testify/core';
 import { sendInvalidTokenError, sendTokenRevokedError, sendTokenExpiredError, sendTokenProjectMismatchError } from '../errors.js';
 
@@ -14,6 +14,8 @@ export interface AuthenticatedUser {
   /** The user must choose a new password; until then only the routes in
    * PASSWORD_CHANGE_ALLOWED_ROUTES work. Never set for API tokens. */
   must_change_password?: boolean;
+  /** The sign-in this request belongs to (see SessionRepository). Absent for API tokens. */
+  session_id?: string;
   /** Present only when authenticated via a machine API token (see authenticateApiToken
    * below). Lets project-binding-sensitive routes (ingestion.ts, batchExecution.ts)
    * enforce "this token may only touch its own project." Absent for JWT-authenticated
@@ -213,6 +215,14 @@ export async function authenticateRequest(
 
   const userId = result.payload.sub;
 
+  // Every login token names its server-side session; signing out or changing your password
+  // ends sessions, so a copied token stops working then rather than when it expires.
+  const sessionId = typeof result.payload.sid === 'string' ? result.payload.sid : null;
+  if (!sessionId || !(await new SessionRepository(db).findActive(sessionId, userId))) {
+    reply.status(401).send({ error: 'Unauthorized: this session has ended -- please sign in again' });
+    return null;
+  }
+
   const user = await userRepo.findById(userId);
   if (!user || user.status === 'DISABLED') {
     reply.status(401).send({ error: 'Unauthorized: User account is invalid or disabled' });
@@ -234,6 +244,7 @@ export async function authenticateRequest(
     global_role: globalRole,
     permissions,
     must_change_password: user.must_change_password,
+    session_id: sessionId,
   };
 
   request.user = authUser;

@@ -318,4 +318,14 @@ export interface Database {
   system_settings: SystemSettingsTable;
   report_schedules: ReportSchedulesTable;
   last_email: LastEmailTable;
+  sessions: SessionsTable;
+}
+
+/** One row per sign-in (migration 003). The login token carries the id as `sid`. */
+export interface SessionsTable {
+  id: string;
+  user_id: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
 }

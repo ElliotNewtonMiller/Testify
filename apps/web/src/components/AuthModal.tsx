@@ -26,13 +26,15 @@ export function AuthModal({
   onLoginSuccess,
   onUpdateCredentialsSuccess,
 }: AuthModalProps) {
-  const [identifier, setIdentifier] = useState<string>("admin");
-  const [password, setPassword] = useState<string>("password");
+  const [identifier, setIdentifier] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
 
   const [newUsername, setNewUsername] = useState<string>(
     currentUser?.username || "",
   );
   const [newPassword, setNewPassword] = useState<string>("");
+  // Required by the server for a password change, so a stolen session can't take the account.
+  const [currentPassword, setCurrentPassword] = useState<string>("");
   const [newEmail, setNewEmail] = useState<string>(currentUser?.email || "");
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -74,6 +76,10 @@ export function AuthModal({
     setSuccessMessage(null);
 
     if (newPassword) {
+      if (!currentPassword) {
+        setErrorMessage("Enter your current password to set a new one.");
+        return;
+      }
       const validation = validatePasswordPolicy(newPassword);
       if (!validation.valid) {
         setErrorMessage(`Password Policy Violation: ${validation.reason}`);
@@ -96,6 +102,7 @@ export function AuthModal({
             newUsername !== currentUser?.username ? newUsername : undefined,
           newEmail: newEmail !== currentUser?.email ? newEmail : undefined,
           newPassword: newPassword || undefined,
+          currentPassword: newPassword ? currentPassword : undefined,
         }),
       });
 
@@ -104,9 +111,14 @@ export function AuthModal({
         throw new Error(data.error || "Failed to update credentials");
       }
 
-      setSuccessMessage("Credentials updated successfully!");
+      setSuccessMessage(
+        newPassword
+          ? "Password changed. You've been signed out everywhere else."
+          : "Credentials updated successfully!",
+      );
       onUpdateCredentialsSuccess(data.user);
       setNewPassword("");
+      setCurrentPassword("");
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to update credentials");
     } finally {
@@ -380,6 +392,25 @@ export function AuthModal({
                   fontSize: "13px",
                 }}
               />
+              {newPassword && (
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Current password (required to change it)"
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    marginTop: "8px",
+                    backgroundColor: "#1e293b",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "13px",
+                  }}
+                />
+              )}
               <div
                 style={{
                   fontSize: "11px",

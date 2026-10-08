@@ -115,6 +115,7 @@ describe('Auth & Admin API Integration Tests', () => {
       headers: authHeaders,
       payload: {
         newPassword: 'weak',
+        currentPassword: 'password',
       },
     });
 
@@ -128,6 +129,7 @@ describe('Auth & Admin API Integration Tests', () => {
       headers: authHeaders,
       payload: {
         newPassword: 'correct horse battery staple 2026',
+        currentPassword: 'password',
       },
     });
 

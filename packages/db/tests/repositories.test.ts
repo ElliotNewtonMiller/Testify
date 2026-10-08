@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Kysely } from 'kysely';
 import { createDbClient } from '../src/client.js';
 import type { Database } from '../src/types.js';
-import * as initialSchema from '../src/migrations/001_initial_schema.js';
-import { migrateToLatest } from '../src/migrations/index.js';
+import { migrateToLatest, migrateDownAll } from '../src/migrations/index.js';
 import {
   ProjectRepository,
   TestSuiteRepository,
@@ -42,7 +41,7 @@ describe('Repositories', () => {
 
   afterEach(async () => {
     try {
-      await initialSchema.down(db);
+      await migrateDownAll(db);
     } finally {
       await db.destroy();
     }

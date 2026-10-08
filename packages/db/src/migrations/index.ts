@@ -1,6 +1,7 @@
-import { Migrator, sql, type Kysely, type Migration } from 'kysely';
+import { Migrator, NO_MIGRATIONS, sql, type Kysely, type Migration } from 'kysely';
 import * as m001 from './001_initial_schema.js';
 import * as m002 from './002_password_change_required.js';
+import * as m003 from './003_sessions.js';
 
 /**
  * Every schema migration, in the order they run. The keys are permanent names, recorded in
@@ -13,6 +14,7 @@ import * as m002 from './002_password_change_required.js';
 export const MIGRATIONS: Record<string, Migration> = {
   '001_initial_schema': m001,
   '002_password_change_required': m002,
+  '003_sessions': m003,
 };
 
 const MIGRATION_TABLE = 'kysely_migration';
@@ -35,6 +37,16 @@ export async function migrateToLatest(db: Kysely<any>): Promise<string[]> {
     throw new Error(`Database migration${failed ? ` ${failed}` : ''} failed: ${reason}`);
   }
   return (results ?? []).filter((r) => r.status === 'Success').map((r) => r.migrationName);
+}
+
+/**
+ * Rolls back every applied migration, newest first, via each one's `down`. For tests that
+ * tear a schema down again; never called by the server.
+ */
+export async function migrateDownAll(db: Kysely<any>): Promise<void> {
+  const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+  const { error } = await migrator.migrateTo(NO_MIGRATIONS);
+  if (error) throw error instanceof Error ? error : new Error(String(error));
 }
 
 /**
