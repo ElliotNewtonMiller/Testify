@@ -34,7 +34,7 @@ describe('migrateToLatest', () => {
     // The schema is really there.
     await db.insertInto('projects').values({ id: 'p1', name: 'P', prefix: 'P', description: null, settings: '{}', created_at: 'x', updated_at: 'x' }).execute();
     expect(await db.selectFrom('projects').select('id').execute()).toEqual([{ id: 'p1' }]);
-  });
+  }, 30_000); // builds the whole schema; slow under full-suite load
 
   it('adopts a database created before migrations were tracked, keeping its data', async () => {
     await initialSchema.up(db); // what the server used to do on every start

@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { BuildRepository, CustomFieldRepository, ProjectRepository, RoleRepository, TestCaseVersionRepository, TestPlanRepository } from '@testify/db';
+import { BuildRepository, CustomFieldRepository, ProjectRepository, TestCaseVersionRepository, TestPlanRepository } from '@testify/db';
 import { REPORT_CATALOG, REPORT_DEFINITIONS, renderRunSummaryMarkdown, validateReportParams, type ReportDefinition, type RunSummaryReport } from '@testify/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { authenticateRequest, type AuthenticatedUser } from '../middleware/auth.js';
+import { authenticateRequest, canViewProject, type AuthenticatedUser } from '../middleware/auth.js';
 import { ReportError, ReportService } from '../services/reportService.js';
 import { CaseFilterService } from '../services/caseFilterService.js';
 
@@ -64,13 +64,8 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
   const buildRepo = new BuildRepository(db);
   const versionRepo = new TestCaseVersionRepository(db);
   const customFieldRepo = new CustomFieldRepository(db);
-  const roleRepo = new RoleRepository(db);
 
-  async function canView(user: AuthenticatedUser, projectId: string): Promise<boolean> {
-    if (user.api_token) return user.api_token.project_id === projectId && user.permissions.includes('SPEC_VIEW');
-    const permissions = await roleRepo.evaluatePermissions(user.id, projectId);
-    return permissions.includes('SPEC_VIEW') || permissions.includes('SYSTEM_ADMIN');
-  }
+  const canView = (user: AuthenticatedUser, projectId: string) => canViewProject(user, projectId, db);
 
   async function requireProject(user: AuthenticatedUser, projectId: unknown): Promise<string> {
     if (typeof projectId !== 'string' || !projectId) throw new ToolError('project_id is required (see list_projects).');

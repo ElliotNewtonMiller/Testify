@@ -799,7 +799,7 @@ describe('Specification / Plan Curation Routes', () => {
     });
 
     it('deleting a plan cascades to delete its runs too', async () => {
-      const { app, seed } = serverInstance;
+      const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
 
       const forcedRes = await app.inject({
@@ -814,11 +814,9 @@ describe('Specification / Plan Curation Routes', () => {
         url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
         headers: { authorization: `Bearer ${token}` },
       });
-      // The plan itself is gone, but this listing route doesn't verify plan ownership (a
-      // pre-existing, narrow gap -- see exports.ts) so it still 200s with an empty array
-      // rather than 404ing; the meaningful assertion is that the build row is really gone.
-      expect(listRes.statusCode).toBe(200);
-      expect(JSON.parse(listRes.payload).builds).toHaveLength(0);
+      // The plan is gone, so listing its runs 404s; and the run rows really are deleted.
+      expect(listRes.statusCode).toBe(404);
+      expect(await db.selectFrom('builds').select('id').where('test_plan_id', '=', seed.planId).execute()).toEqual([]);
     });
   });
 });

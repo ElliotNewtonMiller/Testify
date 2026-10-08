@@ -23,6 +23,17 @@ describe('Core Operational Loop E2E Integration Test', () => {
     return { total_executions: executions.length, executions, steps, auditLogs };
   }
 
+  /** The seeded plan's execution queue for the seeded run, as Execute mode loads it. */
+  async function planQueue(app: any, token: string, seed: any): Promise<any[]> {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body).cases;
+  }
+
   /** Logs in as the seeded initial admin and returns a real, signed Bearer token + user id. */
   async function loginAsAdmin(app: any): Promise<{ token: string; userId: string }> {
     const res = await app.inject({
@@ -40,17 +51,14 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const { token, userId: adminId } = await loginAsAdmin(app);
     const authHeaders = { authorization: `Bearer ${token}` };
 
-    // 1. Hydrate Workspace - Verify 10 test cases are seeded
-    const workspaceRes = await app.inject({
-      method: 'GET',
-      url: '/api/v1/workspace',
-    });
+    // 1. Hydrate the workspace - verify the seeded project, suite and 10 test cases
+    const specRes = await app.inject({ method: 'GET', url: `/api/v1/projects/${seed.projectId}/spec-tree`, headers: authHeaders });
+    expect(specRes.statusCode).toBe(200);
+    const spec = JSON.parse(specRes.body);
+    expect(spec.project.prefix).toBe('SHOP');
+    expect(spec.suites.length).toBe(1);
 
-    expect(workspaceRes.statusCode).toBe(200);
-    const workspace = JSON.parse(workspaceRes.body);
-
-    expect(workspace.project.prefix).toBe('SHOP');
-    expect(workspace.suites.length).toBe(1);
+    const workspace = { cases: await planQueue(app, token, seed) };
     expect(workspace.cases.length).toBe(10);
     expect(workspace.cases[0].external_id).toBe('SHOP-101');
     expect(workspace.cases[0].latest_verdict).toBe('UNTESTED');
@@ -136,12 +144,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(verification.auditLogs[0].actor_id).toBe(adminId);
 
     // 5. Re-fetch workspace to confirm updated verdicts in queue list
-    const updatedWorkspaceRes = await app.inject({
-      method: 'GET',
-      url: '/api/v1/workspace',
-    });
-
-    const updatedWorkspace = JSON.parse(updatedWorkspaceRes.body);
+    const updatedWorkspace = { cases: await planQueue(app, token, seed) };
     expect(updatedWorkspace.cases[0].latest_verdict).toBe('PASSED');
     expect(updatedWorkspace.cases[1].latest_verdict).toBe('FAILED');
     expect(updatedWorkspace.cases[2].latest_verdict).toBe('UNTESTED');
@@ -151,8 +154,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const { app, db, seed } = serverInstance;
     const { token: adminToken } = await loginAsAdmin(app);
 
-    const workspaceRes = await app.inject({ method: 'GET', url: '/api/v1/workspace' });
-    const targetCase = JSON.parse(workspaceRes.body).cases[0];
+    const targetCase = (await planQueue(app, adminToken, seed))[0];
 
     const payload = {
       build_id: seed.buildId,
@@ -198,5 +200,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
   it('has no unauthenticated route that dumps results and audit logs', async () => {
     const res = await serverInstance.app.inject({ method: 'GET', url: '/api/v1/executions/verify' });
     expect(res.statusCode).toBe(404);
+    // Nor the legacy, login-free GET /api/v1/workspace (removed 2026-10-08).
+    expect((await serverInstance.app.inject({ method: 'GET', url: '/api/v1/workspace' })).statusCode).toBe(404);
   });
 });

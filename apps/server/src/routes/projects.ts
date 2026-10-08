@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
-import { authenticateRequest, requirePermission } from '../middleware/auth.js';
+import { authenticateRequest, requirePermission, canViewProject } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
 
@@ -33,7 +33,11 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
-    const projects = await projectRepo.findAll();
+    // Only the projects the caller may read (SPEC_VIEW there, per-project overrides included).
+    const projects = [];
+    for (const project of await projectRepo.findAll()) {
+      if (await canViewProject(user, project.id, db)) projects.push(project);
+    }
     return { projects };
   });
 
@@ -174,9 +178,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       .execute();
   }
 
-  app.get('/api/v1/projects/:projectId/plans', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/projects/:projectId/plans', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
     const project = await projectRepo.findById(projectId);

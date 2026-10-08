@@ -51,12 +51,13 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   // picker. No existing route returns just a plan's builds (BuildRepository.findByTestPlan
   // is otherwise only ever called from inside the much heavier GET .../test-plans/:id/cases,
   // which also joins every case + step + latest execution -- too expensive just for a
-  // dropdown). Matches GET /api/v1/projects/:projectId/plans's precedent: authenticated,
-  // no extra permission gate (browsing available builds isn't itself an export).
-  app.get('/api/v1/projects/:projectId/plans/:planId/builds', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
-    const { planId } = request.params as { projectId: string; planId: string };
+  // dropdown). Needs SPEC_VIEW on the project, like every other read.
+  app.get('/api/v1/projects/:projectId/plans/:planId/builds', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+    const { projectId, planId } = request.params as { projectId: string; planId: string };
+    const plan = await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst();
+    if (!plan || plan.project_id !== projectId) {
+      return reply.status(404).send({ error: 'Test plan not found in this project' });
+    }
     const builds = await buildRepo.findByTestPlan(planId);
     return reply.status(200).send({ builds });
   });

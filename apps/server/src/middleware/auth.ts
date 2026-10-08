@@ -75,6 +75,14 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   return { projectId: found.size === 1 ? [...found][0] : null };
 }
 
+/** Whether the caller may read a project at all (SPEC_VIEW there, or SYSTEM_ADMIN). An API
+ * token only ever sees its own project. */
+export async function canViewProject(user: AuthenticatedUser, projectId: string, db: Kysely<Database>): Promise<boolean> {
+  if (user.api_token) return user.api_token.project_id === projectId && user.permissions.includes('SPEC_VIEW');
+  const permissions = await new RoleRepository(db).evaluatePermissions(user.id, projectId);
+  return permissions.includes('SPEC_VIEW') || permissions.includes('SYSTEM_ADMIN');
+}
+
 /** A caller's permissions within one project: an API token's are fixed; a user's are
  * re-evaluated so their per-project role and overrides apply. */
 export async function permissionsInProject(user: AuthenticatedUser, projectId: string, db: Kysely<Database>): Promise<string[]> {

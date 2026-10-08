@@ -1168,6 +1168,17 @@ Reported: a user with a custom "User Manager" role (`USER_MANAGE`) couldn't mana
 
 Test: `admin_roles_and_overrides.test.ts` now asserts the permission list is readable by any signed-in user (and not anonymously). 489/489 tests pass. Verified live in a separate browser origin: a Test Lead sees only API Tokens with a populated capability grid; a custom-field-only user sees only Custom Fields; changing a role in the Matrix saves immediately; a Viewer pressing `p` and a Tester with a project-scoped deny both get the yellow banner, and the case stays untested.
 
+## Fixed: read routes only checked login, not SPEC_VIEW; removed the login-free legacy workspace route (2026-10-08)
+
+Audit item 7 (`docs/audit_2026-10-07.md`). These reads accepted any signed-in user, whatever their access to the project: a project's plans, a plan's runs, the spec tree, a case's latest version, a plan's cases (the Execute queue), and case/suite custom-field values. `GET /api/v1/projects` listed every project to everyone.
+
+- **The seven reads now use `requirePermission('SPEC_VIEW')`.** Since every request resolves its project (`resolveRequestProject`, see the 2026-10-07 project-scoping entry), that check is per project: per-project roles and overrides apply, and an API token only reads its own project.
+- **`GET /api/v1/projects` lists only projects the caller can read**, via the new `canViewProject(user, projectId, db)` (`middleware/auth.ts`: SPEC_VIEW there or SYSTEM_ADMIN; a token only its own project). The MCP server's private `canView` now delegates to it, so `list_projects` and the REST list agree.
+- **Two ownership checks the explicit `:projectId` was hiding:** `GET /projects/:projectId/plans/:planId/builds` never checked the plan belonged to the project (so a caller allowed on A could list B's runs by putting B's plan under A's path), and `GET .../spec-tree?plan_id=` didn't either. Both now 404 for a plan from another project.
+- **Removed `GET /api/v1/workspace`**: it needed no login at all and only served the test-only sample project; the app hasn't used it since the per-plan routes existed. `core_loop_e2e.test.ts` now reads the spec tree and the plan's cases instead. This closes the rest of audit item 34's "legacy routes".
+
+New tests: `apps/server/tests/read_permissions.test.ts` (4 -- a role without SPEC_VIEW gets 403 on all seven reads and an empty project list while a Viewer reads them all; a per-project SPEC_VIEW deny hides just that project; a token lists only its own project; another project's plan 404s through this project's path). All four fail on the previous code. `spec_and_plan_curation.test.ts`'s plan-cascade test now expects the 404 for a deleted plan's runs and checks the rows directly (its comment had flagged exactly this ownership gap). 493/493. Full-suite runs on this machine sometimes time out a different heavy test each run under load (they pass alone); the heaviest new test and the migrations test got 30s timeouts.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

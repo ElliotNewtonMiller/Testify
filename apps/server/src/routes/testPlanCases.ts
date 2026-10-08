@@ -115,9 +115,7 @@ export async function registerTestPlanCaseRoutes(
   // plan-inclusion counts) + a lightweight case list (no steps -- see the latest-version
   // endpoint below for detail). Cases whose latest version is DEPRECATED are omitted (from
   // both the list and the tree counts) unless include_deprecated=true.
-  app.get('/api/v1/projects/:projectId/spec-tree', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/projects/:projectId/spec-tree', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
     const { plan_id: planId, include_deprecated: includeDeprecatedParam } = request.query as {
@@ -143,6 +141,10 @@ export async function registerTestPlanCaseRoutes(
 
     let planCaseByCaseId = new Map<string, { id: string; test_case_version_id: string }>();
     if (planId) {
+      const plan = await planRepo.findById(planId);
+      if (!plan || plan.project_id !== projectId) {
+        return reply.status(404).send({ error: 'Test plan not found in this project' });
+      }
       const pinnedCases = await planRepo.getPinnedCases(planId);
       planCaseByCaseId = new Map(pinnedCases.map((pc) => [pc.test_case_id, pc]));
     }
@@ -196,9 +198,7 @@ export async function registerTestPlanCaseRoutes(
 
   // GET /api/v1/test-cases/:caseId/latest-version -- lazy per-case detail (summary,
   // preconditions, steps), fetched only when a case row is opened in Specification mode.
-  app.get('/api/v1/test-cases/:caseId/latest-version', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/test-cases/:caseId/latest-version', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
@@ -218,9 +218,7 @@ export async function registerTestPlanCaseRoutes(
   // parameterized by plan instead of hardcoded to the seed plan (unlike GET /api/v1/workspace).
   // When build_id is given (or defaulted to the plan's most recent build), each case is
   // annotated with its latest execution verdict for that build, same as the old endpoint did.
-  app.get('/api/v1/test-plans/:planId/cases', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/test-plans/:planId/cases', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { planId } = request.params as { planId: string };
     const { build_id: requestedBuildId } = request.query as { build_id?: string };

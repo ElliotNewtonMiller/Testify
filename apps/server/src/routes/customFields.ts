@@ -268,9 +268,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   // mutation is gated by PLAN_MANAGE, matching every other Spec-mode curation route in
   // testPlanCases.ts) ----
 
-  app.get('/api/v1/test-cases/:caseId/custom-field-values', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/test-cases/:caseId/custom-field-values', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
@@ -324,9 +322,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.get('/api/v1/test-suites/:suiteId/custom-field-values', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, db, jwtSecret);
-    if (!user) return;
+  app.get('/api/v1/test-suites/:suiteId/custom-field-values', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { suiteId } = request.params as { suiteId: string };
     const suite = await suiteRepo.findById(suiteId);
