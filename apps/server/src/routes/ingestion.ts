@@ -24,7 +24,7 @@ import {
   type SkippedCustomFieldValueWarning,
 } from '@testify/core';
 import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
-import { sendTokenProjectMismatchError } from '../errors.js';
+import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage } from '../errors.js';
 
 // The web wizard sends the file base64-encoded inside a JSON body (~1.33x the file size).
 // Fastify's default 1 MB body limit cut real TestLink exports off mid-upload -- the request
@@ -362,7 +362,10 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
       return reply.status(200).send(result);
     } catch (err) {
-      return reply.status(400).send({ error: (err as Error).message });
+      // A problem with the file (parse errors, missing file) is the user's to fix; anything else
+      // is unexpected and answered by the global error handler.
+      if (!isPublicError(err)) throw err;
+      return reply.status(400).send({ error: err.message });
     }
   });
 
@@ -708,7 +711,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
                     skippedCustomFieldValueWarnings.push({
                       case_external_id_or_title: tc.external_id || tc.title,
                       incoming_key: k,
-                      reason: err.message || 'Validation failed',
+                      reason: publicErrorMessage(err, 'Could not save this value', req),
                     });
                   }
                 }
@@ -774,7 +777,10 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
           : {}),
       });
     } catch (err) {
-      return reply.status(400).send({ error: (err as Error).message });
+      // A problem with the file (parse errors, missing file) is the user's to fix; anything else
+      // is unexpected and answered by the global error handler.
+      if (!isPublicError(err)) throw err;
+      return reply.status(400).send({ error: err.message });
     }
   });
 

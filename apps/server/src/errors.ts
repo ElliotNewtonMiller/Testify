@@ -353,3 +353,32 @@ export function sendProjectInUseError(
     invalid_params: [{ name: 'project_id', reason: `Contains ${parts.join(', ')}` }],
   });
 }
+
+// ---- Unexpected errors: never send their details to the client ----
+
+/**
+ * Whether an error's message is meant for users. The code throws plain `Error`s on purpose with
+ * readable messages ("PASSWORD_POLICY_VIOLATION: ...", "Cannot move a suite into itself", a
+ * parser's "line 3: ..."). Anything else -- a database driver error (table names, constraint
+ * names, SQL), a TypeError, any other subclass -- is a bug or an outage, and its message stays in
+ * the server log.
+ */
+export function isPublicError(err: unknown): err is Error {
+  return err instanceof Error && Object.getPrototypeOf(err) === Error.prototype;
+}
+
+/** The error's message if it's meant for users, otherwise `fallback` (and the error is logged). */
+export function publicErrorMessage(err: unknown, fallback: string, request?: { id?: string; method?: string; url?: string }): string {
+  if (isPublicError(err)) return err.message;
+  logServerError(err, request);
+  return fallback;
+}
+
+export function logServerError(err: unknown, request?: { id?: string; method?: string; url?: string }): void {
+  if (process.env.NODE_ENV === 'test') return;
+  const where = request ? ` ${request.method ?? ''} ${request.url ?? ''} (request ${request.id ?? '?'})` : '';
+  console.error(`[testify] Unexpected error${where}:`, err);
+}
+
+/** The generic reply for an unexpected error. The request id lets an admin find it in the log. */
+export const INTERNAL_ERROR_MESSAGE = 'Something went wrong on the server. Please try again; if it keeps happening, ask an administrator to check the server log.';

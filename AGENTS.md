@@ -1208,6 +1208,17 @@ New tests: `apps/server/tests/login_throttle.test.ts` (5 -- the limiter's window
 
 Known trade-off: an account lock can be triggered deliberately by anyone who knows a username (that's inherent to lockouts); the per-address limit and the 15-minute expiry keep it bounded, and an admin can unlock at once.
 
+## Fixed: server errors exposed internals (2026-10-08)
+
+Audit item 10 (`docs/audit_2026-10-07.md`). Fastify's default 500 reply carried the error message -- for a database failure that's SQL, table and constraint names -- and six routes returned `err.message` in their own 500s (`admin.ts` create user / create role / update role, `customFields.ts` create / update, `auth.ts` credentials). A few catch-all 400s did the same (spec moves, import dry-run/execute, custom-field value saves, import value warnings).
+
+- **The rule** (`errors.ts`): `isPublicError(err)` is true only for a plain `Error` -- what this code throws on purpose with a readable message ("PASSWORD_POLICY_VIOLATION: ...", "Cannot move a suite into itself", a parser's line error). Database driver errors, `TypeError`s and every other subclass are unexpected, and their messages stay in the server log. `publicErrorMessage(err, fallback, request?)` applies it and logs what it hides; `logServerError` writes `[testify] Unexpected error <method> <url> (request <id>): ...` (silent under `NODE_ENV=test`).
+- **Global handler** (`server.ts`, `app.setErrorHandler`): an error with a 4xx `statusCode` (Fastify's own -- bad JSON, body too large, ...) keeps its status and message; anything else is logged and answered `500 {error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR', request_id}`. The request id matches the log line, so a user's report can be traced.
+- **Routes**: the six `err.message` 500s now `throw err` to the handler. The catch-alls keep a message only when `isPublicError`, otherwise rethrow (spec moves in `specEditing.ts`, both import routes, both custom-field value routes); import value warnings use `publicErrorMessage(..., 'Could not save this value')`. Scheduled report emails record a `ReportError`'s message ("run not found" etc.) or a public one, otherwise "Could not build the email (see the server log)" -- that text shows in the schedules list.
+- Deliberately kept: SMTP errors stored in "Last email" (visible only to `SYSTEM_ADMIN`, and needed to fix mail settings), `ReportError`s in the reports and report-email routes, and MCP tool errors (only `ToolError`/`ReportError` are returned; anything else already propagated).
+
+New tests: `apps/server/tests/error_handling.test.ts` (4 -- the public/hidden rule; a test-only route hitting a missing table and one throwing a TypeError both get the generic 500 with a request id and none of the details; a real route (`GET .../report-schedules`) after its table is dropped hides the table name and SQL; bad JSON and a password-policy error still explain themselves). The two leak tests fail without the handler. 506/506.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

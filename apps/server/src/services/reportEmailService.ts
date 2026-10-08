@@ -4,6 +4,7 @@ import { BuildRepository, ProjectRepository, ReportScheduleRepository, RoleRepos
 import { EMAILABLE_REPORTS, findReport, nextRunAt, renderReportEmail, validateReportParams, type EmailSection, type RenderedEmail } from '@testify/core';
 import { ReportError, ReportService } from './reportService.js';
 import { loadEmailSettings, sendEmail } from './mailer.js';
+import { publicErrorMessage } from '../errors.js';
 
 /** One report in a manually sent email: a catalog report id and its params. */
 export interface EmailReportRequest {
@@ -176,7 +177,10 @@ export class ReportEmailService {
         }
       }
     } catch (err) {
-      result = { status: 'FAILED', error: err instanceof Error ? err.message : String(err) };
+      // Shown in the schedules list: report errors ("run not found") are fine to show; anything
+      // unexpected (e.g. a database error) is logged and summarised.
+      const error = err instanceof ReportError ? err.message : publicErrorMessage(err, 'Could not build the email (see the server log).');
+      result = { status: 'FAILED', error };
     }
     await this.scheduleRepo.recordResult(schedule.id, { status: result.status, error: result.error });
     return result;

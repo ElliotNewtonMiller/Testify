@@ -10,7 +10,7 @@ import {
   type CustomFieldType,
 } from '@testify/core';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
-import { sendCustomFieldInUseError, sendProblemDetails } from '../errors.js';
+import { sendCustomFieldInUseError, sendProblemDetails, isPublicError } from '../errors.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
   return typeof value === 'string' && (CUSTOM_FIELD_ENTITY_TYPES as readonly string[]).includes(value);
@@ -144,7 +144,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
           return reply.status(409).send({ error: err.message });
         }
-        return reply.status(500).send({ error: err.message || 'Failed to create custom field' });
+        throw err; // unexpected: the global error handler logs it and answers 500
       }
     }
   );
@@ -217,7 +217,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
           return reply.status(409).send({ error: err.message });
         }
-        return reply.status(500).send({ error: err.message || 'Failed to update custom field' });
+        throw err; // unexpected: the global error handler logs it and answers 500
       }
     }
   );
@@ -299,6 +299,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         if (err.message?.startsWith('UNKNOWN_FIELD')) {
           return reply.status(404).send({ error: err.message });
         }
+        if (!isPublicError(err)) throw err;
         return sendProblemDetails(reply, {
           code: err.message?.split(':')[0] || 'INVALID_FIELD_VALUE',
           detail: err.message || 'Invalid custom field value',
@@ -353,6 +354,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         if (err.message?.startsWith('UNKNOWN_FIELD')) {
           return reply.status(404).send({ error: err.message });
         }
+        if (!isPublicError(err)) throw err;
         return sendProblemDetails(reply, {
           code: err.message?.split(':')[0] || 'INVALID_FIELD_VALUE',
           detail: err.message || 'Invalid custom field value',

@@ -11,6 +11,7 @@ import {
   sendCaseInUseError,
   sendProblemDetails,
   sendRequiredCustomFieldsMissingError,
+  isPublicError,
 } from '../errors.js';
 
 /**
@@ -124,7 +125,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         try {
           await suiteRepo.move(suiteId, parentSuiteId ?? null);
         } catch (err: any) {
-          return reply.status(400).send({ error: err.message || 'Failed to move suite' });
+          if (!isPublicError(err)) throw err;
+          return reply.status(400).send({ error: err.message });
         }
       }
 
@@ -445,7 +447,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
           }
         });
       } catch (err: any) {
-        return reply.status(400).send({ error: err.message || 'Failed to move' });
+        if (!isPublicError(err)) throw err;
+        return reply.status(400).send({ error: err.message });
       }
 
       await insertAuditLog({

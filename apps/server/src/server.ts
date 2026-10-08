@@ -25,7 +25,7 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
-import { sendCaseRemovedFromPlanError } from './errors.js';
+import { sendCaseRemovedFromPlanError, INTERNAL_ERROR_MESSAGE, logServerError } from './errors.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
@@ -43,6 +43,19 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
   const app = Fastify({ logger: false, trustProxy: process.env.TRUST_PROXY === 'true' });
+  // Unexpected errors (database errors, bugs) are logged here and answered with a generic
+  // message: their details -- SQL, table and constraint names, stack traces -- never reach the
+  // client. Fastify's own request errors (bad JSON, body too large, ...) are about the request,
+  // so they keep their status and message.
+  app.setErrorHandler((error: any, request, reply) => {
+    const status = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+    if (status >= 400 && status < 500) {
+      return reply.status(status).send({ error: error.message, code: error.code });
+    }
+    logServerError(error, request);
+    return reply.status(500).send({ error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR', request_id: request.id });
+  });
+
   await app.register(cors, { origin: '*' });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
 

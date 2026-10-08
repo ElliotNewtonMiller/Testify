@@ -145,7 +145,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION') || err.message?.startsWith('UNKNOWN_ROLE')) {
         return reply.status(400).send({ error: err.message });
       }
-      return reply.status(500).send({ error: err.message || 'Failed to create user' });
+      throw err; // unexpected: the global error handler logs it and answers 500
     }
   });
 
@@ -363,7 +363,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
         return reply.status(409).send({ error: err.message });
       }
-      return reply.status(500).send({ error: err.message || 'Failed to create role' });
+      throw err; // unexpected: the global error handler logs it and answers 500
     }
   });
 
@@ -420,7 +420,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
         return reply.status(409).send({ error: err.message });
       }
-      return reply.status(500).send({ error: err.message || 'Failed to update role' });
+      throw err; // unexpected: the global error handler logs it and answers 500
     }
   });
 

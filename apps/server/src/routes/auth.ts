@@ -223,7 +223,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
       if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION')) {
         return reply.status(400).send({ error: err.message });
       }
-      return reply.status(500).send({ error: err.message || 'Failed to update credentials' });
+      throw err; // unexpected: the global error handler logs it and answers 500
     }
   });
 }
