@@ -182,6 +182,29 @@ export class UserRepository {
     return (await this.findById(userId))!;
   }
 
+  /**
+   * Records a failed sign-in (or a wrong current password). Once `threshold` failures are in a
+   * row the account is locked for `lockSeconds`; while the count stays at or above the
+   * threshold, each further failure locks it again. Returns the lock time, or null if not locked.
+   */
+  async recordFailedLogin(userId: string, threshold: number, lockSeconds: number): Promise<string | null> {
+    const row = await this.db
+      .updateTable('users')
+      .set((eb) => ({ failed_login_count: eb('failed_login_count', '+', 1) }))
+      .where('id', '=', userId)
+      .returning('failed_login_count')
+      .executeTakeFirst();
+    if (!row || row.failed_login_count < threshold) return null;
+    const lockedUntil = new Date(Date.now() + lockSeconds * 1000).toISOString();
+    await this.db.updateTable('users').set({ locked_until: lockedUntil }).where('id', '=', userId).execute();
+    return lockedUntil;
+  }
+
+  /** Clears the failure count and any lock (after a successful sign-in, or an admin unlock). */
+  async resetLoginFailures(userId: string): Promise<void> {
+    await this.db.updateTable('users').set({ failed_login_count: 0, locked_until: null }).where('id', '=', userId).execute();
+  }
+
   /** True when `password` is this user's current password. */
   async isCurrentPassword(userId: string, password: string): Promise<boolean> {
     const user = await this.findById(userId);

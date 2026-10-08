@@ -206,6 +206,10 @@ export interface UsersTable {
   status: Generated<string>;
   /** Set when the user must choose a new password before using the app (migration 002). */
   must_change_password: Generated<boolean>;
+  /** Consecutive failed sign-ins (or wrong current passwords); reset on success (migration 004). */
+  failed_login_count: Generated<number>;
+  /** While in the future, sign-in is refused even with the right password (migration 004). */
+  locked_until: string | null;
   created_at: string;
   updated_at: string;
 }

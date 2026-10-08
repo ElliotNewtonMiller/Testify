@@ -29,6 +29,11 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (res.status === 429) {
+          // Locked account or too many attempts: say so and when to retry.
+          setErrorMessage(data.error || 'Too many failed sign-in attempts. Please wait and try again.');
+          return;
+        }
         throw new Error(data.error || 'The email and/or password are not correct.');
       }
 

@@ -49,6 +49,8 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           username: u.username,
           email: u.email,
           status: u.status,
+          // Set while the account is locked after too many failed sign-ins (loginThrottle.ts).
+          locked_until: u.locked_until && new Date(u.locked_until).getTime() > Date.now() ? u.locked_until : null,
           global_role: globalRole,
           project_roles: projectRoles,
           permissions,
@@ -230,15 +232,19 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       return reply.status(400).send({ error: 'Status must be ACTIVE or DISABLED' });
     }
 
-    if (!(await userRepo.findById(userId))) {
+    const target = await userRepo.findById(userId);
+    if (!target) {
       return reply.status(404).send({ error: 'User not found' });
     }
+    // Setting a user Active also clears a sign-in lock -- the Admin Panel's "Unlock".
+    const wasLocked = !!target.locked_until && new Date(target.locked_until).getTime() > Date.now();
 
     let updatedUser;
     try {
       updatedUser = await guard.run(activeUser, [{ userId, projectId: null }], async (trx) => {
         // Disabling an account also ends its sessions (re-enabling must not revive them).
         if (status === 'DISABLED') await new SessionRepository(trx).revokeAllForUser(userId);
+        if (status === 'ACTIVE') await new UserRepository(trx).resetLoginFailures(userId);
         return new UserRepository(trx).updateStatus(userId, status);
       });
     } catch (err) {
@@ -253,7 +259,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         id: crypto.randomUUID(),
         actor_id: activeUser.id,
         actor_type: 'USER',
-        action: status === 'DISABLED' ? 'USER_DISABLED' : 'USER_ACTIVATED',
+        action: status === 'DISABLED' ? 'USER_DISABLED' : wasLocked ? 'ACCOUNT_UNLOCKED' : 'USER_ACTIVATED',
         resource_type: 'user',
         resource_id: userId,
         diff: JSON.stringify({ status }),
@@ -290,6 +296,8 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'REPORT_SCHEDULE_DELETED',
       'EMAIL_SETTINGS_UPDATED',
       'PLAN_CASE_RETIRED',
+      'ACCOUNT_LOCKED',
+      'ACCOUNT_UNLOCKED',
     ];
 
     const logs = await db

@@ -2,6 +2,7 @@ import { Migrator, NO_MIGRATIONS, sql, type Kysely, type Migration } from 'kysel
 import * as m001 from './001_initial_schema.js';
 import * as m002 from './002_password_change_required.js';
 import * as m003 from './003_sessions.js';
+import * as m004 from './004_login_lockout.js';
 
 /**
  * Every schema migration, in the order they run. The keys are permanent names, recorded in
@@ -15,6 +16,7 @@ export const MIGRATIONS: Record<string, Migration> = {
   '001_initial_schema': m001,
   '002_password_change_required': m002,
   '003_sessions': m003,
+  '004_login_lockout': m004,
 };
 
 const MIGRATION_TABLE = 'kysely_migration';

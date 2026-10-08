@@ -40,7 +40,9 @@ import { UserRepository } from '@testify/db';
 // connect to a real Postgres server. The startup code at the bottom of this file decides which
 // from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
 export async function createServer(connectionString?: string, options: { db?: Kysely<Database> } = {}) {
-  const app = Fastify({ logger: false });
+  // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
+  // real client address rather than the proxy's.
+  const app = Fastify({ logger: false, trustProxy: process.env.TRUST_PROXY === 'true' });
   await app.register(cors, { origin: '*' });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
 

@@ -4,6 +4,8 @@ import { UserProfile } from "./AuthModal";
 
 interface UserItem extends UserProfile {
   status: "ACTIVE" | "DISABLED";
+  /** Set while the account is locked after too many failed sign-ins. */
+  locked_until?: string | null;
   project_roles: Array<{ project_id: string; role: string }>;
   overrides: PermissionOverride[];
   created_at: string;
@@ -495,8 +497,10 @@ export function AdminPanelModal({
     }
   };
 
-  const handleToggleStatus = async (userId: string, currentStatus: string) => {
-    const nextStatus = currentStatus === "ACTIVE" ? "DISABLED" : "ACTIVE";
+  // `forceStatus` "ACTIVE" on an active-but-locked user is the Unlock action: setting a user
+  // Active clears a sign-in lock on the server.
+  const handleToggleStatus = async (userId: string, currentStatus: string, forceStatus?: "ACTIVE") => {
+    const nextStatus = forceStatus ?? (currentStatus === "ACTIVE" ? "DISABLED" : "ACTIVE");
     setErrorMessage(null);
     try {
       const res = await fetch(`/api/v1/admin/users/${userId}/status`, {
@@ -1405,8 +1409,34 @@ export function AdminPanelModal({
                         >
                           {u.status}
                         </span>
+                        {u.locked_until && (
+                          <span
+                            title={`Locked after too many failed sign-ins, until ${new Date(u.locked_until).toLocaleTimeString()}`}
+                            style={{ color: "#fbbf24", fontWeight: 600, marginLeft: "6px" }}
+                          >
+                            🔒 LOCKED
+                          </span>
+                        )}
                       </td>
-                      <td style={{ padding: "8px", textAlign: "right" }}>
+                      <td style={{ padding: "8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        {u.locked_until && u.status === "ACTIVE" && (
+                          <button
+                            onClick={() => handleToggleStatus(u.id, u.status, "ACTIVE")}
+                            title="Clear the lock so they can sign in again now"
+                            style={{
+                              backgroundColor: "#92400e",
+                              border: "none",
+                              color: "#fff",
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              fontSize: "11px",
+                              cursor: "pointer",
+                              marginRight: "6px",
+                            }}
+                          >
+                            Unlock
+                          </button>
+                        )}
                         <button
                           onClick={() => handleToggleStatus(u.id, u.status)}
                           style={{

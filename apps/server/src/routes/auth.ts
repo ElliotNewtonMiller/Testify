@@ -4,6 +4,13 @@ import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, SessionRepository } from '@testify/db';
 import { signJwt, verifyJwt } from '@testify/core';
 import { authenticateRequest } from '../middleware/auth.js';
+import {
+  ACCOUNT_LOCK_SECONDS,
+  ACCOUNT_LOCK_THRESHOLD,
+  IpFailureLimiter,
+  accountLockSecondsLeft,
+  describeWait,
+} from '../services/loginThrottle.js';
 
 /** How long a sign-in lasts (the login token and its session expire together). */
 const SESSION_LIFETIME_SECONDS = 60 * 60;
@@ -12,6 +19,39 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
   const sessionRepo = new SessionRepository(db);
+  const ipLimiter = new IpFailureLimiter();
+
+  const tooManyAttempts = (reply: any, seconds: number, code: string, error: string) =>
+    reply.header('Retry-After', String(seconds)).status(429).send({ error, code, retry_after_seconds: seconds });
+
+  const accountLocked = (reply: any, seconds: number) =>
+    tooManyAttempts(
+      reply,
+      seconds,
+      'ACCOUNT_LOCKED',
+      `This account is locked after too many failed sign-in attempts. Try again in ${describeWait(seconds)}, or ask an administrator to unlock it.`
+    );
+
+  /** Counts a wrong password against the account; logs it in the audit log when that locks it. */
+  async function recordAccountFailure(userId: string, ip: string): Promise<void> {
+    const lockedUntil = await userRepo.recordFailedLogin(userId, ACCOUNT_LOCK_THRESHOLD, ACCOUNT_LOCK_SECONDS);
+    if (!lockedUntil) return;
+    await db
+      .insertInto('audit_logs')
+      .values({
+        id: crypto.randomUUID(),
+        actor_id: userId,
+        actor_type: 'SYSTEM',
+        action: 'ACCOUNT_LOCKED',
+        resource_type: 'user',
+        resource_id: userId,
+        diff: JSON.stringify({ locked_until: lockedUntil, reason: 'TOO_MANY_FAILED_SIGN_INS' }),
+        ip_address: ip,
+        user_agent: 'TestifyAuthService',
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+  }
 
   // POST /api/v1/auth/login
   app.post('/api/v1/auth/login', async (request, reply) => {
@@ -22,10 +62,31 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
       return reply.status(400).send({ error: 'Username/email and password are required' });
     }
 
+    // Guessing limits (services/loginThrottle.ts): this address, then this account.
+    const ip = request.ip;
+    const ipWait = ipLimiter.retryAfterSeconds(ip);
+    if (ipWait > 0) {
+      return tooManyAttempts(
+        reply,
+        ipWait,
+        'TOO_MANY_ATTEMPTS',
+        `Too many failed sign-in attempts from your network. Try again in ${describeWait(ipWait)}.`
+      );
+    }
+    const account = await userRepo.findByUsernameOrEmail(identifier);
+    const lockWait = accountLockSecondsLeft(account?.locked_until);
+    if (account && lockWait > 0) {
+      ipLimiter.recordFailure(ip); // not checked against the password, but still an attempt
+      return accountLocked(reply, lockWait);
+    }
+
     const user = await userRepo.verifyCredentials(identifier, password);
     if (!user) {
+      ipLimiter.recordFailure(ip);
+      if (account && account.status !== 'DISABLED') await recordAccountFailure(account.id, ip);
       return reply.status(401).send({ error: 'Invalid credentials or user account disabled' });
     }
+    if (user.failed_login_count > 0 || user.locked_until) await userRepo.resetLoginFailures(user.id);
 
     const globalRole = await roleRepo.getUserGlobalRole(user.id);
     const permissions = await roleRepo.evaluatePermissions(user.id);
@@ -77,13 +138,19 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
 
     // A new password needs the current one, so a stolen session token alone can't take over
     // the account.
+    // Wrong guesses here count toward the same account lock as sign-in.
     if (newPassword) {
       if (!currentPassword) {
         return reply.status(400).send({ error: 'Enter your current password to set a new one.', code: 'CURRENT_PASSWORD_REQUIRED' });
       }
+      const self = await userRepo.findById(activeUser.id);
+      const lockWait = accountLockSecondsLeft(self?.locked_until);
+      if (lockWait > 0) return accountLocked(reply, lockWait);
       if (!(await userRepo.isCurrentPassword(activeUser.id, currentPassword))) {
+        await recordAccountFailure(activeUser.id, request.ip);
         return reply.status(403).send({ error: 'Your current password is incorrect.', code: 'CURRENT_PASSWORD_INCORRECT' });
       }
+      if (self && self.failed_login_count > 0) await userRepo.resetLoginFailures(activeUser.id);
     }
 
     // A user who must change their password (e.g. the first admin's generated one) has to pick
