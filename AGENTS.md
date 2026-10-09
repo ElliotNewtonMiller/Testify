@@ -1329,6 +1329,22 @@ Audit item 17 (`docs/audit_2026-10-07.md`). A TEXT custom field's validation pat
 
 New tests: `packages/core/tests/validationPattern.test.ts` (4 -- save-time checks incl. the length boundary; normal matches; `^(a+)+$` is stopped well under 2s and the next check still works; `parseCustomFieldValue` uses it, incl. a stored pattern that doesn't compile). `custom_fields_admin_and_values.test.ts` +1 (a pattern that doesn't compile, or is too long, gets 400 on create and update; a catastrophic pattern can be saved but a value that would hang it gets 422 "took too long" in under 3s, and ordinary values still save). 537/537.
 
+## Fixed: Execute mode showed two fake test cases (2026-10-09)
+
+Audit item 18 (`docs/audit_2026-10-07.md`). `App.tsx`'s `DEFAULT_FALLBACK_WORKSPACE` held two made-up cases (TFY-101 "Verify initial superuser admin login...", TFY-102) under a fake project/plan/build. It was the workspace's initial value and what `refreshExecutionWorkspace` fell back to whenever no plan was selected or the plan's cases failed to load. So Execute mode could show cases that don't exist, and pressing a verdict key on one posted against ids the server didn't know.
+
+- Replaced by `EMPTY_WORKSPACE` (no cases, blank project/plan/build -- only `workspace.cases` is read anywhere).
+- New `execWorkspaceStatus` state (`NO_PLAN | LOADING | READY | ERROR`), set by `refreshExecutionWorkspace`. Switching to a different plan shows `LOADING`; refreshing the same plan keeps its cases on screen (compared through a `workspaceRef`).
+- Pane 3 in Execute mode used to render nothing when there was no active case. It now says why:
+  - "There are no projects yet."
+  - "Select or create a test plan to start executing tests."
+  - "Loading test cases…"
+  - "Couldn't load this test plan's cases." with a Retry button.
+  - "This test plan has no test cases yet. Add some in Spec mode." (the second sentence only with SPEC_VIEW)
+  - "No test case selected."
+
+No new automated tests (client-side state). Web tests 54/54; `tsc --noEmit` clean. Verified live in a separate browser origin: a project with no plans, an empty plan, and the demo plan (its 12 real cases, no TFY-10x anywhere) each show the right thing. A simulated failed load of the plan's cases shows the error with Retry, and Retry loads the 12 cases.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

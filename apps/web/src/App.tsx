@@ -216,82 +216,33 @@ function useStepsScrollPreserved(
   return { captureScroll, blurActiveElement, scheduleRestore };
 }
 
-const DEFAULT_FALLBACK_WORKSPACE: WorkspaceData = {
-  project: { id: "prj_01", name: "Testify Core", prefix: "TFY" },
-  suites: [
-    { id: "ste_01", name: "Authentication & Security", path: "/Security" },
-    { id: "ste_02", name: "Execution Engine & Dual Driver", path: "/CoreLoop" },
-    { id: "ste_03", name: "RBAC & Admin Management", path: "/Admin" },
-  ],
-  plan: { id: "pln_01", name: "v1.0 Acceptance Plan", status: "ACTIVE" },
-  build: { id: "bld_01", name: "Build 2026.09.09-RC1", status: "OPEN" },
-  cases: [
-    {
-      plan_case_id: "tpc_01",
-      case_id: "cas_01",
-      external_id: "TFY-101",
-      title: "Verify initial superuser admin login & password policy",
-      priority: "HIGH",
-      execution_type: "MANUAL",
-      version_number: 1,
-      summary:
-        "Validates admin / password initial credentials and password complexity rules.",
-      preconditions: "System initialized with database seed.",
-      steps: [
-        {
-          id: "stp_01",
-          step_number: 1,
-          action: "Navigate to Log In page",
-          expected_result:
-            "Log In form renders with username and password fields",
-        },
-        {
-          id: "stp_02",
-          step_number: 2,
-          action: "Enter admin / password and click Log In",
-          expected_result: "Authenticates user and opens 3-pane workspace",
-        },
-      ],
-      latest_verdict: "PASSED",
-      latest_execution_id: "exec_01",
-    },
-    {
-      plan_case_id: "tpc_02",
-      case_id: "cas_02",
-      external_id: "TFY-102",
-      title: "Verify explicit per-project role enforcement & RBAC Admin Panel",
-      priority: "CRITICAL",
-      execution_type: "AUTOMATED",
-      version_number: 1,
-      summary:
-        "Validates 2-tier permission evaluation and admin user roster management.",
-      preconditions:
-        "User logged in with USER_MANAGE or SYSTEM_ADMIN privilege.",
-      steps: [
-        {
-          id: "stp_03",
-          step_number: 1,
-          action: "Click Admin Panel button in header",
-          expected_result:
-            "3-tab Admin Panel opens showing User Roster, Matrix, and Security Audit Log",
-        },
-      ],
-      latest_verdict: "UNTESTED",
-      latest_execution_id: null,
-    },
-  ],
+// Execute mode before (or without) a loaded plan: nothing to show. (This used to be two
+// made-up cases, TFY-101/102, which appeared whenever no plan was selected or a load failed.)
+const EMPTY_WORKSPACE: WorkspaceData = {
+  project: { id: "", name: "", prefix: "" },
+  suites: [],
+  plan: { id: "", name: "", status: "" },
+  build: { id: "", name: "", status: "" },
+  cases: [],
 };
+
+/** Why Execute mode has (or hasn't) cases to show. */
+type ExecWorkspaceStatus = "NO_PLAN" | "LOADING" | "READY" | "ERROR";
 
 /** A Reports link (#/reports/...) opened directly: the view, tab and scope to start on. */
 const INITIAL_REPORTS_LINK = typeof window !== "undefined" ? parseReportsHash(window.location.hash) : null;
 
 export default function App() {
-  // Starts as the fallback placeholder, not null -- workspaceMode now defaults to
+  // Starts empty, not null -- workspaceMode now defaults to
   // SPECIFICATION, whose own bootstrap effect never calls refreshExecutionWorkspace() (only
   // Execution mode does), so a null initial value would leave this permanently unset and the
   // "Loading..." gate below stuck forever for anyone who starts (or stays) in Spec mode. The
   // real Execution-mode data still loads normally the moment the user actually switches modes.
-  const [workspace, setWorkspace] = useState<WorkspaceData | null>(DEFAULT_FALLBACK_WORKSPACE);
+  const [workspace, setWorkspace] = useState<WorkspaceData | null>(EMPTY_WORKSPACE);
+  const [execWorkspaceStatus, setExecWorkspaceStatus] = useState<ExecWorkspaceStatus>("NO_PLAN");
+  // Read by refreshExecutionWorkspace (a callback that shouldn't re-create on every load).
+  const workspaceRef = useRef<WorkspaceData | null>(workspace);
+  workspaceRef.current = workspace;
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [failureNotes, setFailureNotes] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("Connected");
@@ -1278,12 +1229,15 @@ export default function App() {
     const seq = ++runsListRequestSeq.current;
     if (!selectedPlanId) {
       if (runsListRequestSeq.current === seq) {
-        setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
+        setWorkspace(EMPTY_WORKSPACE);
+        setExecWorkspaceStatus("NO_PLAN");
         setRunsList([]);
         setSelectedRunId("");
       }
       return;
     }
+    // Only a different plan shows "Loading" -- a refresh of the same plan keeps its cases up.
+    setExecWorkspaceStatus((prev) => (prev === "READY" && workspaceRef.current?.plan.id === selectedPlanId ? prev : "LOADING"));
     try {
       const url = selectedRunId
         ? `/api/v1/test-plans/${selectedPlanId}/cases?build_id=${encodeURIComponent(selectedRunId)}`
@@ -1302,12 +1256,12 @@ export default function App() {
                 name: projectEntity.name,
                 prefix: projectEntity.prefix || "TFY",
               }
-            : DEFAULT_FALLBACK_WORKSPACE.project,
+            : EMPTY_WORKSPACE.project,
           suites: [],
           plan: { id: data.plan.id, name: data.plan.name, status: data.plan.status },
           build: builds[0]
             ? { id: builds[0].id, name: builds[0].name, status: builds[0].status }
-            : DEFAULT_FALLBACK_WORKSPACE.build,
+            : EMPTY_WORKSPACE.build,
           cases: data.cases.map((c: any) => ({
             plan_case_id: c.plan_case_id,
             case_id: c.case_id,
@@ -1326,6 +1280,7 @@ export default function App() {
             removed_from_plan: Boolean(c.removed_from_plan),
           })),
         });
+        setExecWorkspaceStatus("READY");
 
         // Always update runsList/selectedRunId, even when builds is empty -- a plan that
         // genuinely has zero runs must clear the dropdown, not leave the *previous* plan's
@@ -1348,7 +1303,9 @@ export default function App() {
       // API offline fallback
     }
     if (runsListRequestSeq.current === seq) {
-      setWorkspace(DEFAULT_FALLBACK_WORKSPACE);
+      // Show the failure (with Retry) rather than cases that aren't this plan's.
+      setWorkspace(EMPTY_WORKSPACE);
+      setExecWorkspaceStatus("ERROR");
       // Same staleness concern as above -- a failed fetch shouldn't leave a previous plan's
       // runs showing under the (now unconfirmed) currently-selected plan.
       setRunsList([]);
@@ -5512,7 +5469,55 @@ export default function App() {
                 />
               </div>
             </>
-          ) : null}
+          ) : (
+            // Execute mode with no case to show: say why, instead of a blank pane.
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "10px",
+                color: "#6b7280",
+                fontSize: "13px",
+                textAlign: "center",
+                padding: "24px",
+              }}
+            >
+              {execWorkspaceStatus === "LOADING" ? (
+                "Loading test cases…"
+              ) : execWorkspaceStatus === "ERROR" ? (
+                <>
+                  <span style={{ color: "#fca5a5" }}>Couldn't load this test plan's cases.</span>
+                  <button
+                    onClick={() => refreshExecutionWorkspace()}
+                    style={{
+                      padding: "5px 12px",
+                      backgroundColor: "#1f2937",
+                      border: "1px solid #374151",
+                      borderRadius: "4px",
+                      color: "#e5e7eb",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : execWorkspaceStatus === "NO_PLAN" ? (
+                projectsList.length === 0
+                  ? "There are no projects yet."
+                  : "Select or create a test plan to start executing tests."
+              ) : workspace.cases.length === 0 ? (
+                hasSpecViewPermission
+                  ? "This test plan has no test cases yet. Add some in Spec mode."
+                  : "This test plan has no test cases yet."
+              ) : (
+                "No test case selected."
+              )}
+            </div>
+          )}
         </div>
       </div>
       )}
