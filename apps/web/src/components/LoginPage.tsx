@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { UserProfile } from './AuthModal';
+import { authHeaders as sessionHeaders } from '../utils/session';
 
 interface LoginPageProps {
-  onLoginSuccess: (user: UserProfile, token: string) => void;
+  onLoginSuccess: (user: UserProfile) => void;
 }
 
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
@@ -23,8 +24,10 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
     try {
       const res = await fetch('/api/v1/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        headers: { 'Content-Type': 'application/json', ...sessionHeaders() },
+        // The server keeps the sign-in in an HttpOnly cookie (never readable here) rather
+        // than returning a token for this page to store.
+        body: JSON.stringify({ username, password, session: 'cookie' }),
       });
 
       if (!res.ok) {
@@ -39,15 +42,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
       const data = await res.json();
 
-      // Store auth session
-      if (data.token) {
-        localStorage.setItem('auth_token', data.token);
-      }
-      if (data.user?.id) {
-        localStorage.setItem('user_id', data.user.id);
-      }
-
-      onLoginSuccess(data.user, data.token);
+      onLoginSuccess(data.user);
     } catch (err: any) {
       // No client-side fallback session here: a failed/unreachable login must not silently grant
       // a fake Admin session. (Previously, hitting admin/password while the request errored out --

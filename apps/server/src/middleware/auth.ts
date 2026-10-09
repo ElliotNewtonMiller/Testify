@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { passesCsrfCheck, requestCredential } from '../sessionCookie.js';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, ApiTokenRepository, SessionRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
@@ -204,7 +205,8 @@ const PASSWORD_CHANGE_ALLOWED_ROUTES = new Set(['/api/v1/auth/me', '/api/v1/auth
 
 /**
  * Authenticates a request from its `Authorization: Bearer <...>` header -- either a
- * human JWT or a machine API token (tf_ci_...), dispatched by prefix.
+ * human JWT or a machine API token (tf_ci_...), dispatched by prefix -- or, failing that,
+ * from the web app's session cookie (a JWT; see sessionCookie.ts).
  *
  * There is no other way in: no `X-User-Id` impersonation header, and no fallback to
  * an admin (or any) user when the header is missing or invalid -- both existed here
@@ -222,13 +224,28 @@ export async function authenticateRequest(
   const userRepo = new UserRepository(db);
   const roleRepo = new RoleRepository(db);
 
-  const authHeader = request.headers['authorization'] as string | undefined;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // The Authorization header wins; the web app's HttpOnly session cookie is the fallback
+  // (see sessionCookie.ts).
+  const credential = requestCredential(request);
+  if (!credential) {
     reply.status(401).send({ error: 'Unauthorized: missing Bearer token' });
     return null;
   }
-
-  const token = authHeader.substring(7);
+  const token = credential.token;
+  if (credential.viaCookie) {
+    // The cookie only ever holds a sign-in token, never an API token.
+    if (token.startsWith(API_TOKEN_PREFIX)) {
+      reply.status(401).send({ error: 'Unauthorized: invalid session cookie' });
+      return null;
+    }
+    if (!passesCsrfCheck(request)) {
+      reply.status(403).send({
+        error: 'This request is missing the X-Testify-Client header that cookie-based sign-ins require.',
+        code: 'CSRF_HEADER_MISSING',
+      });
+      return null;
+    }
+  }
 
   const resolved = await resolveRequestProject(request, db);
   if ('conflict' in resolved) {

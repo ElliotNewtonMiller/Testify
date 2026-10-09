@@ -1,6 +1,7 @@
 import React from "react";
 import { EmailPreviewModal } from "../EmailSettingsPanel";
 import { buttonStyle } from "./shared";
+import { authHeaders as sessionHeaders } from "../../utils/session";
 
 /** One report in an email: a catalog report id and its params (same as the report API). */
 export interface EmailSectionRequest {
@@ -9,8 +10,7 @@ export interface EmailSectionRequest {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  return { "Content-Type": "application/json", ...sessionHeaders() };
 }
 
 const fieldStyle: React.CSSProperties = {

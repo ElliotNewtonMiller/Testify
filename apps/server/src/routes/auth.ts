@@ -4,6 +4,7 @@ import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, SessionRepository } from '@testify/db';
 import { signJwt, verifyJwt } from '@testify/core';
 import { authenticateRequest } from '../middleware/auth.js';
+import { clearSessionCookie, passesCsrfCheck, requestCredential, setSessionCookie } from '../sessionCookie.js';
 import {
   ACCOUNT_LOCK_SECONDS,
   ACCOUNT_LOCK_THRESHOLD,
@@ -55,11 +56,21 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
 
   // POST /api/v1/auth/login
   app.post('/api/v1/auth/login', async (request, reply) => {
-    const { username, email, password } = (request.body as any) || {};
+    const { username, email, password, session: sessionMode } = (request.body as any) || {};
     const identifier = username || email;
 
     if (!identifier || !password) {
       return reply.status(400).send({ error: 'Username/email and password are required' });
+    }
+    // `session: "cookie"` (the web app): the token goes into an HttpOnly cookie and is left out
+    // of the response, so page scripts never see it. Needs the same header as other
+    // cookie-authenticated changes, so another site can't sign a browser into an account.
+    const useCookie = sessionMode === 'cookie';
+    if (useCookie && !passesCsrfCheck(request)) {
+      return reply.status(403).send({
+        error: 'Cookie sign-in requires the X-Testify-Client header.',
+        code: 'CSRF_HEADER_MISSING',
+      });
     }
 
     // Guessing limits (services/loginThrottle.ts): this address, then this account.
@@ -96,8 +107,9 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const session = await sessionRepo.create(user.id, SESSION_LIFETIME_SECONDS);
     const token = signJwt({ sub: user.id, username: user.username, sid: session.id }, jwtSecret, SESSION_LIFETIME_SECONDS);
 
+    if (useCookie) setSessionCookie(request, reply, token, SESSION_LIFETIME_SECONDS);
     return reply.status(200).send({
-      token,
+      ...(useCookie ? {} : { token }),
       user: {
         id: user.id,
         username: user.username,
@@ -109,11 +121,13 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     });
   });
 
-  // POST /api/v1/auth/logout -- ends the caller's session, so its token stops working. Always
-  // answers 200 (signing out with a missing or already-dead token is still "signed out").
+  // POST /api/v1/auth/logout -- ends the caller's session, so its token stops working, and
+  // clears the web app's session cookie. Always answers 200 (signing out with a missing or
+  // already-dead token is still "signed out").
   app.post('/api/v1/auth/logout', async (request, reply) => {
-    const header = request.headers['authorization'];
-    const result = typeof header === 'string' && header.startsWith('Bearer ') ? verifyJwt(header.substring(7), jwtSecret) : null;
+    const credential = requestCredential(request);
+    const result = credential ? verifyJwt(credential.token, jwtSecret) : null;
+    clearSessionCookie(request, reply);
     const sessionId = result?.valid ? result.payload?.sid : undefined;
     if (typeof sessionId === 'string' && (await sessionRepo.findActive(sessionId, result!.payload!.sub))) {
       await sessionRepo.revoke(sessionId);

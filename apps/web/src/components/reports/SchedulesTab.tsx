@@ -1,5 +1,6 @@
 import React from "react";
 import { Empty, ErrorNote, InfoTip, Loading, Section, buttonStyle, fmtWhen, selectStyle } from "./shared";
+import { authHeaders as sessionHeaders } from "../../utils/session";
 
 type SectionKind = "overview" | "latest_run" | "test_health" | "plan_trend";
 
@@ -42,9 +43,8 @@ const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 const STATUS_COLORS: Record<string, string> = { SENT: "#4ade80", CAPTURED: "#7dd3fc", FAILED: "#f87171", SKIPPED: "#94a3b8" };
 
 async function api(method: string, url: string, body?: unknown) {
-  const token = localStorage.getItem("auth_token");
   // Content-Type only with a body: Fastify rejects an empty body declared as JSON.
-  const headers: Record<string, string> = { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) };
+  const headers: Record<string, string> = { ...sessionHeaders(), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) };
   const res = await fetch(url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || `Request failed (${res.status})`);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { UserProfile } from "./AuthModal";
+import { authHeaders as sessionHeaders } from "../utils/session";
 
 interface UserItem extends UserProfile {
   status: "ACTIVE" | "DISABLED";
@@ -278,13 +279,8 @@ export function AdminPanelModal({
     setJustCreatedToken(null);
   }, [tokenProjectScope]);
 
-  // Builds the Authorization header from the signed JWT in localStorage. The admin API
-  // requires a real Bearer token on every request (see apps/server/src/middleware/auth.ts) --
-  // there is no X-User-Id impersonation header anymore, so callers must always use this.
-  const getAuthHeaders = (): Record<string, string> => {
-    const token = localStorage.getItem("auth_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
+  // The session cookie authenticates; changes also need the client header (utils/session.ts).
+  const getAuthHeaders = (): Record<string, string> => sessionHeaders();
 
   const fetchUsers = async () => {
     setIsLoading(true);

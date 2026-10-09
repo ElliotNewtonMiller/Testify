@@ -37,6 +37,7 @@ import {
   EntityType,
   ActionType,
 } from "./components/EntityManagementModal";
+import { authHeaders as sessionHeaders } from "./utils/session";
 
 interface Step {
   id: string;
@@ -125,10 +126,8 @@ export interface CustomFieldValueEntry {
   value: unknown;
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// The sign-in is an HttpOnly cookie the browser sends itself; see utils/session.ts.
+const authHeaders = sessionHeaders;
 
 // Grows a textarea to fit its content instead of showing a scrollbar -- resetting height to
 // "auto" first (rather than just reading scrollHeight directly) is required so the element
@@ -767,13 +766,11 @@ export default function App() {
   // reordering, etc. is pure client-side state with zero requests) before the user finally
   // clicks Save/Approve -- so that click is often the first request issued after the token
   // has silently expired. Without this, the handler's generic catch surfaces the raw
-  // "Unauthorized: Token expired" server string and leaves the dead token in localStorage,
+  // "Unauthorized: Token expired" server string and leaves the user signed in on screen,
   // so every retry just fails the same way. Mirrors submitVerdict's existing 401 branch
-  // (clear the token, drop back to a logged-out state, toast a clear message) so every
+  // (drop back to a logged-out state, toast a clear message) so every
   // Spec-mode save handler behaves the same way execution recording already does.
   const handleAuthExpiry = useCallback(() => {
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("user_id");
     setCurrentUser(null);
     setUserPermissions([]);
     showToast("Session expired -- please log in again");
@@ -1536,22 +1533,22 @@ export default function App() {
     isExecutionCompleted: Boolean(isCompleted),
   });
 
-  // Fetch current user profile (/api/v1/auth/me). No client-side fallback session: if the
-  // server doesn't confirm the token, the user is logged out. (This used to fabricate a fake
-  // Admin session in the UI when a magic localStorage value was present or the request failed --
+  // Fetch current user profile (/api/v1/auth/me) using the session cookie. No client-side
+  // fallback session: if the server doesn't confirm it, the user is logged out. (This used to
+  // fabricate a fake Admin session in the UI when a magic value was present or the request failed --
   // that never granted real API access once the server started requiring signed tokens, but it
   // could show a misleading "logged in as admin" state. Removed 2026-09-11.)
   const fetchCurrentUser = useCallback(async () => {
     try {
-      const storedToken = localStorage.getItem("auth_token");
-      if (!storedToken) {
-        setCurrentUser(null);
-        return;
+      // Sign-ins from before the cookie existed left a token in localStorage; it's no longer used.
+      try {
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user_id");
+      } catch {
+        // Storage unavailable -- nothing to clean up.
       }
 
-      const res = await fetch("/api/v1/auth/me", {
-        headers: { Authorization: `Bearer ${storedToken}` },
-      });
+      const res = await fetch("/api/v1/auth/me", { headers: authHeaders() });
 
       if (res.ok) {
         const data = await res.json();
@@ -1562,10 +1559,7 @@ export default function App() {
           setCurrentUser(null);
         }
       } else {
-        // Token missing/expired/invalid per the server -- clear it so we don't keep retrying
-        // with a dead token, and show the login screen.
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("user_id");
+        // No sign-in, or it expired/was ended -- show the login screen.
         setCurrentUser(null);
       }
     } catch {
@@ -1579,17 +1573,11 @@ export default function App() {
   // Logout handler
   const handleLogout = useCallback(async () => {
     try {
-      // Sends the token so the server ends this session (it stops working everywhere).
-      const storedToken = localStorage.getItem("auth_token");
-      await fetch("/api/v1/auth/logout", {
-        method: "POST",
-        headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {},
-      });
+      // The server ends this session and clears the cookie.
+      await fetch("/api/v1/auth/logout", { method: "POST", headers: authHeaders() });
     } catch {
       // Ignore network error on logout
     }
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("user_id");
     setCurrentUser(null);
     setUserPermissions([]);
     showToast("Signed out successfully.");
@@ -2451,12 +2439,11 @@ export default function App() {
 
       // 2. DISPATCH BACKGROUND API CALL
       try {
-        const storedToken = localStorage.getItem("auth_token");
         const response = await fetch("/api/v1/executions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+            ...authHeaders(),
           },
           body: JSON.stringify({
             // The run selected in the dropdown -- workspace.build is always the plan's newest
@@ -2486,10 +2473,8 @@ export default function App() {
           }
         } else if (response.status === 401) {
           // Session expired or token invalid -- the server now requires a real, current
-          // JWT for this route (EXECUTE_RUN permission). Clear the dead token and drop back
-          // to the login screen rather than silently failing every subsequent keystroke.
-          localStorage.removeItem("auth_token");
-          localStorage.removeItem("user_id");
+          // sign-in for this route (EXECUTE_RUN permission). Drop back to the login screen
+          // rather than silently failing every subsequent keystroke.
           setCurrentUser(null);
           setUserPermissions([]);
           setSyncStatus("Session expired -- please log in again");
@@ -2697,7 +2682,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <LoginPage
-        onLoginSuccess={(user, _token) => {
+        onLoginSuccess={(user) => {
           setCurrentUser(user);
           setUserPermissions(user.permissions || []);
           showToast(`Welcome back, ${user.username}!`);

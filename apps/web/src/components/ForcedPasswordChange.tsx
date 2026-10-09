@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { UserProfile } from './AuthModal';
+import { authHeaders as sessionHeaders } from '../utils/session';
 
 interface ForcedPasswordChangeProps {
   user: UserProfile;
@@ -54,7 +55,7 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
+          ...sessionHeaders(),
         },
         body: JSON.stringify({ newPassword, currentPassword }),
       });

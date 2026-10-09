@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { validatePasswordPolicy } from "../../../../packages/core/src/security/passwordPolicy";
+import { authHeaders as sessionHeaders } from "../utils/session";
 
 export interface UserProfile {
   id: string;
@@ -15,7 +16,7 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile | null;
-  onLoginSuccess: (user: UserProfile, token: string) => void;
+  onLoginSuccess: (user: UserProfile) => void;
   onUpdateCredentialsSuccess: (updatedUser: UserProfile) => void;
 }
 
@@ -52,8 +53,8 @@ export function AuthModal({
     try {
       const res = await fetch("/api/v1/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: identifier, password }),
+        headers: { "Content-Type": "application/json", ...sessionHeaders() },
+        body: JSON.stringify({ username: identifier, password, session: "cookie" }),
       });
 
       const data = await res.json();
@@ -61,7 +62,7 @@ export function AuthModal({
         throw new Error(data.error || "Invalid credentials");
       }
 
-      onLoginSuccess(data.user, data.token);
+      onLoginSuccess(data.user);
       onClose();
     } catch (err: any) {
       setErrorMessage(err.message || "Login failed");
@@ -90,12 +91,11 @@ export function AuthModal({
     setIsLoading(true);
 
     try {
-      const storedToken = localStorage.getItem("auth_token");
       const res = await fetch("/api/v1/auth/credentials", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+          ...sessionHeaders(),
         },
         body: JSON.stringify({
           newUsername:

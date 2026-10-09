@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { UserProfile } from "./AuthModal";
+import { authHeaders as sessionHeaders } from "../utils/session";
 
 interface ProjectItem {
   id: string;
@@ -117,8 +118,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const getAuthHeaders = (): Record<string, string> => {
-    const token = localStorage.getItem("auth_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    return sessionHeaders();
   };
 
   useEffect(() => {

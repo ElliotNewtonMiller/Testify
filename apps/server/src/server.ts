@@ -59,10 +59,11 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   });
 
   // Browser access from other origins only for those listed in CORS_ORIGINS (none by default);
-  // see resolveCorsOrigins in config.ts.
+  // see resolveCorsOrigins in config.ts. `credentials` lets a listed origin use the web app's
+  // session cookie (only when it's the same site too -- the cookie is SameSite=Strict).
   const corsOrigins = resolveCorsOrigins();
   if (corsOrigins.length > 0) {
-    await app.register(cors, { origin: corsOrigins });
+    await app.register(cors, { origin: corsOrigins, credentials: true });
   }
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
 

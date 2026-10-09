@@ -1,4 +1,5 @@
 import React from "react";
+import { authHeaders as sessionHeaders } from "../../utils/session";
 
 /**
  * Shared pieces of the Reports view. Every number shown comes from the report API
@@ -25,8 +26,7 @@ export function useEmailContext(onEmailContext: ((ctx: EmailContext | null) => v
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return sessionHeaders();
 }
 
 /** Runs a report. JSON comes back parsed; markdown/csv as text. Throws with the server's message. */

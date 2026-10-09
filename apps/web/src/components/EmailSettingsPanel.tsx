@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { authHeaders as sessionHeaders } from "../utils/session";
 
 interface EmailSettings {
   smtp_host: string | null;
@@ -26,8 +27,7 @@ interface LastEmail {
 }
 
 function authHeaders(json = false): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { "Content-Type": "application/json" } : {}) };
+  return { ...sessionHeaders(), ...(json ? { "Content-Type": "application/json" } : {}) };
 }
 
 const inputStyle: React.CSSProperties = {

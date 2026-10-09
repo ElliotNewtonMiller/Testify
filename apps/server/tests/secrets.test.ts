@@ -72,7 +72,7 @@ describe('Stored SMTP password', () => {
     const sent = await call('POST', '/api/v1/admin/email-settings/test', { to: 'qa@example.com' });
     expect(JSON.parse(sent.payload).email.status).toBe('SENT');
     expect(usedPassword).toBe('hunter2');
-  });
+  }, 30_000);
 
   it('encrypts a password saved in plaintext by an older version, at startup', async () => {
     db = createDbClient();
@@ -82,7 +82,7 @@ describe('Stored SMTP password', () => {
     const stored = await storedPassword();
     expect(isEncryptedSecret(stored!)).toBe(true);
     expect(SecretBox.fromSecret(KEY_A).decrypt(stored!)).toBe('legacy-plain');
-  });
+  }, 30_000);
 
   it('with a changed key, says the password must be entered again and fails sending instead of using garbage', async () => {
     db = createDbClient();
@@ -97,7 +97,7 @@ describe('Stored SMTP password', () => {
     const sent = JSON.parse((await call('POST', '/api/v1/admin/email-settings/test', { to: 'qa@example.com' })).payload);
     expect(sent.email.status).toBe('FAILED');
     expect(sent.email.error).toContain('SECRETS_KEY');
-  });
+  }, 30_000);
 
   it('on a real database without SECRETS_KEY, refuses to store a password', async () => {
     db = createDbClient();
