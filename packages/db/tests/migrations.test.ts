@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { sql, type Kysely } from 'kysely';
+import { Migrator, sql, type Kysely } from 'kysely';
 import { createDbClient } from '../src/client.js';
 import type { Database } from '../src/types.js';
 import * as initialSchema from '../src/migrations/001_initial_schema.js';
@@ -59,5 +59,20 @@ describe('migrateToLatest', () => {
       expect(typeof m.up).toBe('function');
       expect(typeof m.down).toBe('function');
     }
+  });
+
+  it('005 renames BUILD_MANAGE to RUN_MANAGE in an existing database, including API token capabilities', async () => {
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('004_login_lockout')).error).toBeUndefined();
+    await db.insertInto('permissions').values({ id: 'perm-1', permission_key: 'BUILD_MANAGE', description: 'old', module: 'Planning' }).execute();
+    await db.insertInto('projects').values({ id: 'p1', name: 'P', prefix: 'P', description: null, settings: '{}', created_at: 'x', updated_at: 'x' }).execute();
+    await db.insertInto('api_tokens').values({
+      id: 't1', project_id: 'p1', name: 'ci', token_prefix: 'abc', token_hash: 'h', capabilities: '["SPEC_VIEW","BUILD_MANAGE"]',
+      created_by: 'u1', expires_at: null, is_revoked: 0, last_used_at: null, created_at: 'x',
+    } as any).execute();
+
+    await migrateToLatest(db);
+    expect(await db.selectFrom('permissions').select('permission_key').where('id', '=', 'perm-1').executeTakeFirst()).toEqual({ permission_key: 'RUN_MANAGE' });
+    expect((await db.selectFrom('api_tokens').select('capabilities').executeTakeFirst())?.capabilities).toBe('["SPEC_VIEW","RUN_MANAGE"]');
   });
 });

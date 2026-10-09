@@ -400,7 +400,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
             disabled={!runControl.canToggle || runControl.pending}
             title={
               !runControl.canToggle
-                ? "Requires run management permission (BUILD_MANAGE)"
+                ? "Requires run management permission (RUN_MANAGE)"
                 : runControl.closed
                   ? "Reopen this run so results can be recorded again"
                   : "Close this run -- no results can be recorded until it's reopened"

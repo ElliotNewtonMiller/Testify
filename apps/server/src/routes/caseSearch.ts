@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { ProjectRepository } from '@testify/db';
-import { requirePermission } from '../middleware/auth.js';
+import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { CaseFilterService } from '../services/caseFilterService.js';
 
 /**
@@ -24,7 +24,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
 
   app.get(
     '/api/v1/projects/:projectId/case-search/fields',
-    { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
+    { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {
@@ -36,7 +36,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
 
   app.post(
     '/api/v1/projects/:projectId/case-search',
-    { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
+    { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {

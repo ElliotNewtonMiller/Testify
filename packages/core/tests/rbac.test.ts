@@ -135,9 +135,9 @@ describe('applyPermissionOverrides', () => {
       [
         { permission_key: 'EXECUTE_RUN', is_granted: false },
         { permission_key: 'PLAN_MANAGE', is_granted: true },
-        { permission_key: 'BUILD_MANAGE', is_granted: true },
+        { permission_key: 'RUN_MANAGE', is_granted: true },
       ]
     );
-    expect(result.sort()).toEqual(['BUILD_MANAGE', 'PLAN_MANAGE', 'SPEC_VIEW']);
+    expect(result.sort()).toEqual(['PLAN_MANAGE', 'RUN_MANAGE', 'SPEC_VIEW']);
   });
 });

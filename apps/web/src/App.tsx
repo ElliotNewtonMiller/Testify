@@ -2509,7 +2509,7 @@ export default function App() {
     [activeCase, workspace, failureNotes, verdictBlockReason, selectedRunId, showToast],
   );
 
-  // Close Run / Open Run (Execute mode, next to "+ Filter"). BUILD_MANAGE-gated, same as
+  // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
   // every other run edit (PUT .../plans/:planId/builds/:buildId).
   const handleToggleRunClosed = useCallback(async () => {
     if (!selectedProjectId || !selectedPlanId || !selectedRunId || !selectedRun) return;
@@ -2666,6 +2666,14 @@ export default function App() {
         ? (existingVerdict as VerdictType)
         : "FAILED";
   }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
+
+  // Someone who can run tests but not view the spec works in Execute mode only.
+  const canViewSpec = userPermissions.includes("SPEC_VIEW") || userPermissions.includes("SYSTEM_ADMIN");
+  useEffect(() => {
+    if (currentUser && !canViewSpec && workspaceMode === "SPECIFICATION") {
+      setWorkspaceMode("EXECUTION");
+    }
+  }, [currentUser, canViewSpec, workspaceMode]);
 
   if (authChecking) {
     return (
@@ -2997,8 +3005,8 @@ export default function App() {
     queueCaseIndices.find((i) => i > selectedIndex) ?? crossSuiteNextCaseIndex;
 
   const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
-  const hasBuildManagePermission =
-    userPermissions.includes("BUILD_MANAGE") ||
+  const hasRunManagePermission =
+    userPermissions.includes("RUN_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
   const hasUserManagePermission =
     userPermissions.includes("USER_MANAGE") ||
@@ -3009,6 +3017,11 @@ export default function App() {
     hasUserManagePermission ||
     userPermissions.includes("CUSTOM_FIELD_MANAGE") ||
     userPermissions.includes("API_TOKEN_MANAGE");
+  // Header buttons for projects/plans/runs show only to people who can use them.
+  const hasProjectCreatePermission =
+    userPermissions.includes("PROJECT_CREATE") || userPermissions.includes("SYSTEM_ADMIN");
+  const hasProjectDeletePermission =
+    userPermissions.includes("PROJECT_DELETE") || userPermissions.includes("SYSTEM_ADMIN");
   const hasPlanManagePermission =
     userPermissions.includes("PLAN_MANAGE") ||
     userPermissions.includes("SYSTEM_ADMIN");
@@ -3176,47 +3189,53 @@ export default function App() {
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => openEntityModal("PROJECT", "CREATE")}
-              title="Create New Project"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ➕
-            </button>
-            <button
-              onClick={() => openEntityModal("PROJECT", "EDIT")}
-              disabled={!selectedProjectId}
-              title="Edit Selected Project"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ✏️
-            </button>
-            <button
-              onClick={handleDeleteProjectClick}
-              disabled={!selectedProjectId}
-              title="Delete Selected Project"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              🗑️
-            </button>
+            {hasProjectCreatePermission && (
+              <button
+                onClick={() => openEntityModal("PROJECT", "CREATE")}
+                title="Create New Project"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ➕
+              </button>
+            )}
+            {hasProjectCreatePermission && (
+              <button
+                onClick={() => openEntityModal("PROJECT", "EDIT")}
+                disabled={!selectedProjectId}
+                title="Edit Selected Project"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ✏️
+              </button>
+            )}
+            {hasProjectDeletePermission && (
+              <button
+                onClick={handleDeleteProjectClick}
+                disabled={!selectedProjectId}
+                title="Delete Selected Project"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                🗑️
+              </button>
+            )}
           </div>
 
           <span style={{ color: "#374151" }}>|</span>
@@ -3281,45 +3300,51 @@ export default function App() {
                 );
               })()}
             </select>
-            <button
-              onClick={() => openEntityModal("PLAN", "CREATE")}
-              title="Create New Test Plan"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ➕
-            </button>
-            <button
-              onClick={() => openEntityModal("PLAN", "EDIT")}
-              title="Edit Selected Test Plan"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ✏️
-            </button>
-            <button
-              onClick={() => selectedPlanId && handleDeletePlanClick(selectedPlanId)}
-              title="Delete Selected Test Plan"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              🗑️
-            </button>
+            {hasPlanManagePermission && (
+              <button
+                onClick={() => openEntityModal("PLAN", "CREATE")}
+                title="Create New Test Plan"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ➕
+              </button>
+            )}
+            {hasPlanManagePermission && (
+              <button
+                onClick={() => openEntityModal("PLAN", "EDIT")}
+                title="Edit Selected Test Plan"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ✏️
+              </button>
+            )}
+            {hasPlanManagePermission && (
+              <button
+                onClick={() => selectedPlanId && handleDeletePlanClick(selectedPlanId)}
+                title="Delete Selected Test Plan"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                🗑️
+              </button>
+            )}
           </div>
 
           <span style={{ color: "#374151" }}>|</span>
@@ -3349,45 +3374,51 @@ export default function App() {
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => (selectedPlanId ? openEntityModal("RUN", "CREATE") : setNoPlanSetWarning(true))}
-              title="Create New Test Run"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ➕
-            </button>
-            <button
-              onClick={() => openEntityModal("RUN", "EDIT")}
-              title="Edit Selected Test Run"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              ✏️
-            </button>
-            <button
-              onClick={() => selectedRunId && handleDeleteRunClick(selectedRunId)}
-              title="Delete Selected Test Run"
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: "2px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              🗑️
-            </button>
+            {hasRunManagePermission && (
+              <button
+                onClick={() => (selectedPlanId ? openEntityModal("RUN", "CREATE") : setNoPlanSetWarning(true))}
+                title="Create New Test Run"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ➕
+              </button>
+            )}
+            {hasRunManagePermission && (
+              <button
+                onClick={() => openEntityModal("RUN", "EDIT")}
+                title="Edit Selected Test Run"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ✏️
+              </button>
+            )}
+            {hasRunManagePermission && (
+              <button
+                onClick={() => selectedRunId && handleDeleteRunClick(selectedRunId)}
+                title="Delete Selected Test Run"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "2px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                🗑️
+              </button>
+            )}
           </div>
         </div>
 
@@ -3896,12 +3927,15 @@ export default function App() {
                   <button
                     key={m}
                     onClick={() => setWorkspaceMode(m)}
+                    disabled={m === "SPECIFICATION" && !hasSpecViewPermission}
+                    title={m === "SPECIFICATION" && !hasSpecViewPermission ? "Your role can't view test specifications" : undefined}
                     style={{
                       border: "none",
                       padding: "3px 8px",
                       fontSize: "10px",
                       fontWeight: 700,
-                      cursor: "pointer",
+                      cursor: m === "SPECIFICATION" && !hasSpecViewPermission ? "not-allowed" : "pointer",
+                      opacity: m === "SPECIFICATION" && !hasSpecViewPermission ? 0.4 : 1,
                       backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
                       color: workspaceMode === m ? "#ffffff" : "#9ca3af",
                     }}
@@ -3943,7 +3977,7 @@ export default function App() {
               workspaceMode === "EXECUTION" && selectedRun
                 ? {
                     closed: selectedRun.status === "CLOSED",
-                    canToggle: hasBuildManagePermission,
+                    canToggle: hasRunManagePermission,
                     pending: isTogglingRun,
                     onToggle: handleToggleRunClosed,
                   }

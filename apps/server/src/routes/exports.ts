@@ -24,7 +24,7 @@ import {
   type ExecutionResultsExportBundle,
   type ExportableExecution,
 } from '@testify/core';
-import { requirePermission, authenticateRequest } from '../middleware/auth.js';
+import { requirePermission, authenticateRequest, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 
 function pickSerializer(format: unknown): IFileSerializer {
   return format === 'STANDARD_CSV' ? new CsvExportSerializer() : new JsonExportSerializer();
@@ -52,7 +52,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   // is otherwise only ever called from inside the much heavier GET .../test-plans/:id/cases,
   // which also joins every case + step + latest execution -- too expensive just for a
   // dropdown). Needs SPEC_VIEW on the project, like every other read.
-  app.get('/api/v1/projects/:projectId/plans/:planId/builds', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/projects/:projectId/plans/:planId/builds', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
     const { projectId, planId } = request.params as { projectId: string; planId: string };
     const plan = await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst();
     if (!plan || plan.project_id !== projectId) {

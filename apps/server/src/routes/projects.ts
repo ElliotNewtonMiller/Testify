@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
-import { authenticateRequest, requirePermission, canViewProject } from '../middleware/auth.js';
+import { authenticateRequest, requirePermission, canViewProject, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
 
@@ -33,10 +33,11 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
-    // Only the projects the caller may read (SPEC_VIEW there, per-project overrides included).
+    // Only the projects the caller may read or execute in (SPEC_VIEW or EXECUTE_RUN there,
+    // per-project overrides included).
     const projects = [];
     for (const project of await projectRepo.findAll()) {
-      if (await canViewProject(user, project.id, db)) projects.push(project);
+      if (await canViewProject(user, project.id, db, EXECUTION_READ_PERMISSIONS)) projects.push(project);
     }
     return { projects };
   });
@@ -178,7 +179,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       .execute();
   }
 
-  app.get('/api/v1/projects/:projectId/plans', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/projects/:projectId/plans', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
     const project = await projectRepo.findById(projectId);
@@ -272,11 +273,11 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   // already enforcing unique run names per plan at the DB layer). Same resurrection story as
   // the Plan routes above: BuildRepository.create/update/deleteWithForce existed since the
   // first migration, never called by any route -- the Run create/edit/delete toolbar was
-  // 100% client-side mock state. Gated on BUILD_MANAGE (already registered/seeded, held by
+  // 100% client-side mock state. Gated on RUN_MANAGE (already registered/seeded, held by
   // Admin/Test Lead/Automation Service, just never had a route to gate until now).
   app.post(
     '/api/v1/projects/:projectId/plans/:planId/builds',
-    { preHandler: requirePermission('BUILD_MANAGE', db, jwtSecret) },
+    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId, planId } = request.params as { projectId: string; planId: string };
       const plan = await planRepo.findById(planId);
@@ -313,7 +314,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.put(
     '/api/v1/projects/:projectId/plans/:planId/builds/:buildId',
-    { preHandler: requirePermission('BUILD_MANAGE', db, jwtSecret) },
+    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId, planId, buildId } = request.params as { projectId: string; planId: string; buildId: string };
       const plan = await planRepo.findById(planId);
@@ -352,7 +353,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.delete(
     '/api/v1/projects/:projectId/plans/:planId/builds/:buildId',
-    { preHandler: requirePermission('BUILD_MANAGE', db, jwtSecret) },
+    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId, planId, buildId } = request.params as { projectId: string; planId: string; buildId: string };
       const { force } = request.query as { force?: string };

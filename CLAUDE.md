@@ -1240,6 +1240,20 @@ Audit item 12 (`docs/audit_2026-10-07.md`). A token kept its mint-time capabilit
 
 New tests: `apps/server/tests/api_token_issuer.test.ts` (3 -- a demoted issuer's token gets 401 and is listed inactive, works again when the role is restored, and a per-project `API_TOKEN_MANAGE` deny also stops it; an issuer losing `EXECUTE_RUN` leaves the token able to read but not record, with `effective_capabilities` showing it; disabling the issuer revokes the token, which stays revoked after re-enabling, and the audit row counts it). 512/512.
 
+## Changed: execute-only users can find their plan and run; BUILD_MANAGE renamed RUN_MANAGE (2026-10-08)
+
+Two requests.
+
+**1. A user with only `EXECUTE_RUN` could do nothing** -- since the read-permission fix earlier the same day, every read needed `SPEC_VIEW`, so they saw no projects, plans or runs. Now the reads that executing tests needs accept either:
+- New `requireAnyPermission(keys)` and `EXECUTION_READ_PERMISSIONS = ['SPEC_VIEW', 'EXECUTE_RUN']` (`middleware/auth.ts`), used by a project's plans, a plan's runs, a plan's cases (the queue), a case's custom-field values (shown read-only in Execute mode), and case search plus its field catalog (the queue's search/filters). `canViewProject` takes an `anyOf` list; `GET /api/v1/projects` lists projects you can view **or** execute in (the MCP server still requires `SPEC_VIEW`).
+- `GET .../spec-tree` (which also drives Execute mode's suite tree) accepts them too, but without `SPEC_VIEW` returns only the selected plan's cases and the folders containing them (empty with no `plan_id`), so the rest of the spec stays hidden.
+- Still `SPEC_VIEW`-only: a case's full content (`latest-version`), suite custom-field values (Suite Details), and Reports. Changing plans, runs and projects still needs `PLAN_MANAGE`/`RUN_MANAGE`/`PROJECT_*`.
+- **Web**: without `SPEC_VIEW` the app switches to Execute mode and the Spec toggle is disabled (tooltip "Your role can't view test specifications"). The ➕/✏️/🗑️ buttons beside Project, Plan and Run were shown to everyone (the server refused the change); they now show only with `PROJECT_CREATE` (add/edit) / `PROJECT_DELETE`, `PLAN_MANAGE`, and `RUN_MANAGE` respectively.
+
+**2. `BUILD_MANAGE` is now `RUN_MANAGE`**, matching the app's "test run" wording, with the description "Create, edit, close and delete test runs in a test plan." Migration `005_rename_build_manage` renames the stored permission (role bundles and overrides reference its id, so they follow) and rewrites `BUILD_MANAGE` inside `api_tokens.capabilities`. Code, tests, `docs/rfc_04_rbac_security_matrix.md` and `docs/MASTER_ARCHITECTURE_BLUEPRINT.md` use the new key; `App.tsx`'s flag is `hasRunManagePermission`. Older entries in this file still say `BUILD_MANAGE`.
+
+New tests: `apps/server/tests/execute_only_access.test.ts` (3 -- an `EXECUTE_RUN`-only user sees the project, plans, runs and queue and records a result; their spec tree holds only the plan's 9 cases (one was taken out of the plan) and nothing without a plan, while an admin sees all 10; they get 403 on case content, suite fields, reports, and every plan/run/project change). `migrations.test.ts` +1 (005 renames the key and a token's capability in a database built up to 004). `read_permissions.test.ts` and `case_search.test.ts` now use an export-only role as their "no access" example. 516/516. Verified live as an `EXECUTE_RUN`-only user: the app opens in Execute mode with project/plan/run selected and the queue loaded, no add/edit/delete buttons.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

@@ -29,7 +29,7 @@ export const PERMISSION_REGISTRY: PermissionDefinition[] = [
   { key: 'SPEC_DELETE', description: 'Delete test suites and test cases.', module: 'Specifications' },
   { key: 'SPEC_AUTO_APPROVE', description: 'New test cases this user creates are approved immediately instead of starting as a draft.', module: 'Specifications' },
   { key: 'PLAN_MANAGE', description: 'Create test plans and manage which test cases are in one.', module: 'Planning' },
-  { key: 'BUILD_MANAGE', description: 'Create and close builds within a test plan.', module: 'Planning' },
+  { key: 'RUN_MANAGE', description: 'Create, edit, close and delete test runs in a test plan.', module: 'Planning' },
   { key: 'EXECUTE_RUN', description: 'Record a Pass/Fail/Blocked/Skipped verdict for a test case.', module: 'Execution' },
   { key: 'EXECUTE_OVERWRITE', description: 'Re-record a verdict for a test case that already has one.', module: 'Execution' },
   { key: 'IMPORT_DATA', description: 'Bulk-import test suites and cases from XML/CSV/JSON.', module: 'Data' },
@@ -58,7 +58,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'SPEC_DELETE',
     'SPEC_AUTO_APPROVE',
     'PLAN_MANAGE',
-    'BUILD_MANAGE',
+    'RUN_MANAGE',
     'EXECUTE_RUN',
     'EXECUTE_OVERWRITE',
     'IMPORT_DATA',
@@ -75,7 +75,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'SPEC_DELETE',
     'SPEC_AUTO_APPROVE',
     'PLAN_MANAGE',
-    'BUILD_MANAGE',
+    'RUN_MANAGE',
     'EXECUTE_RUN',
     'EXECUTE_OVERWRITE',
     'IMPORT_DATA',
@@ -85,7 +85,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
   Tester: ['SPEC_VIEW', 'SPEC_CREATE', 'SPEC_EDIT', 'EXECUTE_RUN', 'EXPORT_DATA'],
   Viewer: ['SPEC_VIEW', 'EXPORT_DATA'],
-  'Automation Service': ['SPEC_VIEW', 'BUILD_MANAGE', 'EXECUTE_RUN'],
+  'Automation Service': ['SPEC_VIEW', 'RUN_MANAGE', 'EXECUTE_RUN'],
 };
 
 export const DEFAULT_ROLE_NAMES: string[] = Object.keys(DEFAULT_ROLE_PERMISSIONS);

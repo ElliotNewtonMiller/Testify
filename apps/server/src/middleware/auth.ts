@@ -83,12 +83,17 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   return { projectId: found.size === 1 ? [...found][0] : null };
 }
 
-/** Whether the caller may read a project at all (SPEC_VIEW there, or SYSTEM_ADMIN). An API
- * token only ever sees its own project. */
-export async function canViewProject(user: AuthenticatedUser, projectId: string, db: Kysely<Database>): Promise<boolean> {
-  if (user.api_token) return user.api_token.project_id === projectId && user.permissions.includes('SPEC_VIEW');
+/** Whether the caller holds one of `anyOf` on a project (default SPEC_VIEW), or SYSTEM_ADMIN.
+ * An API token only ever sees its own project. */
+export async function canViewProject(
+  user: AuthenticatedUser,
+  projectId: string,
+  db: Kysely<Database>,
+  anyOf: string[] = ['SPEC_VIEW']
+): Promise<boolean> {
+  if (user.api_token) return user.api_token.project_id === projectId && anyOf.some((k) => user.permissions.includes(k));
   const permissions = await new RoleRepository(db).evaluatePermissions(user.id, projectId);
-  return permissions.includes('SPEC_VIEW') || permissions.includes('SYSTEM_ADMIN');
+  return anyOf.some((k) => permissions.includes(k)) || permissions.includes('SYSTEM_ADMIN');
 }
 
 /** A caller's permissions within one project: an API token's are fixed; a user's are
@@ -300,3 +305,18 @@ export function requirePermission(permissionKey: string, db: Kysely<Database>, j
     }
   };
 }
+
+/** Like requirePermission, but any one of `permissionKeys` is enough (or SYSTEM_ADMIN). */
+export function requireAnyPermission(permissionKeys: string[], db: Kysely<Database>, jwtSecret: string) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await authenticateRequest(request, reply, db, jwtSecret);
+    if (!user) return;
+    if (!permissionKeys.some((k) => user.permissions.includes(k)) && !user.permissions.includes('SYSTEM_ADMIN')) {
+      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: permissionKeys.join(' or ') });
+    }
+  };
+}
+
+/** Reads that executing tests needs (which project/plan/run you're in, the queue): viewing the
+ * spec or recording results is enough. */
+export const EXECUTION_READ_PERMISSIONS = ['SPEC_VIEW', 'EXECUTE_RUN'];

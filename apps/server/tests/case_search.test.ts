@@ -45,7 +45,7 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
       method: 'POST',
       url: '/api/v1/admin/roles',
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: `No Spec View ${Date.now()}`, description: null, permission_keys: ['EXECUTE_RUN'] },
+      payload: { name: `No Spec View ${Date.now()}`, description: null, permission_keys: ['EXPORT_DATA'] },
     });
     const roleName = JSON.parse(roleRes.payload).role.name;
     const username = `nospec_${Date.now()}`;

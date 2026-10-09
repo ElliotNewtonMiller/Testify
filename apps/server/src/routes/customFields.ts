@@ -9,7 +9,7 @@ import {
   type CustomFieldEntityType,
   type CustomFieldType,
 } from '@testify/core';
-import { authenticateRequest, requirePermission } from '../middleware/auth.js';
+import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { sendCustomFieldInUseError, sendProblemDetails, isPublicError } from '../errors.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
@@ -268,7 +268,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   // mutation is gated by PLAN_MANAGE, matching every other Spec-mode curation route in
   // testPlanCases.ts) ----
 
-  app.get('/api/v1/test-cases/:caseId/custom-field-values', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/test-cases/:caseId/custom-field-values', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);

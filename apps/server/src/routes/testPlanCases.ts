@@ -13,7 +13,7 @@ import {
   type TestSuiteNode,
   type TestCaseVersionWithSteps,
 } from '@testify/db';
-import { authenticateRequest, requirePermission } from '../middleware/auth.js';
+import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import {
   sendPlanLockedError,
   sendCaseVersionNotApprovedError,
@@ -115,7 +115,7 @@ export async function registerTestPlanCaseRoutes(
   // plan-inclusion counts) + a lightweight case list (no steps -- see the latest-version
   // endpoint below for detail). Cases whose latest version is DEPRECATED are omitted (from
   // both the list and the tree counts) unless include_deprecated=true.
-  app.get('/api/v1/projects/:projectId/spec-tree', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/projects/:projectId/spec-tree', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
     const { plan_id: planId, include_deprecated: includeDeprecatedParam } = request.query as {
@@ -149,10 +149,16 @@ export async function registerTestPlanCaseRoutes(
       planCaseByCaseId = new Map(pinnedCases.map((pc) => [pc.test_case_id, pc]));
     }
 
+    // Someone who can execute but not view the spec (EXECUTE_RUN without SPEC_VIEW) sees only the
+    // selected plan's cases and the folders they sit in -- enough to find their way through a run.
+    const perms = request.user!.permissions;
+    const fullSpec = perms.includes('SPEC_VIEW') || perms.includes('SYSTEM_ADMIN');
+    const visibleCases = fullSpec ? casesWithVersions : casesWithVersions.filter((c) => planCaseByCaseId.has(c.id));
+
     const caseCountBySuite = new Map<string, number>();
     const inPlanCountBySuite = new Map<string, number>();
 
-    const cases = casesWithVersions.map((c) => {
+    const cases = visibleCases.map((c) => {
       caseCountBySuite.set(c.test_suite_id, (caseCountBySuite.get(c.test_suite_id) ?? 0) + 1);
 
       const planCase = planCaseByCaseId.get(c.id);
@@ -182,7 +188,10 @@ export async function registerTestPlanCaseRoutes(
       };
     });
 
-    const suites = annotateTreeCounts(tree, caseCountBySuite, inPlanCountBySuite);
+    const annotated = annotateTreeCounts(tree, caseCountBySuite, inPlanCountBySuite);
+    const pruneEmpty = (nodes: typeof annotated): typeof annotated =>
+      nodes.filter((n) => n.total_case_count > 0).map((n) => ({ ...n, children: pruneEmpty(n.children as typeof annotated) }));
+    const suites = fullSpec ? annotated : pruneEmpty(annotated);
 
     return {
       project: {
@@ -218,7 +227,7 @@ export async function registerTestPlanCaseRoutes(
   // parameterized by plan instead of hardcoded to the seed plan (unlike GET /api/v1/workspace).
   // When build_id is given (or defaulted to the plan's most recent build), each case is
   // annotated with its latest execution verdict for that build, same as the old endpoint did.
-  app.get('/api/v1/test-plans/:planId/cases', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/test-plans/:planId/cases', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { planId } = request.params as { planId: string };
     const { build_id: requestedBuildId } = request.query as { build_id?: string };

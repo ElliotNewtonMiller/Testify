@@ -502,7 +502,7 @@ The ingestion engine parses legacy **TestLink XML**, **Native JSON Schema**, and
 | `SPEC_APPROVE` | Authoring | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `SPEC_DELETE` | Authoring | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `PLAN_MANAGE` | Execution | **✓** | **✓** | ✗ | ✗ | ✗ |
-| `BUILD_MANAGE` | Execution | **✓** | **✓** | ✗ | **✓ (Read)** | ✗ |
+| `RUN_MANAGE` | Execution | **✓** | **✓** | ✗ | **✓ (Read)** | ✗ |
 | `EXECUTE_RUN` | Execution | **✓** | **✓** | **✓** | **✓** | ✗ |
 | `EXECUTE_OVERWRITE` | Execution | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `IMPORT_DATA` | Integrations | **✓** | **✓** | ✗ | ✗ | ✗ |

@@ -631,7 +631,7 @@ describe('Specification / Plan Curation Routes', () => {
   });
 
   describe('Test Run (Build) CRUD (POST/PUT/DELETE .../projects/:projectId/plans/:planId/builds)', () => {
-    it('requires BUILD_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
+    it('requires RUN_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
       const { app, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
       const viewerToken = await createAndLoginViewer(app, adminToken);

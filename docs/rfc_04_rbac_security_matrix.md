@@ -45,7 +45,7 @@ Example: SPEC_APPROVE, EXECUTE_RUN, API_TOKEN_MANAGE
 | `SPEC_APPROVE` | Authoring | Global / Project | Ability to transition test case versions from `Draft` to `Approved` (production release). | **HIGH** |
 | `SPEC_DELETE` | Authoring | Global / Project | Ability to soft-delete or archive test cases and test suite subtrees. | **HIGH** |
 | `PLAN_MANAGE` | Execution | Global / Project | Ability to create, lock, unlock, archive, and assign test cases to Test Plans. | **HIGH** |
-| `BUILD_MANAGE` | Execution | Global / Project | Ability to create, close, and manage Build iterations within a Test Plan. | **MEDIUM** |
+| `RUN_MANAGE` | Execution | Global / Project | Ability to create, edit, close and delete test runs within a Test Plan. | **MEDIUM** |
 | `EXECUTE_RUN` | Execution | Global / Project | Ability to record test execution verdicts (`Passed`, `Failed`, `Blocked`, `Skipped`), log notes, and attach execution artifacts. | **MEDIUM** |
 | `EXECUTE_OVERWRITE` | Execution | Global / Project | Ability to edit or overwrite existing, historical execution verdicts and execution notes. | **HIGH** |
 | `IMPORT_DATA` | Integrations | Global / Project | Ability to ingest external test suites/cases via XML, JSON, or CSV parsers (includes permission to auto-create custom field definitions mapped during pre-import setup). | **HIGH** |
@@ -65,13 +65,13 @@ Testify ships with five standardized built-in role templates. Every role represe
    - **Project Scope:** Full control over project configuration, role assignments, specs, plans, executions, and tokens within the project.
 2. **`Test Lead`:**
    - Focuses on test planning, specification authoring, review governance, build management, and assignment strategy.
-   - Holds `SPEC_APPROVE`, `PLAN_MANAGE`, `BUILD_MANAGE`, and `EXECUTE_OVERWRITE` privileges.
+   - Holds `SPEC_APPROVE`, `PLAN_MANAGE`, `RUN_MANAGE`, and `EXECUTE_OVERWRITE` privileges.
 3. **`Tester / QA Engineer`:**
    - Focuses on manual execution and test drafting.
    - Holds `SPEC_VIEW`, `SPEC_CREATE`, `SPEC_EDIT`, `EXECUTE_RUN`, and read access to plans. Cannot approve specs or manage builds by default.
 4. **`Automation Service` (Machine Service Account):**
    - Scoped strictly for automated CI/CD runners (e.g., GitHub Actions, GitLab CI, Jenkins).
-   - Restricted to `SPEC_VIEW`, `BUILD_MANAGE` (optional read/query), and `EXECUTE_RUN`. Strictly barred from administrative or spec approval keys.
+   - Restricted to `SPEC_VIEW`, `RUN_MANAGE` (optional read/query), and `EXECUTE_RUN`. Strictly barred from administrative or spec approval keys.
 5. **`Viewer / Stakeholder`:**
    - Read-only stakeholder role.
    - Holds `SPEC_VIEW` and read-only access to plans, execution reports, metrics dashboards, and audit logs.
@@ -96,7 +96,7 @@ Legend:
 | `SPEC_APPROVE` | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `SPEC_DELETE` | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `PLAN_MANAGE` | **✓** | **✓** | ✗ | ✗ | ✗ |
-| `BUILD_MANAGE` | **✓** | **✓** | ✗ | **✓ (Read/Query)** | ✗ |
+| `RUN_MANAGE` | **✓** | **✓** | ✗ | **✓ (Read/Query)** | ✗ |
 | `EXECUTE_RUN` | **✓** | **✓** | **✓** | **✓** | ✗ |
 | `EXECUTE_OVERWRITE` | **✓** | **✓** | ✗ | ✗ | ✗ |
 | `IMPORT_DATA` | **✓** | **✓** | ✗ | ✗ | ✗ |

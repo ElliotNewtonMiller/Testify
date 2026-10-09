@@ -43,9 +43,10 @@ describe('Read routes require SPEC_VIEW', () => {
   };
 
   it('a user without SPEC_VIEW gets 403 on every read, and sees no projects', async () => {
-    // Can record results but not view the spec -- an unusual role, but the rule must hold.
-    expect((await call(adminToken, 'POST', '/api/v1/admin/roles', { name: 'Runner Only', permission_keys: ['EXECUTE_RUN'] })).statusCode).toBe(201);
-    const runner = await createUser('runner', 'Runner Only');
+    // Can export but neither view the spec nor execute (EXECUTE_RUN alone may read what running
+    // tests needs -- see execute_only_access.test.ts).
+    expect((await call(adminToken, 'POST', '/api/v1/admin/roles', { name: 'Exporter Only', permission_keys: ['EXPORT_DATA'] })).statusCode).toBe(201);
+    const runner = await createUser('runner', 'Exporter Only');
     for (const url of readRoutes()) {
       expect((await call(runner.token, 'GET', url)).statusCode, url).toBe(403);
     }

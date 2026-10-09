@@ -68,7 +68,7 @@ describe('Closing a run: manual close/reopen and auto-close when every case has 
     expect(blocked.statusCode).toBe(422);
     expect(JSON.parse(blocked.payload).code).toBe('BUILD_CLOSED');
 
-    // Reopen (BUILD_MANAGE) and a result can be recorded again.
+    // Reopen (RUN_MANAGE) and a result can be recorded again.
     const reopen = await app.inject({
       method: 'PUT',
       url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
@@ -89,7 +89,7 @@ describe('Closing a run: manual close/reopen and auto-close when every case has 
     expect(auditAfter).toHaveLength(1);
   });
 
-  it('a manually closed run blocks results; a Tester (no BUILD_MANAGE) cannot open or close it', async () => {
+  it('a manually closed run blocks results; a Tester (no RUN_MANAGE) cannot open or close it', async () => {
     const { app, seed, db } = serverInstance;
     const token = await login(app);
     const h = { authorization: `Bearer ${token}` };
