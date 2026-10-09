@@ -1,5 +1,5 @@
 import React from "react";
-import type { CustomFieldValueEntry } from "../App";
+import type { CustomFieldValueEntry } from "../types";
 
 interface CustomFieldEditorProps {
   entry: CustomFieldValueEntry;

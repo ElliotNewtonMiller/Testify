@@ -3,10 +3,7 @@ import { useFocusFSM } from "./hooks/useFocusFSM";
 import { useHotkeyEngine, VerdictType } from "./hooks/useHotkeyEngine";
 import { buildExecutionCaseOrder, nextExecutionCaseIndex } from "./utils/executionCaseOrder";
 import { FocusIndicatorBadge } from "./components/FocusIndicatorBadge";
-import {
-  TestCaseQueueGrid,
-  TestCaseGridItem,
-} from "./components/TestCaseQueueGrid";
+import { TestCaseQueueGrid } from "./components/TestCaseQueueGrid";
 import {
   VirtualizedSuiteTree,
   SuiteTreeNode,
@@ -38,187 +35,39 @@ import {
   ActionType,
 } from "./components/EntityManagementModal";
 import { authHeaders, jsonHeaders, watchForEndedSession } from "./utils/session";
-
-interface Step {
-  id: string;
-  step_number: number;
-  action: string;
-  expected_result: string;
-}
-
-interface TestCase extends TestCaseGridItem {
-  execution_type: string;
-  version_number: number;
-  summary: string;
-  preconditions: string;
-  steps: Step[];
-  latest_execution_id: string | null;
-  latest_notes?: string | null;
-  test_suite_id?: string;
-}
-
-interface WorkspaceData {
-  project: { id: string; name: string; prefix: string };
-  suites: Array<{ id: string; name: string; path: string }>;
-  plan: { id: string; name: string; status: string };
-  build: { id: string; name: string; status: string };
-  cases: TestCase[];
-}
-
-// --- Specification mode: types for GET /api/v1/projects/:id/spec-tree and
-// GET /api/v1/test-cases/:id/latest-version. Curation-only -- read-only case/step detail,
-// plus per-case/suite plan-inclusion toggles. See docs/rfc_01_domain_model.md §2.3.
-interface SpecSuiteNode {
-  id: string;
-  name: string;
-  path: string;
-  parent_suite_id: string | null;
-  children: SpecSuiteNode[];
-  total_case_count: number;
-  in_plan_count: number;
-}
+import type {
+  CustomFieldValueEntry,
+  ExecWorkspaceStatus,
+  SpecCaseDetail,
+  SpecTreeData,
+  Step,
+  TestCase,
+  WorkspaceData,
+} from "./types";
+import {
+  NO_RUN_MESSAGE,
+  OVERWRITE_DENIED_MESSAGE,
+  REMOVED_CASE_MESSAGE,
+  RUN_CLOSED_MESSAGE,
+  RUN_DENIED_MESSAGE,
+  SESSION_ENDED_NOTICE,
+} from "./app/messages";
+import { autoGrowTextarea } from "./utils/autoGrowTextarea";
+import { permissionFlags } from "./utils/permissions";
+import {
+  buildSuiteNodes,
+  expandableSuiteIds as listExpandableSuiteIds,
+  findSuiteNode,
+  flattenSuiteOptions,
+  pruneSuiteTree,
+  rangeBetween,
+  suiteInfoById as buildSuiteInfoById,
+  visibleSuiteOrder as listVisibleSuiteOrder,
+} from "./utils/suiteTree";
+import { useStepsScrollPreserved } from "./hooks/useStepsScrollPreserved";
 
 /** Value of the Plan dropdown's "Show/Hide archived plans" entry -- never a real plan id. */
 const TOGGLE_ARCHIVED_PLANS_VALUE = "__toggle_archived_plans__";
-
-/** Keeps only suites whose id is in `keep` (the case-search response's suite_ids already
- * includes every ancestor of a match, so the result stays a connected tree). */
-function pruneSuiteTree(nodes: SpecSuiteNode[], keep: Set<string>): SpecSuiteNode[] {
-  return nodes
-    .filter((n) => keep.has(n.id))
-    .map((n) => ({ ...n, children: pruneSuiteTree(n.children, keep) }));
-}
-
-interface SpecTreeData {
-  project: { id: string; name: string; prefix: string; settings: { allow_draft_plan_linking: boolean } };
-  suites: SpecSuiteNode[];
-  cases: SpecCaseGridItem[];
-}
-
-interface SpecCaseDetail {
-  test_case: { id: string; external_id: string; title: string; priority: string; execution_type: string };
-  version: {
-    id: string;
-    version_number: number;
-    status: string;
-    summary: string | null;
-    preconditions: string | null;
-    steps: Step[];
-  };
-}
-
-export type CustomFieldType = "TEXT" | "NUMBER" | "CHECKBOX" | "DATE" | "SINGLE_SELECT" | "MULTI_SELECT";
-
-export interface CustomFieldDefinition {
-  id: string;
-  entity_type: "TestCase" | "TestSuite";
-  name: string;
-  field_label: string;
-  field_type: CustomFieldType;
-  is_required: boolean;
-  default_value: string | null;
-  validation_regex: string | null;
-  options: Array<{ option_label: string; option_value: string }>;
-}
-
-export interface CustomFieldValueEntry {
-  definition: CustomFieldDefinition;
-  value: unknown;
-}
-
-
-const SESSION_ENDED_NOTICE = "Your sign-in has ended. Please sign in again.";
-
-// Messages for the yellow "Not permitted" banner in Execute mode.
-const RUN_DENIED_MESSAGE =
-  "Your role can't record executions in this project, so that result was not saved. Ask an administrator if you need to.";
-const OVERWRITE_DENIED_MESSAGE =
-  "This test case already has a result in this run, and your role can't change existing results (EXECUTE_OVERWRITE), so that result was not saved. Ask a test lead or administrator if it needs to change.";
-
-// Grows a textarea to fit its content instead of showing a scrollbar -- resetting height to
-// "auto" first (rather than just reading scrollHeight directly) is required so the element
-// can shrink back down too, not just grow: scrollHeight never reports smaller than the
-// element's current height, so without the reset a field would never shrink after its
-// content got shorter (e.g. deleting a wrapped line). Called from a mount-time ref callback
-// (so a field that already has long content shows fully expanded immediately, not just after
-// the first keystroke) and from onInput while typing.
-function autoGrowTextarea(el: HTMLTextAreaElement | null) {
-  if (!el) return;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight}px`;
-}
-
-type StepsScrollRestoreMode = "restore" | "scrollToBottom";
-
-/**
- * Shared scroll-preservation primitives for the Spec-mode step editor (see
- * specDetailScrollRef). Reordering/removing/adding a step mutates DOM nodes inside that
- * scroll container, and React's commit-phase focus/selection restoration (restoreSelection)
- * engages whenever a mutation touches a subtree containing the currently-focused node,
- * re-applying a snapshotted scroll offset that can land wrong -- captureScroll/
- * blurActiveElement/scheduleRestore give every mutation site the same, consistent discipline
- * (capture the position worth keeping -> blur so restoreSelection has nothing to misapply ->
- * mutate -> schedule the correction) instead of four independently hand-rolled variants, which
- * is exactly how one of the four (addStep) ended up missing the blur step in an earlier pass.
- * scheduleRestore's correction runs in a useLayoutEffect -- synchronously after the DOM
- * mutation/any restoreSelection adjustment but strictly before the browser paints -- so it's
- * always the last word before the user sees a frame, never a later, visibly-corrective jump.
- */
-function useStepsScrollPreserved(
-  scrollRef: React.RefObject<HTMLDivElement>,
-  endAnchorRef?: React.RefObject<HTMLDivElement>,
-) {
-  const preservedTopRef = useRef<number | null>(null);
-  const pendingModeRef = useRef<StepsScrollRestoreMode | null>(null);
-  const [restoreTick, setRestoreTick] = useState(0);
-
-  const captureScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) preservedTopRef.current = el.scrollTop;
-  }, [scrollRef]);
-
-  const blurActiveElement = useCallback(() => {
-    (document.activeElement as HTMLElement | null)?.blur();
-  }, []);
-
-  // "restore" re-applies the position captureScroll last saw (right for a reorder/removal,
-  // which shouldn't move the viewport at all); "scrollToBottom" ignores the captured value and
-  // scrolls to the new bottom instead (right for an append, where the previous scrollTop would
-  // now fall short of the true bottom by one row's height and leave the new row off-screen).
-  const scheduleRestore = useCallback((mode: StepsScrollRestoreMode) => {
-    pendingModeRef.current = mode;
-    setRestoreTick((t) => t + 1);
-  }, []);
-
-  useLayoutEffect(() => {
-    const mode = pendingModeRef.current;
-    if (mode === null) return;
-    pendingModeRef.current = null;
-    const el = scrollRef.current;
-    if (!el) return;
-    if (mode === "scrollToBottom") {
-      // Content (custom fields) now sits BELOW the step list, so the container's own bottom
-      // is no longer the steps' bottom -- scroll just far enough to bring the end-of-steps
-      // anchor into view (never upward), falling back to the true bottom without an anchor.
-      const anchor = endAnchorRef?.current;
-      if (anchor) {
-        const delta = anchor.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom;
-        if (delta > 0) el.scrollTop += delta;
-      } else {
-        el.scrollTop = el.scrollHeight;
-      }
-      // Keep the captured position in sync with where an append just scrolled to -- the
-      // in-flight autosave triggered by the blur that preceded this add later schedules a
-      // "restore", which would otherwise snap back to the pre-append scrollTop it captured.
-      preservedTopRef.current = el.scrollTop;
-    } else if (preservedTopRef.current !== null) {
-      el.scrollTop = preservedTopRef.current;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restoreTick]);
-
-  return { captureScroll, blurActiveElement, scheduleRestore };
-}
 
 // Execute mode before (or without) a loaded plan: nothing to show. (This used to be two
 // made-up cases, TFY-101/102, which appeared whenever no plan was selected or a load failed.)
@@ -229,9 +78,6 @@ const EMPTY_WORKSPACE: WorkspaceData = {
   build: { id: "", name: "", status: "" },
   cases: [],
 };
-
-/** Why Execute mode has (or hasn't) cases to show. */
-type ExecWorkspaceStatus = "NO_PLAN" | "LOADING" | "READY" | "ERROR";
 
 /** A Reports link (#/reports/...) opened directly: the view, tab and scope to start on. */
 const INITIAL_REPORTS_LINK = typeof window !== "undefined" ? parseReportsHash(window.location.hash) : null;
@@ -2351,14 +2197,9 @@ export default function App() {
   // every case in the plan has a result.
   const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
   const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
-  const RUN_CLOSED_MESSAGE = "This run is closed. Open it to record results.";
-  // No run in the plan (or none selected) -- there's nothing to record a result against.
-  const NO_RUN_MESSAGE = "Create a test run to record test execution.";
   const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
   // Why results can't be recorded right now (null = they can). Drives the verdict buttons,
   // Notes, the hotkey block, and submitVerdict's own guard.
-  // A case removed from the plan (after this run recorded its result) is read-only.
-  const REMOVED_CASE_MESSAGE = "This test case was removed from the plan. Its result is kept, but no new results can be recorded. Add it back to the plan to test it again.";
   const verdictBlockReason: string | null = isRunMissing
     ? NO_RUN_MESSAGE
     : isRunClosed
@@ -2635,8 +2476,24 @@ export default function App() {
         : "FAILED";
   }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
 
+  const {
+    hasExecuteRunPermission,
+    hasRunManagePermission,
+    hasAdminPanelAccess,
+    hasProjectCreatePermission,
+    hasProjectDeletePermission,
+    hasPlanManagePermission,
+    hasSpecCreatePermission,
+    hasSpecEditPermission,
+    hasSpecApprovePermission,
+    hasSpecDeletePermission,
+    hasImportDataPermission,
+    hasExportDataPermission,
+    hasSpecViewPermission,
+    hasReportEmailPermission,
+  } = permissionFlags(userPermissions);
   // Someone who can run tests but not view the spec works in Execute mode only.
-  const canViewSpec = userPermissions.includes("SPEC_VIEW") || userPermissions.includes("SYSTEM_ADMIN");
+  const canViewSpec = hasSpecViewPermission;
   useEffect(() => {
     if (currentUser && !canViewSpec && workspaceMode === "SPECIFICATION") {
       setWorkspaceMode("EXECUTION");
@@ -2733,63 +2590,21 @@ export default function App() {
     }
   }
 
-  const buildSuiteNodes = (nodes: SpecSuiteNode[]): SuiteTreeNode[] =>
-    nodes.map((n) => {
-      const exec = execCountsBySuite.get(n.id);
-      return {
-        id: n.id,
-        name: n.name,
-        path: n.path,
-        parentId: n.parent_suite_id,
-        children: buildSuiteNodes(n.children),
-        passedCount: exec?.passed ?? 0,
-        totalCount: exec?.total ?? 0,
-        inPlanCount: n.in_plan_count,
-        totalCaseCount: n.total_case_count,
-      };
-    });
-
   // With a search/filter active the tree only shows suites containing a match (plus their
   // ancestors, which suite_ids already includes) -- counts stay the suite's real totals.
   const suiteNodes: SuiteTreeNode[] = specData
-    ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites)
+    ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites, execCountsBySuite)
     : [];
 
   // "Expand all"/"Collapse all": only suites with sub-suites have an arrow, so "all expanded"
   // means every one of those is open in the tree as currently shown.
-  const expandableSuiteIds: string[] = [];
-  (function collect(nodes: SuiteTreeNode[]) {
-    for (const n of nodes) {
-      if (n.children && n.children.length > 0) {
-        expandableSuiteIds.push(n.id);
-        collect(n.children);
-      }
-    }
-  })(suiteNodes);
+  const expandableSuiteIds = listExpandableSuiteIds(suiteNodes);
   const allSuitesExpanded = expandableSuiteIds.every((id) => suiteExpandedMap[id] ?? true);
   // ---- Spec-mode multi-select + drag-and-drop moving ----
   // Visible tree order (collapsed children excluded) -- what a Shift-range spans in the tree.
-  const visibleSuiteOrder: string[] = [];
-  (function walkVisible(nodes: SuiteTreeNode[]) {
-    for (const n of nodes) {
-      visibleSuiteOrder.push(n.id);
-      if (n.children && n.children.length > 0 && (suiteExpandedMap[n.id] ?? true)) walkVisible(n.children);
-    }
-  })(suiteNodes);
-  const suiteInfoById = new Map<string, { path: string; name: string }>();
-  (function walkAll(nodes: SpecSuiteNode[]) {
-    for (const n of nodes) {
-      suiteInfoById.set(n.id, { path: n.path, name: n.name });
-      walkAll(n.children);
-    }
-  })(specData?.suites ?? []);
+  const visibleSuiteOrder = listVisibleSuiteOrder(suiteNodes, suiteExpandedMap);
+  const suiteInfoById = buildSuiteInfoById(specData?.suites ?? []);
 
-  const rangeBetween = (order: string[], fromId: string, toId: string): string[] => {
-    const a = order.indexOf(fromId);
-    const b = order.indexOf(toId);
-    if (a < 0 || b < 0) return [toId];
-    return order.slice(Math.min(a, b), Math.max(a, b) + 1);
-  };
   const clearSpecMultiSelect = () => {
     setSpecSelectedSuiteIds(new Set());
     setSpecSelectedCaseIds(new Set());
@@ -2911,33 +2726,10 @@ export default function App() {
 
   // Backs Pane 3's Suite Details view below -- selectedSuiteId only carries an id, so the
   // full node (name, case counts) has to be looked up from the nested tree each render.
-  function findSuiteNode(nodes: SpecSuiteNode[], suiteId: string): SpecSuiteNode | null {
-    for (const node of nodes) {
-      if (node.id === suiteId) return node;
-      const found = findSuiteNode(node.children, suiteId);
-      if (found) return found;
-    }
-    return null;
-  }
   const specActiveSuite =
     workspaceMode === "SPECIFICATION" && selectedSuiteId && specData
       ? findSuiteNode(specData.suites, selectedSuiteId)
       : null;
-
-  // Flat, indented "Parent Suite" <select> option list for the suite create/rename form.
-  function flattenSuiteOptions(
-    nodes: SuiteTreeNode[],
-    depth = 0,
-  ): Array<{ id: string; label: string }> {
-    let result: Array<{ id: string; label: string }> = [];
-    for (const node of nodes) {
-      result.push({ id: node.id, label: `${"—".repeat(depth)} ${node.name}` });
-      if (node.children && node.children.length > 0) {
-        result = result.concat(flattenSuiteOptions(node.children, depth + 1));
-      }
-    }
-    return result;
-  }
 
   // Execution mode's Ctrl+Enter "jump to next folder" advance (see onSubmitNotes below)
   // needs cases ordered by suite-tree position -- see buildExecutionCaseOrder's own comment
@@ -2973,44 +2765,6 @@ export default function App() {
   // of a suite-narrowed queue -- the first case of the next suite.
   const nextVisibleCaseIndex: number | undefined =
     queueCaseIndices.find((i) => i > selectedIndex) ?? crossSuiteNextCaseIndex;
-
-  const hasExecuteRunPermission = userPermissions.includes("EXECUTE_RUN");
-  const hasRunManagePermission =
-    userPermissions.includes("RUN_MANAGE") ||
-    userPermissions.includes("SYSTEM_ADMIN");
-  const hasUserManagePermission =
-    userPermissions.includes("USER_MANAGE") ||
-    userPermissions.includes("SYSTEM_ADMIN");
-  // The Admin Panel holds users/roles, custom fields and API tokens -- open to anyone who
-  // manages any of them (each tab is then shown only to those with its permission).
-  const hasAdminPanelAccess =
-    hasUserManagePermission ||
-    userPermissions.includes("CUSTOM_FIELD_MANAGE") ||
-    userPermissions.includes("API_TOKEN_MANAGE");
-  // Header buttons for projects/plans/runs show only to people who can use them.
-  const hasProjectCreatePermission =
-    userPermissions.includes("PROJECT_CREATE") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasProjectDeletePermission =
-    userPermissions.includes("PROJECT_DELETE") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasPlanManagePermission =
-    userPermissions.includes("PLAN_MANAGE") ||
-    userPermissions.includes("SYSTEM_ADMIN");
-  const hasSpecCreatePermission =
-    userPermissions.includes("SPEC_CREATE") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasSpecEditPermission =
-    userPermissions.includes("SPEC_EDIT") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasSpecApprovePermission =
-    userPermissions.includes("SPEC_APPROVE") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasSpecDeletePermission =
-    userPermissions.includes("SPEC_DELETE") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasImportDataPermission =
-    userPermissions.includes("IMPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasExportDataPermission =
-    userPermissions.includes("EXPORT_DATA") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasSpecViewPermission =
-    userPermissions.includes("SPEC_VIEW") || userPermissions.includes("SYSTEM_ADMIN");
-  const hasReportEmailPermission =
-    userPermissions.includes("REPORT_EMAIL") || userPermissions.includes("SYSTEM_ADMIN");
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
