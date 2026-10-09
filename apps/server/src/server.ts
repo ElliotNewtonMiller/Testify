@@ -37,6 +37,7 @@ import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins,
 import { setSecretBox } from './services/secrets.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
+import { requestOrigin } from './audit.js';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
 // ephemeral, zero-config PGlite (WASM Postgres) instance -- no server, no native bindings,
@@ -320,8 +321,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
           // The run's real project (this used to be hardwired to the sample project's id).
           project_id: build.project_id,
           diff: JSON.stringify({ verdict: body.verdict, plan_case_id: body.test_plan_case_id }),
-          ip_address: '127.0.0.1',
-          user_agent: 'FastifyCoreLoopServer',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -331,7 +331,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     const buildStatus = await autoCloseBuildIfComplete(db, body.build_id, {
       id: actorId,
       type: request.user!.api_token ? 'SERVICE_ACCOUNT' : 'USER',
-    });
+    }, requestOrigin(request));
 
     return reply.status(201).send({
       id: execId,

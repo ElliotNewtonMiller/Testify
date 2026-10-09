@@ -12,6 +12,7 @@ import {
   accountLockSecondsLeft,
   describeWait,
 } from '../services/loginThrottle.js';
+import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 /** How long a sign-in lasts (the login token and its session expire together). */
 const SESSION_LIFETIME_SECONDS = 60 * 60;
@@ -34,7 +35,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     );
 
   /** Counts a wrong password against the account; logs it in the audit log when that locks it. */
-  async function recordAccountFailure(userId: string, ip: string): Promise<void> {
+  async function recordAccountFailure(userId: string, origin: RequestOrigin): Promise<void> {
     const lockedUntil = await userRepo.recordFailedLogin(userId, ACCOUNT_LOCK_THRESHOLD, ACCOUNT_LOCK_SECONDS);
     if (!lockedUntil) return;
     await db
@@ -47,8 +48,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
         resource_type: 'user',
         resource_id: userId,
         diff: JSON.stringify({ locked_until: lockedUntil, reason: 'TOO_MANY_FAILED_SIGN_INS' }),
-        ip_address: ip,
-        user_agent: 'TestifyAuthService',
+        ...origin,
         created_at: new Date().toISOString(),
       })
       .execute();
@@ -94,7 +94,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const user = await userRepo.verifyCredentials(identifier, password);
     if (!user) {
       ipLimiter.recordFailure(ip);
-      if (account && account.status !== 'DISABLED') await recordAccountFailure(account.id, ip);
+      if (account && account.status !== 'DISABLED') await recordAccountFailure(account.id, requestOrigin(request));
       return reply.status(401).send({ error: 'Invalid credentials or user account disabled' });
     }
     if (user.failed_login_count > 0 || user.locked_until) await userRepo.resetLoginFailures(user.id);
@@ -161,7 +161,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
       const lockWait = accountLockSecondsLeft(self?.locked_until);
       if (lockWait > 0) return accountLocked(reply, lockWait);
       if (!(await userRepo.isCurrentPassword(activeUser.id, currentPassword))) {
-        await recordAccountFailure(activeUser.id, request.ip);
+        await recordAccountFailure(activeUser.id, requestOrigin(request));
         return reply.status(403).send({ error: 'Your current password is incorrect.', code: 'CURRENT_PASSWORD_INCORRECT' });
       }
       if (self && self.failed_login_count > 0) await userRepo.resetLoginFailures(activeUser.id);
@@ -214,8 +214,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
           resource_type: 'user',
           resource_id: activeUser.id,
           diff: JSON.stringify({ username: updatedUser.username, email: updatedUser.email, password_changed: !!newPassword, other_sessions_ended: endedSessions }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAuthService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();

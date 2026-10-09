@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
 import { BuildRepository } from '@testify/db';
+import { NO_ORIGIN, type RequestOrigin } from './audit.js';
 
 /**
  * The run closes automatically the FIRST time every case in its plan has a result. Called
@@ -14,7 +15,9 @@ import { BuildRepository } from '@testify/db';
 export async function autoCloseBuildIfComplete(
   db: Kysely<Database>,
   buildId: string,
-  actor: { id: string; type: 'USER' | 'SERVICE_ACCOUNT' }
+  actor: { id: string; type: 'USER' | 'SERVICE_ACCOUNT' },
+  /** The request whose result completed the run. */
+  origin: RequestOrigin = NO_ORIGIN
 ): Promise<'OPEN' | 'CLOSED'> {
   const buildRepo = new BuildRepository(db);
   const alreadyAutoClosed = await db
@@ -43,8 +46,7 @@ export async function autoCloseBuildIfComplete(
         resource_id: buildId,
         project_id: info?.project_id ?? null,
         diff: JSON.stringify({ reason: 'ALL_CASES_HAVE_RESULTS', plan_id: info?.plan_id ?? null }),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyExecutionService',
+        ...origin,
         created_at: new Date().toISOString(),
       })
       .execute();

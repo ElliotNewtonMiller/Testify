@@ -19,6 +19,7 @@ import {
   sendCaseVersionNotApprovedError,
   sendCaseHasResultsError,
 } from '../errors.js';
+import { requestOrigin } from '../audit.js';
 
 export interface CaseLinkability {
   linkable: boolean;
@@ -348,8 +349,7 @@ export async function registerTestPlanCaseRoutes(
           resource_id: planCase.id,
           project_id: plan.project_id,
           diff: JSON.stringify({ test_plan_id: planId, test_case_id: testCaseId }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyPlanCurationService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -401,8 +401,7 @@ export async function registerTestPlanCaseRoutes(
           resource_id: planCase.id,
           project_id: plan.project_id,
           diff: JSON.stringify({ test_plan_id: planId, test_case_id: caseId, kept_results: outcome.retired > 0 }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyPlanCurationService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -497,8 +496,7 @@ export async function registerTestPlanCaseRoutes(
             retired,
             skipped_count: skipped.length,
           }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyPlanCurationService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();

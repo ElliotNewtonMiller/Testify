@@ -5,6 +5,7 @@ import { EMAILABLE_REPORTS, findReport, nextRunAt, renderReportEmail, validateRe
 import { ReportError, ReportService } from './reportService.js';
 import { loadEmailSettings, sendEmail } from './mailer.js';
 import { publicErrorMessage } from '../errors.js';
+import { NO_ORIGIN, type RequestOrigin } from '../audit.js';
 
 /** One report in a manually sent email: a catalog report id and its params. */
 export interface EmailReportRequest {
@@ -127,7 +128,8 @@ export class ReportEmailService {
   }
 
   /** Sends one schedule now and records the outcome on it. Never throws. */
-  async sendSchedule(schedule: ReportSchedule, trigger: 'schedule' | 'manual'): Promise<ScheduleSendResult> {
+  /** `origin`: the request behind a manual send; a scheduled send has none. */
+  async sendSchedule(schedule: ReportSchedule, trigger: 'schedule' | 'manual', origin: RequestOrigin = NO_ORIGIN): Promise<ScheduleSendResult> {
     let result: ScheduleSendResult;
     try {
       const problem = await this.creatorProblem(schedule);
@@ -167,8 +169,7 @@ export class ReportEmailService {
               resource_id: schedule.id,
               project_id: schedule.project_id,
               diff: JSON.stringify({ trigger, schedule_name: schedule.name, recipient_count: schedule.recipients.length, status: sent.status }),
-              ip_address: null,
-              user_agent: 'TestifyReportScheduler',
+              ...origin,
               created_at: new Date().toISOString(),
             })
             .execute();

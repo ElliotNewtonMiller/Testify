@@ -8,6 +8,7 @@ import { requirePermission, type AuthenticatedUser } from '../middleware/auth.js
 import { ReportError } from '../services/reportService.js';
 import { ReportEmailService, parseScheduleSections, type EmailReportRequest } from '../services/reportEmailService.js';
 import { sendEmail } from '../services/mailer.js';
+import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 /**
  * Emailing reports, all gated on REPORT_EMAIL (sending project data outside Testify) and
@@ -38,7 +39,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return { recipients: parsed.recipients };
   }
 
-  async function audit(actor: AuthenticatedUser, action: string, resourceType: string, resourceId: string, projectId: string, diff: Record<string, unknown>) {
+  async function audit(origin: RequestOrigin, actor: AuthenticatedUser, action: string, resourceType: string, resourceId: string, projectId: string, diff: Record<string, unknown>) {
     await db
       .insertInto('audit_logs')
       .values({
@@ -50,8 +51,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
         resource_id: resourceId,
         project_id: projectId,
         diff: JSON.stringify(diff),
-        ip_address: null,
-        user_agent: 'TestifyReportEmail',
+        ...origin,
         created_at: new Date().toISOString(),
       })
       .execute();
@@ -96,7 +96,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     if (body.preview) return { subject: email.subject, html: email.html };
 
     const sent = await sendEmail(db, { to: recipients, subject: email.subject, html: email.html, text: email.text, projectId, sentBy: actor.id });
-    await audit(actor, 'REPORT_EMAILED', 'project', projectId, projectId, {
+    await audit(requestOrigin(request), actor, 'REPORT_EMAILED', 'project', projectId, projectId, {
       trigger: 'manual',
       reports: sections.map((s) => s.report_id),
       recipient_count: recipients.length,
@@ -161,7 +161,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     const parsed = await parseScheduleBody(projectId, request.body);
     if ('field' in parsed) return badRequest(reply, parsed.field, parsed.reason);
     const schedule = await scheduleRepo.create(projectId, request.user!.id, parsed.input, nextFor(parsed.input));
-    await audit(request.user!, 'REPORT_SCHEDULE_CREATED', 'report_schedule', schedule.id, projectId, {
+    await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_CREATED', 'report_schedule', schedule.id, projectId, {
       name: schedule.name,
       recipient_count: schedule.recipients.length,
       frequency: schedule.frequency,
@@ -175,7 +175,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     const parsed = await parseScheduleBody(projectId, request.body);
     if ('field' in parsed) return badRequest(reply, parsed.field, parsed.reason);
     const schedule = await scheduleRepo.update(id, parsed.input, nextFor(parsed.input));
-    await audit(request.user!, 'REPORT_SCHEDULE_UPDATED', 'report_schedule', id, projectId, {
+    await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_UPDATED', 'report_schedule', id, projectId, {
       name: parsed.input.name,
       recipient_count: parsed.input.recipients.length,
       enabled: parsed.input.enabled,
@@ -188,7 +188,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     const existing = await scheduleInProject(projectId, id);
     if (!existing) return reply.status(404).send({ error: 'Schedule not found in this project' });
     await scheduleRepo.delete(id);
-    await audit(request.user!, 'REPORT_SCHEDULE_DELETED', 'report_schedule', id, projectId, { name: existing.name });
+    await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_DELETED', 'report_schedule', id, projectId, { name: existing.name });
     return { deleted: true };
   });
 
@@ -196,7 +196,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     const { projectId, id } = request.params as { projectId: string; id: string };
     const schedule = await scheduleInProject(projectId, id);
     if (!schedule) return reply.status(404).send({ error: 'Schedule not found in this project' });
-    const result = await emails.sendSchedule(schedule, 'manual');
+    const result = await emails.sendSchedule(schedule, 'manual', requestOrigin(request));
     return {
       status: result.status,
       error: result.error,

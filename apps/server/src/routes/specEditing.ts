@@ -15,6 +15,7 @@ import {
 } from '../errors.js';
 import { validateStepsInput } from '../services/stepValidation.js';
 import type { InvalidParam } from '../services/resultValidation.js';
+import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 /**
  * Create/edit/delete for Test Suites and Test Cases (including versioned content:
@@ -43,6 +44,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     resourceId: string;
     projectId: string;
     diff: Record<string, unknown>;
+    origin: RequestOrigin;
   }) {
     await db
       .insertInto('audit_logs')
@@ -55,8 +57,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         resource_id: params.resourceId,
         project_id: params.projectId,
         diff: JSON.stringify(params.diff),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifySpecEditingService',
+        ...params.origin,
         created_at: new Date().toISOString(),
       })
       .execute();
@@ -92,6 +93,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       });
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'SUITE_CREATED',
         resourceType: 'test_suite',
@@ -139,6 +141,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       });
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'SUITE_UPDATED',
         resourceType: 'test_suite',
@@ -181,6 +184,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'SUITE_DELETED',
         resourceType: 'test_suite',
@@ -274,6 +278,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       });
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'CASE_CREATED',
         resourceType: 'test_case',
@@ -314,6 +319,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       });
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'CASE_UPDATED',
         resourceType: 'test_case',
@@ -350,6 +356,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'CASE_DELETED',
         resourceType: 'test_case',
@@ -459,6 +466,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'SPEC_ITEMS_MOVED',
         resourceType: 'test_suite',
@@ -502,6 +510,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         const version = await versionRepo.createDraftFromLatest(caseId, actor.id);
 
         await insertAuditLog({
+        origin: requestOrigin(request),
           actorId: actor.id,
           action: 'CASE_DRAFT_CREATED',
           resourceType: 'test_case_version',
@@ -552,6 +561,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       const updated = await versionRepo.findById(versionId);
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'CASE_VERSION_UPDATED',
         resourceType: 'test_case_version',
@@ -615,6 +625,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       });
 
       await insertAuditLog({
+        origin: requestOrigin(request),
         actorId: actor.id,
         action: 'CASE_VERSION_APPROVED',
         resourceType: 'test_case_version',
@@ -680,6 +691,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         });
 
         await insertAuditLog({
+        origin: requestOrigin(request),
           actorId: actor.id,
           action: transition.action,
           resourceType: 'test_case_version',

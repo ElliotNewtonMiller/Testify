@@ -11,6 +11,7 @@ import {
 } from '@testify/core';
 import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { sendCustomFieldInUseError, sendProblemDetails, isPublicError } from '../errors.js';
+import { requestOrigin } from '../audit.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
   return typeof value === 'string' && (CUSTOM_FIELD_ENTITY_TYPES as readonly string[]).includes(value);
@@ -130,8 +131,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
             resource_type: 'custom_field_definition',
             resource_id: definition.id,
             diff: JSON.stringify({ entity_type: entityType, name, field_label, field_type, seeded_count: seededCount }),
-            ip_address: '127.0.0.1',
-            user_agent: 'TestifyAdminService',
+            ...requestOrigin(request),
             created_at: now,
           })
           .execute();
@@ -207,8 +207,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
             resource_type: 'custom_field_definition',
             resource_id: id,
             diff: JSON.stringify({ name, field_label, is_required, default_value, validation_regex, applied_default_count: appliedDefaultCount }),
-            ip_address: '127.0.0.1',
-            user_agent: 'TestifyAdminService',
+            ...requestOrigin(request),
             created_at: now,
           })
           .execute();
@@ -256,8 +255,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
           resource_type: 'custom_field_definition',
           resource_id: id,
           diff: JSON.stringify({ forced: force === 'true' }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();

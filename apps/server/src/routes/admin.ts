@@ -6,6 +6,7 @@ import { UserRepository, RoleRepository, SessionRepository, ApiTokenRepository, 
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
+import { requestOrigin } from '../audit.js';
 
 /** Replies for a guard violation (see services/adminGuard.ts); returns false for any other error. */
 function sendGuardError(reply: any, err: unknown): boolean {
@@ -120,8 +121,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           resource_type: 'user',
           resource_id: newUser.id,
           diff: JSON.stringify({ username: newUser.username, email: newUser.email, global_role: global_role || 'Tester' }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -200,8 +200,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_type: 'user',
         resource_id: userId,
         diff: JSON.stringify({ global_role, project_roles }),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyAdminService',
+        ...requestOrigin(request),
         created_at: now,
       })
       .execute();
@@ -270,8 +269,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_type: 'user',
         resource_id: userId,
         diff: JSON.stringify(status === 'DISABLED' ? { status, api_tokens_revoked: revokedTokens } : { status }),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyAdminService',
+        ...requestOrigin(request),
         created_at: now,
       })
       .execute();
@@ -349,8 +347,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_id: userId,
         // Never the password itself.
         diff: JSON.stringify({ generated, sessions_ended: sessionsEnded, must_change_password: true }),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyAdminService',
+        ...requestOrigin(request),
         created_at: new Date().toISOString(),
       })
       .execute();
@@ -441,8 +438,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           resource_type: 'role',
           resource_id: role.id,
           diff: JSON.stringify({ name, description: description ?? null, permission_keys }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -498,8 +494,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           resource_type: 'role',
           resource_id: roleId,
           diff: JSON.stringify({ name, description, permission_keys }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -554,8 +549,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
         resource_type: 'role',
         resource_id: roleId,
         diff: JSON.stringify({}),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyAdminService',
+        ...requestOrigin(request),
         created_at: now,
       })
       .execute();
@@ -631,8 +625,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
           resource_id: userId,
           project_id: projectId || null,
           diff: JSON.stringify({ project_id: projectId || null, overrides }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();

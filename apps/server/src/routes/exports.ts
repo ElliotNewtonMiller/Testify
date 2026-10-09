@@ -25,6 +25,7 @@ import {
   type ExportableExecution,
 } from '@testify/core';
 import { requirePermission, authenticateRequest, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
+import { requestOrigin } from '../audit.js';
 
 function pickSerializer(format: unknown): IFileSerializer {
   return format === 'STANDARD_CSV' ? new CsvExportSerializer() : new JsonExportSerializer();
@@ -251,8 +252,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
           resource_id: projectId,
           project_id: projectId,
           diff: JSON.stringify({ export_kind: 'DEFINITIONS', format: serializer.formatId, scope: exportScope, record_count: bundle.record_count }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyExportService',
+          ...requestOrigin(request),
           created_at: new Date().toISOString(),
         })
         .execute();
@@ -393,8 +393,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
             build_id: buildId,
             record_count: bundle.record_count,
           }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyExportService',
+          ...requestOrigin(request),
           created_at: new Date().toISOString(),
         })
         .execute();

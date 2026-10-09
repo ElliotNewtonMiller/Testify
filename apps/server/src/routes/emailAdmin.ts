@@ -7,6 +7,7 @@ import { escapeHtml, isValidEmail } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
 import { EMAIL_SETTING_KEYS, loadEmailSettings, sendEmail } from '../services/mailer.js';
 import { getSecretBox } from '../services/secrets.js';
+import { requestOrigin } from '../audit.js';
 
 /**
  * Outgoing email settings and the last email sent (SYSTEM_ADMIN only):
@@ -101,8 +102,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
         resource_id: 'email',
         project_id: null,
         diff: JSON.stringify({ smtp_host: host || null, smtp_port: port || null, smtp_user: str(body.smtp_user) || null, from: from || null, public_url: publicUrl || null, password_changed: passwordChanged }),
-        ip_address: null,
-        user_agent: 'TestifyAdminService',
+        ...requestOrigin(request),
         created_at: new Date().toISOString(),
       })
       .execute();

@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
 import { authenticateRequest, requirePermission, canViewProject, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
+import { requestOrigin } from '../audit.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
 const VALID_BUILD_STATUSES = new Set(['OPEN', 'CLOSED']);
@@ -67,7 +68,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         description: typeof description === 'string' && description.trim() ? description.trim() : null,
         settings: { allow_draft_plan_linking: false },
       });
-      await writeProjectAudit(request.user!, 'PROJECT_CREATED', project.id, { name: project.name, prefix: project.prefix });
+      await writeProjectAudit(request, 'PROJECT_CREATED', project.id, { name: project.name, prefix: project.prefix });
       return reply.status(201).send({ project });
     }
   );
@@ -117,7 +118,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         ...(nextPrefix !== undefined ? { prefix: nextPrefix } : {}),
         ...(description !== undefined ? { description: typeof description === 'string' && description.trim() ? description.trim() : null } : {}),
       });
-      await writeProjectAudit(request.user!, 'PROJECT_UPDATED', projectId, {
+      await writeProjectAudit(request, 'PROJECT_UPDATED', projectId, {
         ...(name !== undefined ? { name: name.trim() } : {}),
         ...(nextPrefix !== undefined ? { prefix: nextPrefix } : {}),
       });
@@ -146,7 +147,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         );
       }
       if (!result.deleted) return reply.status(404).send({ error: 'Project not found' });
-      await writeProjectAudit(request.user!, 'PROJECT_DELETED', projectId, {
+      await writeProjectAudit(request, 'PROJECT_DELETED', projectId, {
         name: existing.name,
         prefix: existing.prefix,
         forced: force === 'true',
@@ -156,11 +157,12 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   );
 
   async function writeProjectAudit(
-    actor: { id: string; api_token?: unknown },
+    request: FastifyRequest,
     action: string,
     projectId: string,
     diff: Record<string, unknown>
   ) {
+    const actor = request.user!;
     await db
       .insertInto('audit_logs')
       .values({
@@ -172,8 +174,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         resource_id: projectId,
         project_id: projectId,
         diff: JSON.stringify(diff),
-        ip_address: '127.0.0.1',
-        user_agent: 'TestifyProjectService',
+        ...requestOrigin(request),
         created_at: new Date().toISOString(),
       })
       .execute();

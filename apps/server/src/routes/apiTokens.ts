@@ -6,6 +6,7 @@ import { ApiTokenRepository, UserRepository } from '@testify/db';
 import { PERMISSION_KEYS } from '@testify/core';
 import { requirePermission, apiTokenIssuerAccess } from '../middleware/auth.js';
 import { sendCapabilityCeilingExceededError } from '../errors.js';
+import { requestOrigin } from '../audit.js';
 
 /**
  * Machine API token management -- create/list/revoke tokens for CI/automation callers.
@@ -77,8 +78,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
           resource_id: token.id,
           project_id: projectId,
           diff: JSON.stringify({ name, capabilities, expires_at: token.expires_at, token_prefix: token.token_prefix }),
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();
@@ -137,8 +137,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
           resource_id: id,
           project_id: projectId,
           diff: '{}',
-          ip_address: '127.0.0.1',
-          user_agent: 'TestifyAdminService',
+          ...requestOrigin(request),
           created_at: now,
         })
         .execute();

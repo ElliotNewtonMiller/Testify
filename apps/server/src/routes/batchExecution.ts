@@ -13,6 +13,7 @@ import type {
   BatchExecutionSingleResult,
 } from '@testify/core';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
+import { requestOrigin } from '../audit.js';
 
 const INSERT_CHUNK = 500;
 
@@ -410,8 +411,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
               resource_id: buildId,
               project_id: projectId,
               diff: JSON.stringify({ successful: successCount, failed: failedCount, plan_id: planId }),
-              ip_address: '127.0.0.1',
-              user_agent: 'TestifyBatchExecutionService',
+              ...requestOrigin(req),
               created_at: now,
             })
             .execute();
@@ -446,7 +446,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       responsePayload.build_status = await autoCloseBuildIfComplete(db, buildId, {
         id: user.id,
         type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
-      });
+      }, requestOrigin(req));
 
       const httpStatus = failedCount > 0 && !allOrNothing ? 207 : 201;
       return reply.status(httpStatus).send(responsePayload);

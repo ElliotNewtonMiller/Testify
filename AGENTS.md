@@ -1482,6 +1482,28 @@ New tests: `apps/server/tests/external_ids.test.ts` (2):
 
 552/552.
 
+## Fixed: audit log entries recorded a fake address and made-up client names (2026-10-09)
+
+Audit item 24 (`docs/audit_2026-10-07.md`). Nearly every `audit_logs` insert hard-coded `ip_address: '127.0.0.1'` and a `user_agent` such as `'TestifyAdminService'`, so the Security Audit Log couldn't say where any action came from. A few report-email entries used `null`, and the sign-in lockout recorded the real address but a made-up agent. 30 inserts in 15 files.
+
+- **New `apps/server/src/audit.ts`**: `requestOrigin(request)` returns `{ ip_address, user_agent }` -- `request.ip` (which follows `TRUST_PROXY`, so behind a reverse proxy it's the forwarded client) capped at 45 characters (the column, the longest textual IPv6), and the `User-Agent` header trimmed and capped at 500. `NO_ORIGIN` (both null) is for actions with no request behind them.
+- **Every audit insert** now spreads `...requestOrigin(request)`. Helpers that write audit rows take the origin from their caller:
+  - `insertAuditLog` (spec editing) and `audit()` (report emails) take it as a parameter;
+  - `writeProjectAudit` now takes the request;
+  - `recordAccountFailure` (sign-in lockout) takes an origin instead of an ip;
+  - `autoCloseBuildIfComplete(db, buildId, actor, origin = NO_ORIGIN)` records the request whose result completed the run;
+  - `ReportEmailService.sendSchedule(schedule, trigger, origin = NO_ORIGIN)` records the request for "Send now", and nothing for scheduled sends.
+- **Admin Panel → Security Audit Log** gained a "From" column: the address, with the User-Agent in a hover tooltip, or "scheduled" when there was no request.
+- Older rows keep the values they were written with.
+
+New tests: `apps/server/tests/audit_origin.test.ts` (2):
+- Project, custom field and case creation, a data export, a single result, a batch, and an account lock -- all sent from one address with one User-Agent -- each write audit rows carrying exactly that address and agent.
+- With `TRUST_PROXY=true` the `X-Forwarded-For` client is recorded instead of the proxy, and a 2,000-character User-Agent is stored as 500.
+
+554/554. Verified live: an action from the browser records the browser's User-Agent, and the demo script's actions record `node`. Behind Vite's dev proxy the address is genuinely 127.0.0.1.
+
+Noticed, not changed: creating, editing and deleting test plans and runs writes no audit entry at all (projects, cases, plan membership, results and admin changes do).
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

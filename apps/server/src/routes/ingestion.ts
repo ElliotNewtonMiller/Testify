@@ -25,6 +25,7 @@ import {
 } from '@testify/core';
 import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
 import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage } from '../errors.js';
+import { requestOrigin } from '../audit.js';
 
 /**
  * Import size limits. An import file is held in memory while it's parsed (and its parsed tree
@@ -857,8 +858,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
             resource_id: targetProjectId!,
             project_id: targetProjectId!,
             diff: JSON.stringify(summary),
-            ip_address: '127.0.0.1',
-            user_agent: 'TestifyIngestionService',
+            ...requestOrigin(req),
             created_at: new Date().toISOString(),
           })
           .execute();

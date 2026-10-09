@@ -20,6 +20,9 @@ interface AuditItem {
   resource_id: string;
   diff: string;
   created_at: string;
+  /** Where the action came from (null for scheduled jobs). */
+  ip_address: string | null;
+  user_agent: string | null;
 }
 
 interface ProjectItem {
@@ -3123,6 +3126,7 @@ export function AdminPanelModal({
                 >
                   <th style={{ padding: "6px" }}>Timestamp</th>
                   <th style={{ padding: "6px" }}>Security Action</th>
+                  <th style={{ padding: "6px" }}>From</th>
                   <th style={{ padding: "6px" }}>Resource ID</th>
                   <th style={{ padding: "6px" }}>Diff Payload</th>
                 </tr>
@@ -3154,6 +3158,12 @@ export function AdminPanelModal({
                       >
                         {log.action}
                       </span>
+                    </td>
+                    <td
+                      title={log.user_agent ?? undefined}
+                      style={{ padding: "6px", fontFamily: "monospace", color: "#cbd5e1", whiteSpace: "nowrap" }}
+                    >
+                      {log.ip_address ?? <span style={{ color: "#64748b" }}>scheduled</span>}
                     </td>
                     <td
                       style={{
