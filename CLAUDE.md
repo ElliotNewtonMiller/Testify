@@ -1508,6 +1508,17 @@ Noticed, not changed: creating, editing and deleting test plans and runs writes 
 
 Per direct request. The Resource ID column showed `resource_id.substring(0, 8)...`, so the id couldn't be read or copied, and there's no way to widen columns. `AdminPanelModal.tsx`'s audit table now shows the full id on one line, selectable as a whole (`userSelect: all`), with its `resource_type` in small text above it. The Diff Payload column wraps (`wordBreak: break-all`, min 160px) instead of squeezing the other columns. The table fits the panel (774px in 788px) with no sideways scroll.
 
+## Fixed: an open case kept showing old custom-field values after an admin changed the field (2026-10-09)
+
+Audit item 26 (`docs/audit_2026-10-07.md`, first flagged in the 2026-09-18 custom-fields entry). The custom-field value fetches in `App.tsx` re-ran only when the selected case, suite or mode changed. After an admin created, edited or deleted a field in the Admin Panel, the case or suite already open kept its old values and labels -- a deleted field stayed editable, and a renamed one kept its old name -- until something else was selected or the page reloaded. Field changes can also rewrite stored values (a removed option is deselected, a required field fills blanks with its default), so the values themselves could be out of date too.
+
+- `AdminPanelModal` gained an `onCustomFieldsChanged` prop, called after a field is created or saved, deleted, or force-deleted with its data.
+- `App.tsx` counts these in `customFieldDefsVersion`, which is now a dependency of the three value fetches: the Spec-mode case, the Execute-mode case (read-only), and the selected suite. The open case's or suite's values reload as soon as the change is saved. The editors are uncontrolled and keyed by field, and the fetch clears values first, so they remount with the new labels and values.
+- The same signal reloads the search filter's field list (a deleted field's filter row drops out) and re-runs the current search.
+- Limitation: this covers changes made in the same browser tab. A change by another admin elsewhere still shows after the next case or suite switch or a reload; nothing pushes changes from the server.
+
+No new automated tests (client-side state; web tests 54/54, `tsc` clean). Verified live in a separate browser origin: with DEMO-1 open in Spec mode, renaming its custom field in the Admin Panel showed the new label on the open case at once, and deleting the field (and its data) removed it from the open case at once.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

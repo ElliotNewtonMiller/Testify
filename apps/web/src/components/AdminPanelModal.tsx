@@ -106,6 +106,9 @@ interface AdminPanelModalProps {
   /** Called after a save that changes the SIGNED-IN admin's own role/permissions, so the
    * caller can re-hydrate currentUser/userPermissions -- nothing here does that itself. */
   onSelfPermissionsChanged?: () => void;
+  /** A custom field definition was created, changed or deleted -- open cases/suites should
+   * reload their values (a change can rewrite them, e.g. a removed option or a new default). */
+  onCustomFieldsChanged?: () => void;
 }
 
 export function AdminPanelModal({
@@ -114,6 +117,7 @@ export function AdminPanelModal({
   currentUser,
   projects,
   onSelfPermissionsChanged,
+  onCustomFieldsChanged,
 }: AdminPanelModalProps) {
   const [activeTab, setActiveTab] = useState<
     "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "EMAIL" | "AUDIT"
@@ -900,6 +904,7 @@ export function AdminPanelModal({
       }
 
       await fetchCustomFields();
+      onCustomFieldsChanged?.();
       setIsNewField(false);
       setSelectedFieldId(data.definition.id);
       // seeded_count is only ever present on a create response -- a default value just got
@@ -952,6 +957,7 @@ export function AdminPanelModal({
         setIsNewField(false);
       }
       fetchCustomFields();
+      onCustomFieldsChanged?.();
       flashSuccess(`✓ Field "${field.field_label}" deleted.`);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to delete custom field");
@@ -978,6 +984,7 @@ export function AdminPanelModal({
       const label = deleteFieldPrompt.label;
       setDeleteFieldPrompt(null);
       fetchCustomFields();
+      onCustomFieldsChanged?.();
       flashSuccess(`✓ Field "${label}" and its recorded data have been deleted.`);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to delete custom field");

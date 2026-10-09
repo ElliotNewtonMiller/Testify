@@ -262,6 +262,10 @@ export default function App() {
   // Bumped after edits that can change whether a case matches but don't replace specData/
   // workspace (custom field value saves), so the active filter re-evaluates.
   const [filterDataTick, setFilterDataTick] = useState(0);
+  // Bumped when an admin creates, changes or deletes a custom field definition (Admin Panel),
+  // so the open case's/suite's values and the filter's field list reload instead of showing
+  // what they showed before the change.
+  const [customFieldDefsVersion, setCustomFieldDefsVersion] = useState(0);
   const caseSearchRequestSeq = useRef(0);
   // Spec mode: deprecated cases are hidden from the case list (and tree counts) unless this is
   // on -- passed to GET .../spec-tree as include_deprecated. Session-only.
@@ -643,6 +647,13 @@ export default function App() {
   useEffect(() => {
     loadCaseFilterFields();
   }, [loadCaseFilterFields]);
+  // A custom field changed in the Admin Panel: refresh the field list (a deleted field's filter
+  // row drops out) and re-run the current search, since stored values may have changed too.
+  useEffect(() => {
+    if (customFieldDefsVersion === 0) return;
+    loadCaseFilterFields();
+    setFilterDataTick((t) => t + 1);
+  }, [customFieldDefsVersion, loadCaseFilterFields]);
 
   const caseFilterFieldsByKey = new Map(caseFilterFields.map((f) => [f.key, f]));
   const filterContext = {
@@ -1700,7 +1711,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceMode, specSelectedCaseId]);
+  }, [workspaceMode, specSelectedCaseId, customFieldDefsVersion]);
 
   // Custom field values for whichever case is active in Execution mode -- shown read-only
   // under the steps. Same clear-before-fetch discipline as the Spec-mode fetch above (the
@@ -1726,7 +1737,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceMode, activeExecCaseId]);
+  }, [workspaceMode, activeExecCaseId, customFieldDefsVersion]);
 
   // Commits one custom field value edit via PUT, then optimistically patches local state
   // so the field reflects the save without waiting on a full spec-tree/detail refetch.
@@ -1810,7 +1821,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceMode, selectedSuiteId]);
+  }, [workspaceMode, selectedSuiteId, customFieldDefsVersion]);
 
   // Commits one suite custom field value edit via PUT -- mirrors handleCustomFieldValueChange
   // above exactly, including the same stale-response race guard (selectedSuiteIdRef).
@@ -3048,6 +3059,7 @@ export default function App() {
         currentUser={currentUser}
         projects={projectsList}
         onSelfPermissionsChanged={fetchCurrentUser}
+        onCustomFieldsChanged={() => setCustomFieldDefsVersion((v) => v + 1)}
       />
 
       <ImportWizardModal
