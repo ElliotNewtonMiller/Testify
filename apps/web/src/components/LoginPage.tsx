@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile } from './AuthModal';
-import { authHeaders as sessionHeaders } from '../utils/session';
+import { jsonHeaders } from '../utils/session';
 
 interface LoginPageProps {
   onLoginSuccess: (user: UserProfile) => void;
@@ -26,7 +26,7 @@ export function LoginPage({ onLoginSuccess, notice }: LoginPageProps) {
     try {
       const res = await fetch('/api/v1/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...sessionHeaders() },
+        headers: jsonHeaders(),
         // The server keeps the sign-in in an HttpOnly cookie (never readable here) rather
         // than returning a token for this page to store.
         body: JSON.stringify({ username, password, session: 'cookie' }),

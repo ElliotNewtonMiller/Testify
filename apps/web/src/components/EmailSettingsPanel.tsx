@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { authHeaders as sessionHeaders } from "../utils/session";
+import { authHeaders, jsonHeaders } from "../utils/session";
 
 interface EmailSettings {
   smtp_host: string | null;
@@ -26,9 +26,6 @@ interface LastEmail {
   created_at: string;
 }
 
-function authHeaders(json = false): Record<string, string> {
-  return { ...sessionHeaders(), ...(json ? { "Content-Type": "application/json" } : {}) };
-}
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -103,7 +100,7 @@ export function EmailSettingsPanel() {
     try {
       const body: Record<string, unknown> = { ...form, smtp_port: form.smtp_port || null };
       if (!passwordTouched) delete body.smtp_password;
-      const res = await fetch("/api/v1/admin/email-settings", { method: "PUT", headers: authHeaders(true), body: JSON.stringify(body) });
+      const res = await fetch("/api/v1/admin/email-settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.message || d.error || "Couldn't save");
       applySettings(d.settings);
@@ -118,7 +115,7 @@ export function EmailSettingsPanel() {
   const sendTest = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/v1/admin/email-settings/test", { method: "POST", headers: authHeaders(true), body: JSON.stringify({ to: testTo }) });
+      const res = await fetch("/api/v1/admin/email-settings/test", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ to: testTo }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.message || d.error || "Couldn't send");
       if (d.email.status === "FAILED") flash(false, "Sending the test email failed -- see Last email below.");

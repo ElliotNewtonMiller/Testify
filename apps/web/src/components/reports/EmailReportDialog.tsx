@@ -1,7 +1,7 @@
 import React from "react";
 import { EmailPreviewModal } from "../EmailSettingsPanel";
 import { buttonStyle } from "./shared";
-import { authHeaders as sessionHeaders } from "../../utils/session";
+import { jsonHeaders } from "../../utils/session";
 
 /** One report in an email: a catalog report id and its params (same as the report API). */
 export interface EmailSectionRequest {
@@ -9,9 +9,6 @@ export interface EmailSectionRequest {
   params: Record<string, unknown>;
 }
 
-function authHeaders(): Record<string, string> {
-  return { "Content-Type": "application/json", ...sessionHeaders() };
-}
 
 const fieldStyle: React.CSSProperties = {
   width: "100%",
@@ -45,7 +42,7 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
   }, [onClose, preview]);
 
   const post = async (body: Record<string, unknown>) => {
-    const res = await fetch(`/api/v1/projects/${projectId}/report-emails`, { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
+    const res = await fetch(`/api/v1/projects/${projectId}/report-emails`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || data.error || `Request failed (${res.status})`);
     return data;

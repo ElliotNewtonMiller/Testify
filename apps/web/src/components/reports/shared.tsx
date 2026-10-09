@@ -1,5 +1,5 @@
 import React from "react";
-import { authHeaders as sessionHeaders } from "../../utils/session";
+import { jsonHeaders } from "../../utils/session";
 
 /**
  * Shared pieces of the Reports view. Every number shown comes from the report API
@@ -25,15 +25,12 @@ export function useEmailContext(onEmailContext: ((ctx: EmailContext | null) => v
   }, [key, onEmailContext]);
 }
 
-function authHeaders(): Record<string, string> {
-  return sessionHeaders();
-}
 
 /** Runs a report. JSON comes back parsed; markdown/csv as text. Throws with the server's message. */
 export async function runReport<T = any>(projectId: string, reportId: string, params: Record<string, unknown>, format: ReportFormat = "json"): Promise<T> {
   const res = await fetch(`/api/v1/projects/${projectId}/reports/${reportId}${format === "json" ? "" : `?format=${format}`}`, {
     method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(params),
   });
   if (!res.ok) {

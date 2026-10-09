@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useFocusFSM, FocusZone, FocusFSMState } from '../hooks/useFocusFSM';
-import { createHotkeyHandler, VerdictType } from '../hooks/useHotkeyEngine';
+import { FocusFSMState } from '../hooks/useFocusFSM';
+import { createHotkeyHandler } from '../hooks/useHotkeyEngine';
 
 describe('Keyboard Focus FSM & Hotkey Engine Tests', () => {
   let activeElementMock: any = null;

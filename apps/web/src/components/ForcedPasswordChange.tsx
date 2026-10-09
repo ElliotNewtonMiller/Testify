@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { UserProfile } from './AuthModal';
-import { authHeaders as sessionHeaders } from '../utils/session';
+import { jsonHeaders } from '../utils/session';
 
 interface ForcedPasswordChangeProps {
   user: UserProfile;
@@ -53,10 +53,7 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
     try {
       const res = await fetch('/api/v1/auth/credentials', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...sessionHeaders(),
-        },
+        headers: jsonHeaders(),
         body: JSON.stringify({ newPassword, currentPassword }),
       });
       const data = await res.json().catch(() => ({}));

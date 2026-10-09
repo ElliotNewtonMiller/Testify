@@ -1545,6 +1545,20 @@ Audit item 35 (`docs/audit_2026-10-07.md`). `npm test` (root `vitest run`) also 
 
 Plain `npm test`: 554/554, no flags needed.
 
+## Removed: duplicated auth-header helpers and unused web code; fixed blank titles (2026-10-09)
+
+Audit item 36 (`docs/audit_2026-10-07.md`), minus its first part: splitting the 5,580-line `App.tsx` is a restructuring job, left open.
+
+- **One header helper.** Since the cookie sign-in (audit item 15), every component imported `authHeaders` from `utils/session.ts` as `sessionHeaders` and re-wrapped it in its own local `authHeaders`/`getAuthHeaders` -- eight copies, plus an alias in `App.tsx`. `utils/session.ts` now also exports `jsonHeaders()` (the client header plus `Content-Type: application/json`). Every component imports `authHeaders`/`jsonHeaders` directly, and the ~35 hand-built `{ "Content-Type": "application/json", ...authHeaders() }` objects became `jsonHeaders()`. 13 files, 105 lines removed and 73 added; no request changes what it sends.
+- **Typo**: `useHotkeyEngine`'s `targetTargetWindow` option is now `targetWindow`.
+- **Unused code**, found with `tsc --noUnusedLocals --noUnusedParameters`, which now reports nothing for `apps/web`:
+  - removed: the `FocusZone` import in `App.tsx`; `AdminPanelModal`'s `isLoading` (set, never read); the `currentUser` prop on `ExportModal` and `ImportWizardModal` (and the `UserProfile` imports it needed); three unused test imports;
+  - `App.tsx`'s `savingCaseFieldError` was set when saving a case's title, priority or execution type failed, and never shown -- so a failed save went unnoticed. The error now goes to `specEditError`, which the case pane shows, like the other case edits.
+- **Found while checking that path live -- blank titles were saved.** `PUT .../test-cases/:caseId` stored an empty title (it did, on DEMO-3), and the suite rename the same for names. Both create routes only checked truthiness, and a name over 255 characters (the `varchar(255)` columns) failed with a 500. New `nameProblem` in `specEditing.ts`: suite create/edit and case create/edit refuse a name/title that's not text, blank after trimming, or over 255 characters, with `400 INVALID_NAME` ("title can't be blank", "name can be at most 255 characters"), and store it trimmed.
+- **The title and suite-name boxes revert on a refused save.** `handleUpdateCaseField` and `handleUpdateSuiteName` now return whether the save worked. The uncontrolled inputs put the stored value back when it didn't (and a blank suite name is reverted without a request), instead of showing a name the case or suite doesn't have.
+
+New test: `spec_editing.test.ts` +1 (blank, whitespace-only, non-text and 256-character names and titles each get 400 on suite/case create and edit; valid ones are trimmed; a 255-character name is accepted; other case fields still edit on their own). 555/555; `tsc --noEmit` clean. Verified live in a separate browser origin: sign-in, a title rename (PUT 200), recording a result, the Admin Panel roster and Reports all work with the shared helpers. Clearing a case's title shows "title can't be blank" in the case pane, and the box goes back to the saved title.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

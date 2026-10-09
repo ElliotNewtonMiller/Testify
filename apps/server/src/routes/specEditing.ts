@@ -73,9 +73,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       const { projectId } = request.params as { projectId: string };
       const { name, description, parent_suite_id: parentSuiteId, position } = (request.body as any) || {};
 
-      if (!name || typeof name !== 'string') {
-        return reply.status(400).send({ error: 'name (string) is required' });
-      }
+      const nameError = nameProblem(name, 'name');
+      if (nameError) return reply.status(400).send({ error: nameError, code: 'INVALID_NAME' });
 
       if (parentSuiteId) {
         const parent = await suiteRepo.findById(parentSuiteId);
@@ -87,7 +86,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       const suite = await suiteRepo.create({
         project_id: projectId,
         parent_suite_id: parentSuiteId ?? null,
-        name,
+        name: name.trim(),
         description: description ?? null,
         position,
       });
@@ -118,6 +117,10 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       if (!existing || existing.project_id !== projectId) {
         return reply.status(404).send({ error: 'Test suite not found in this project' });
       }
+      if (name !== undefined) {
+        const nameError = nameProblem(name, 'name');
+        if (nameError) return reply.status(400).send({ error: nameError, code: 'INVALID_NAME' });
+      }
 
       if (parentSuiteId !== undefined && parentSuiteId !== existing.parent_suite_id) {
         if (parentSuiteId) {
@@ -135,7 +138,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
 
       const suite = await suiteRepo.update(suiteId, {
-        name: typeof name === 'string' ? name : undefined,
+        name: typeof name === 'string' ? name.trim() : undefined,
         description: description !== undefined ? description : undefined,
         position: typeof position === 'number' ? position : undefined,
       });
@@ -215,9 +218,11 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         steps,
       } = (request.body as any) || {};
 
-      if (!testSuiteId || !title || typeof title !== 'string') {
-        return reply.status(400).send({ error: 'test_suite_id and title (string) are required' });
+      if (!testSuiteId) {
+        return reply.status(400).send({ error: 'test_suite_id is required' });
       }
+      const titleError = nameProblem(title, 'title');
+      if (titleError) return reply.status(400).send({ error: titleError, code: 'INVALID_NAME' });
       // Steps are checked before anything is created (a bad step used to fail half-way, as a 500).
       const checkedSteps = steps === undefined || steps === null ? { steps: [] } : validateStepsInput(steps);
       if ('invalid' in checkedSteps) return sendInvalidSteps(reply, checkedSteps.invalid, request.url);
@@ -260,7 +265,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
           project_id: projectId,
           test_suite_id: testSuiteId,
           external_id: externalId,
-          title,
+          title: title.trim(),
           priority,
           execution_type: executionType,
         });
@@ -303,6 +308,10 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       if (!existing || existing.project_id !== projectId) {
         return reply.status(404).send({ error: 'Test case not found in this project' });
       }
+      if (title !== undefined) {
+        const titleError = nameProblem(title, 'title');
+        if (titleError) return reply.status(400).send({ error: titleError, code: 'INVALID_NAME' });
+      }
 
       if (testSuiteId) {
         const suite = await suiteRepo.findById(testSuiteId);
@@ -312,7 +321,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
 
       const testCase = await caseRepo.update(caseId, {
-        title: typeof title === 'string' ? title : undefined,
+        title: typeof title === 'string' ? title.trim() : undefined,
         priority: typeof priority === 'string' ? priority : undefined,
         execution_type: typeof executionType === 'string' ? executionType : undefined,
         test_suite_id: typeof testSuiteId === 'string' ? testSuiteId : undefined,
@@ -716,4 +725,17 @@ function sendInvalidSteps(reply: FastifyReply, invalid: InvalidParam[], instance
     invalid_params: invalid,
     instance,
   });
+}
+
+/** Suite names and case titles are stored as varchar(255). */
+const MAX_NAME_LENGTH = 255;
+
+/**
+ * Why a suite name or case title can't be saved (blank, not text, or too long), or null. A
+ * blank title used to be saved as-is, and an over-long one failed with a 500.
+ */
+function nameProblem(value: unknown, field: string): string | null {
+  if (typeof value !== 'string' || value.trim() === '') return `${field} can't be blank`;
+  if (value.trim().length > MAX_NAME_LENGTH) return `${field} can be at most ${MAX_NAME_LENGTH} characters`;
+  return null;
 }

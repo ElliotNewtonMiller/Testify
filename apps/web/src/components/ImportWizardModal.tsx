@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { UserProfile } from "./AuthModal";
-import { authHeaders as sessionHeaders } from "../utils/session";
+import { authHeaders } from "../utils/session";
 
 interface ProjectItem {
   id: string;
@@ -101,7 +100,6 @@ interface ImportExecuteResult {
 interface ImportWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: UserProfile | null;
   projects: ProjectItem[];
   defaultProjectId?: string;
   onImportComplete?: () => void;
@@ -148,7 +146,7 @@ function describeFailedResponse(res: Response, fallback: string): string {
   return `${fallback} (HTTP ${res.status}).`;
 }
 
-export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defaultProjectId, onImportComplete }: ImportWizardModalProps) {
+export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId, onImportComplete }: ImportWizardModalProps) {
   const [step, setStep] = useState<WizardStep>("UPLOAD");
 
   const [fileName, setFileName] = useState<string>("");
@@ -187,9 +185,6 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, targetProjectId]);
 
-  const getAuthHeaders = (): Record<string, string> => {
-    return sessionHeaders();
-  };
 
   const resetWizard = () => {
     setStep("UPLOAD");
@@ -246,7 +241,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
       const res = await fetch("/api/v1/imports/dry-run", {
         method: "POST",
         // No Content-Type: the browser sets multipart/form-data with its boundary.
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
         body: buildImportForm(),
       });
       const data = await readJsonResponse(res);
@@ -282,7 +277,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
     try {
       const res = await fetch(
         `/api/v1/imports/custom-field-options?target_project_id=${encodeURIComponent(projectId)}&entity_type=TestCase`,
-        { headers: getAuthHeaders() }
+        { headers: authHeaders() }
       );
       const data = await readJsonResponse(res);
       if (res.ok) {
@@ -322,7 +317,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
       const res = await fetch("/api/v1/imports/execute", {
         method: "POST",
         // No Content-Type: the browser sets multipart/form-data with its boundary.
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
         body: buildImportForm(),
       });
       const data = await readJsonResponse(res);

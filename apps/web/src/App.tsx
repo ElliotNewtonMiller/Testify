@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useFocusFSM, FocusZone } from "./hooks/useFocusFSM";
+import { useFocusFSM } from "./hooks/useFocusFSM";
 import { useHotkeyEngine, VerdictType } from "./hooks/useHotkeyEngine";
 import { buildExecutionCaseOrder, nextExecutionCaseIndex } from "./utils/executionCaseOrder";
 import { FocusIndicatorBadge } from "./components/FocusIndicatorBadge";
@@ -37,7 +37,7 @@ import {
   EntityType,
   ActionType,
 } from "./components/EntityManagementModal";
-import { authHeaders as sessionHeaders, watchForEndedSession } from "./utils/session";
+import { authHeaders, jsonHeaders, watchForEndedSession } from "./utils/session";
 
 interface Step {
   id: string;
@@ -126,8 +126,6 @@ export interface CustomFieldValueEntry {
   value: unknown;
 }
 
-// The sign-in is an HttpOnly cookie the browser sends itself; see utils/session.ts.
-const authHeaders = sessionHeaders;
 
 const SESSION_ENDED_NOTICE = "Your sign-in has ended. Please sign in again.";
 
@@ -480,7 +478,6 @@ export default function App() {
 
   // Inline title/priority/execution_type editing on the case detail header -- always
   // editable regardless of version status, since these live on test_cases directly.
-  const [savingCaseFieldError, setSavingCaseFieldError] = useState<string | null>(null);
 
   // Draft-versioning: steps are edited as a local buffer while the latest version is
   // DRAFT, re-synced whenever the selected case or its version identity changes.
@@ -690,7 +687,7 @@ export default function App() {
       try {
         const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify({
             q,
             filters,
@@ -788,7 +785,7 @@ export default function App() {
           try {
             const res = await fetch("/api/v1/projects", {
               method: "POST",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
             });
             const data = await res.json();
@@ -806,7 +803,7 @@ export default function App() {
           try {
             const res = await fetch(`/api/v1/projects/${item.id}`, {
               method: "PUT",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
             });
             const data = await res.json();
@@ -833,7 +830,7 @@ export default function App() {
           try {
             const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status || "ACTIVE" }),
             });
             const data = await res.json();
@@ -854,7 +851,7 @@ export default function App() {
           try {
             const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
               method: "PUT",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
             const data = await res.json();
@@ -886,7 +883,7 @@ export default function App() {
           try {
             const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status || "OPEN" }),
             });
             const data = await res.json();
@@ -907,7 +904,7 @@ export default function App() {
           try {
             const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${item.id}`, {
               method: "PUT",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
+              headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
             const data = await res.json();
@@ -1428,7 +1425,7 @@ export default function App() {
             // parser (it 400s on an empty body when that header is present) -- only set it
             // when there's actually a JSON body to send.
             headers: include
-              ? { "Content-Type": "application/json", ...authHeaders() }
+              ? jsonHeaders()
               : { ...authHeaders() },
             body: include ? JSON.stringify({ test_case_id: testCaseId }) : undefined,
           },
@@ -1464,7 +1461,7 @@ export default function App() {
           `/api/v1/test-plans/${selectedPlanId}/suites/${suiteId}/cascade`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
+            headers: jsonHeaders(),
             body: JSON.stringify({ action, ...(force ? { force: true } : {}) }),
           },
         );
@@ -1746,7 +1743,7 @@ export default function App() {
           `/api/v1/test-cases/${requestCaseId}/custom-field-values/${definitionId}`,
           {
             method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
+            headers: jsonHeaders(),
             body: JSON.stringify({ value }),
           },
         );
@@ -1830,7 +1827,7 @@ export default function App() {
           `/api/v1/test-suites/${requestSuiteId}/custom-field-values/${definitionId}`,
           {
             method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
+            headers: jsonHeaders(),
             body: JSON.stringify({ value }),
           },
         );
@@ -1864,26 +1861,30 @@ export default function App() {
   // ---- Suite/case create/edit/delete (Specification mode) ----
 
   const handleUpdateCaseField = useCallback(
-    async (field: "title" | "priority" | "execution_type", value: string) => {
-      if (!specSelectedCaseId || !selectedProjectId) return;
-      setSavingCaseFieldError(null);
+    async (field: "title" | "priority" | "execution_type", value: string): Promise<boolean> => {
+      if (!specSelectedCaseId || !selectedProjectId) return false;
+      // Errors show in the case pane, like the other case edits (this one went into a state
+      // nothing displayed, so a failed title/priority/type save went unnoticed).
+      setSpecEditError(null);
       try {
         const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases/${specSelectedCaseId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify({ [field]: value }),
         });
         const data = await res.json();
         if (!res.ok) {
           if (res.status === 401) {
             handleAuthExpiry();
-            return;
+            return false;
           }
           throw new Error(data.error || data.detail || "Failed to save");
         }
         await refreshSpecTree();
+        return true;
       } catch (err: any) {
-        setSavingCaseFieldError(err.message || "Failed to save");
+        setSpecEditError(err.message || "Failed to save");
+        return false;
       }
     },
     [specSelectedCaseId, selectedProjectId, refreshSpecTree, handleAuthExpiry],
@@ -1987,7 +1988,7 @@ export default function App() {
           `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
           {
             method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
+            headers: jsonHeaders(),
             body: JSON.stringify({ [field]: value || null }),
           },
         );
@@ -2035,7 +2036,7 @@ export default function App() {
           `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
           {
             method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
+            headers: jsonHeaders(),
             body: JSON.stringify({
               steps: stepsToSave.map((s, i) => ({
                 step_number: i + 1,
@@ -2171,7 +2172,7 @@ export default function App() {
         : `/api/v1/projects/${selectedProjectId}/test-suites/${suiteFormState.targetId}`;
       const res = await fetch(url, {
         method: isCreate ? "POST" : "PUT",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           name: suiteFormState.name,
           description: suiteFormState.description || null,
@@ -2195,25 +2196,27 @@ export default function App() {
   // the fuller rename+move form above (still reachable via the tree's own rename icon, which
   // also lets you change the parent suite -- this one only ever touches the name).
   const handleUpdateSuiteName = useCallback(
-    async (suiteId: string, name: string) => {
-      if (!selectedProjectId) return;
+    async (suiteId: string, name: string): Promise<boolean> => {
+      if (!selectedProjectId) return false;
       try {
         const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-suites/${suiteId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify({ name }),
         });
         const data = await res.json();
         if (!res.ok) {
           if (res.status === 401) {
             handleAuthExpiry();
-            return;
+            return false;
           }
           throw new Error(data.error || data.detail || "Failed to rename suite");
         }
         await refreshSpecTree();
+        return true;
       } catch (err: any) {
         showToast(err.message || "Failed to rename suite");
+        return false;
       }
     },
     [selectedProjectId, refreshSpecTree, showToast, handleAuthExpiry],
@@ -2273,7 +2276,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           test_suite_id: selectedSuiteId,
           title: newCaseTitle,
@@ -2417,10 +2420,7 @@ export default function App() {
       try {
         const response = await fetch("/api/v1/executions", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...authHeaders(),
-          },
+          headers: jsonHeaders(),
           body: JSON.stringify({
             // The run selected in the dropdown -- workspace.build is always the plan's newest
             // run, so using it recorded results against the wrong run whenever an older
@@ -2487,7 +2487,7 @@ export default function App() {
         `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${selectedRunId}`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify({ status: nextStatus }),
         },
       );
@@ -2872,7 +2872,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/v1/projects/${selectedProjectId}/spec-move`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           ...(payload.kind === "SUITES" ? { suite_ids: payload.ids } : { case_ids: payload.ids }),
           target_suite_id: targetSuiteId,
@@ -3055,7 +3055,6 @@ export default function App() {
       <ImportWizardModal
         isOpen={importWizardOpen}
         onClose={() => setImportWizardOpen(false)}
-        currentUser={currentUser}
         projects={projectsList}
         defaultProjectId={selectedProjectId}
         onImportComplete={refreshSpecTree}
@@ -3064,7 +3063,6 @@ export default function App() {
       <ExportModal
         isOpen={exportModalOpen}
         onClose={() => setExportModalOpen(false)}
-        currentUser={currentUser}
         projects={projectsList}
         defaultProjectId={selectedProjectId}
       />
@@ -4453,8 +4451,14 @@ export default function App() {
                       type="text"
                       defaultValue={specActiveCase.title}
                       onBlur={(e) => {
-                        if (e.target.value !== specActiveCase.title) {
-                          handleUpdateCaseField("title", e.target.value);
+                        const input = e.target;
+                        if (input.value !== specActiveCase.title) {
+                          // A refused save (e.g. a blank title) puts the saved title back, so
+                          // the box never shows a title the case doesn't have.
+                          const saved = specActiveCase.title;
+                          handleUpdateCaseField("title", input.value).then((ok) => {
+                            if (!ok) input.value = saved;
+                          });
                         }
                       }}
                       onKeyDown={(e) => {
@@ -5011,8 +5015,14 @@ export default function App() {
                       type="text"
                       defaultValue={specActiveSuite.name}
                       onBlur={(e) => {
-                        if (e.target.value.trim() && e.target.value !== specActiveSuite.name) {
-                          handleUpdateSuiteName(specActiveSuite.id, e.target.value.trim());
+                        const input = e.target;
+                        const saved = specActiveSuite.name;
+                        if (!input.value.trim()) {
+                          input.value = saved; // a suite always has a name
+                        } else if (input.value.trim() !== saved) {
+                          handleUpdateSuiteName(specActiveSuite.id, input.value.trim()).then((ok) => {
+                            if (!ok) input.value = saved;
+                          });
                         }
                       }}
                       onKeyDown={(e) => {

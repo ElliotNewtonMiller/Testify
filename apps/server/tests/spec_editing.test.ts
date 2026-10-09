@@ -649,4 +649,35 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     expect(good.statusCode).toBe(200);
     expect(body(good).version.steps.map((s: any) => [s.step_number, s.action])).toEqual([[1, 'Only step']]);
   });
+
+  it('refuses blank or over-long suite names and case titles, on create and edit, and trims them', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const headers = { authorization: `Bearer ${token}` };
+    const body = (res: any) => JSON.parse(res.payload);
+    const send = (method: string, url: string, payload: unknown) => app.inject({ method, url, headers, payload });
+    const base = `/api/v1/projects/${seed.projectId}`;
+    const tooLong = 'x'.repeat(256);
+
+    for (const name of ['', '   ', 42, tooLong]) {
+      const suite = await send('POST', `${base}/test-suites`, { name });
+      expect(suite.statusCode).toBe(400);
+      expect(body(suite).code).toBe('INVALID_NAME');
+      const testCase = await send('POST', `${base}/test-cases`, { test_suite_id: seed.suiteId, title: name });
+      expect(testCase.statusCode).toBe(400);
+      expect(body(testCase).code).toBe('INVALID_NAME');
+      expect((await send('PUT', `${base}/test-suites/${seed.suiteId}`, { name })).statusCode).toBe(400);
+      expect((await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: name })).statusCode).toBe(400);
+    }
+    expect(body(await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '' })).error).toBe("title can't be blank");
+    expect(body(await send('POST', `${base}/test-suites`, { name: tooLong })).error).toBe('name can be at most 255 characters');
+
+    // Nothing was changed by the refusals; valid names are trimmed; other fields still edit alone.
+    const renamed = await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '  Trimmed title  ' });
+    expect(body(renamed).test_case.title).toBe('Trimmed title');
+    expect((await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { priority: 'LOW' })).statusCode).toBe(200);
+    const suite = await send('POST', `${base}/test-suites`, { name: ` ${'y'.repeat(255)} ` });
+    expect(suite.statusCode).toBe(201);
+    expect(body(suite).suite.name).toHaveLength(255);
+  });
 });

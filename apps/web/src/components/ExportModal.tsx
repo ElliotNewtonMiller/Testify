@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { UserProfile } from "./AuthModal";
-import { authHeaders as sessionHeaders } from "../utils/session";
+import { authHeaders, jsonHeaders } from "../utils/session";
 
 interface ProjectItem {
   id: string;
@@ -32,7 +31,6 @@ type StatusFilter = "ALL" | "APPROVED_ONLY";
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: UserProfile | null;
   projects: ProjectItem[];
   defaultProjectId?: string;
 }
@@ -100,7 +98,7 @@ function kindToggleStyle(active: boolean): React.CSSProperties {
 const labelStyle: React.CSSProperties = { fontSize: "11px", color: "#94a3b8", fontWeight: 700, display: "block", marginBottom: "4px" };
 const helperTextStyle: React.CSSProperties = { fontSize: "10px", color: "#64748b", marginTop: "4px" };
 
-export function ExportModal({ isOpen, onClose, currentUser, projects, defaultProjectId }: ExportModalProps) {
+export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: ExportModalProps) {
   const [exportKind, setExportKind] = useState<ExportKind>("DEFINITIONS");
   const [targetProjectId, setTargetProjectId] = useState<string>("");
   const [scopeType, setScopeType] = useState<DefinitionsScopeType>("PROJECT");
@@ -117,9 +115,6 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const getAuthHeaders = (): Record<string, string> => {
-    return sessionHeaders();
-  };
 
   useEffect(() => {
     if (isOpen && !targetProjectId) {
@@ -154,7 +149,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
     if (!(isOpen && exportKind === "DEFINITIONS" && scopeType === "SUITE" && targetProjectId)) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/spec-tree`, { headers: getAuthHeaders() });
+        const res = await fetch(`/api/v1/projects/${targetProjectId}/spec-tree`, { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setSuites(data.suites || []);
       } catch {
@@ -169,7 +164,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
     if (!(isOpen && targetProjectId && (exportKind === "EXECUTION_RESULTS" || (exportKind === "DEFINITIONS" && scopeType === "PLAN")))) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans`, { headers: getAuthHeaders() });
+        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans`, { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setPlans(data.plans || []);
       } catch {
@@ -189,7 +184,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
     if (!(isOpen && exportKind === "EXECUTION_RESULTS" && targetProjectId && selectedPlanId)) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans/${selectedPlanId}/builds`, { headers: getAuthHeaders() });
+        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans/${selectedPlanId}/builds`, { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setBuilds(data.builds || []);
       } catch {
@@ -227,7 +222,7 @@ export function ExportModal({ isOpen, onClose, currentUser, projects, defaultPro
 
       const res = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify(payload),
       });
 

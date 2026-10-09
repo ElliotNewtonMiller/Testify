@@ -10,6 +10,11 @@ export function authHeaders(): Record<string, string> {
   return { ...CLIENT_HEADER };
 }
 
+/** authHeaders() plus a JSON Content-Type, for requests with a JSON body. */
+export function jsonHeaders(): Record<string, string> {
+  return { ...CLIENT_HEADER, "Content-Type": "application/json" };
+}
+
 const SIGN_IN_ROUTES = new Set(["/api/v1/auth/login", "/api/v1/auth/me", "/api/v1/auth/logout"]);
 
 /**

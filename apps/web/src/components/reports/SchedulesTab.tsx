@@ -1,6 +1,6 @@
 import React from "react";
 import { Empty, ErrorNote, InfoTip, Loading, Section, buttonStyle, fmtWhen, selectStyle } from "./shared";
-import { authHeaders as sessionHeaders } from "../../utils/session";
+import { authHeaders, jsonHeaders } from "../../utils/session";
 
 type SectionKind = "overview" | "latest_run" | "test_health" | "plan_trend";
 
@@ -44,7 +44,7 @@ const STATUS_COLORS: Record<string, string> = { SENT: "#4ade80", CAPTURED: "#7dd
 
 async function api(method: string, url: string, body?: unknown) {
   // Content-Type only with a body: Fastify rejects an empty body declared as JSON.
-  const headers: Record<string, string> = { ...sessionHeaders(), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) };
+  const headers = body !== undefined ? jsonHeaders() : authHeaders();
   const res = await fetch(url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || `Request failed (${res.status})`);

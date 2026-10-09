@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { UserProfile } from "./AuthModal";
-import { authHeaders as sessionHeaders } from "../utils/session";
+import { authHeaders, jsonHeaders } from "../utils/session";
 
 interface UserItem extends UserProfile {
   status: "ACTIVE" | "DISABLED";
@@ -139,7 +139,6 @@ export function AdminPanelModal({
   const [auditLogs, setAuditLogs] = useState<AuditItem[]>([]);
   const [roles, setRoles] = useState<RoleTemplate[]>([]);
   const [permissionRegistry, setPermissionRegistry] = useState<PermissionDefinition[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSavingPrivileges, setIsSavingPrivileges] = useState<boolean>(false);
@@ -298,14 +297,11 @@ export function AdminPanelModal({
     }
   }, [isOpen, activeTab]);
 
-  // The session cookie authenticates; changes also need the client header (utils/session.ts).
-  const getAuthHeaders = (): Record<string, string> => sessionHeaders();
 
   const fetchUsers = async () => {
-    setIsLoading(true);
     try {
       const res = await fetch("/api/v1/admin/users", {
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -323,15 +319,13 @@ export function AdminPanelModal({
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to fetch user roster");
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const fetchAuditLogs = async () => {
     try {
       const res = await fetch("/api/v1/admin/audit-logs", {
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -344,7 +338,7 @@ export function AdminPanelModal({
 
   const fetchRoles = async () => {
     try {
-      const res = await fetch("/api/v1/admin/roles", { headers: getAuthHeaders() });
+      const res = await fetch("/api/v1/admin/roles", { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setRoles(data.roles || []);
@@ -356,7 +350,7 @@ export function AdminPanelModal({
 
   const fetchPermissionRegistry = async () => {
     try {
-      const res = await fetch("/api/v1/admin/permissions", { headers: getAuthHeaders() });
+      const res = await fetch("/api/v1/admin/permissions", { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setPermissionRegistry(data.permissions || []);
@@ -368,7 +362,7 @@ export function AdminPanelModal({
 
   const fetchCustomFields = async () => {
     try {
-      const res = await fetch("/api/v1/admin/custom-fields", { headers: getAuthHeaders() });
+      const res = await fetch("/api/v1/admin/custom-fields", { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setCustomFields(data.definitions || []);
@@ -381,7 +375,7 @@ export function AdminPanelModal({
   const fetchApiTokens = async (projectId: string) => {
     try {
       const res = await fetch(`/api/v1/projects/${projectId}/api-tokens`, {
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -400,10 +394,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           name: newTokenName,
           capabilities: Array.from(newTokenCapabilities),
@@ -435,7 +426,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens/${tokenId}`, {
         method: "DELETE",
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
@@ -467,7 +458,7 @@ export function AdminPanelModal({
     try {
       const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
       const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides${qs}`, {
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (res.ok) {
@@ -491,10 +482,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch("/api/v1/admin/users", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           username: newUsername,
           email: newEmail,
@@ -526,10 +514,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/users/${userId}/status`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
+        headers: jsonHeaders(),
         body: JSON.stringify({ status: nextStatus }),
       });
       if (res.ok) {
@@ -552,7 +537,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/users/${resetPrompt.id}/reset-password`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: jsonHeaders(),
         body: "{}",
       });
       const data = await res.json().catch(() => ({}));
@@ -612,7 +597,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/users/${userId}/roles`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify(
           "global_role" in change ? { global_role: change.global_role } : { project_roles: [change] },
         ),
@@ -666,7 +651,7 @@ export function AdminPanelModal({
       try {
         const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify({ project_id: scope, overrides }),
         });
         if (!res.ok) {
@@ -733,7 +718,7 @@ export function AdminPanelModal({
         isNewTemplate ? "/api/v1/admin/roles" : `/api/v1/admin/roles/${selectedRoleId}`,
         {
           method: isNewTemplate ? "POST" : "PUT",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify(payload),
         },
       );
@@ -760,7 +745,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/roles/${roleId}`, {
         method: "DELETE",
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
 
       if (res.status === 409) {
@@ -891,7 +876,7 @@ export function AdminPanelModal({
         isNewField ? "/api/v1/admin/custom-fields" : `/api/v1/admin/custom-fields/${selectedFieldId}`,
         {
           method: isNewField ? "POST" : "PUT",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: jsonHeaders(),
           body: JSON.stringify(
             isNewField ? { entity_type: fieldEntityType, name: fieldName, field_type: fieldType, ...basePayload } : basePayload,
           ),
@@ -935,7 +920,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/custom-fields/${field.id}`, {
         method: "DELETE",
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
 
       if (res.status === 409) {
@@ -970,7 +955,7 @@ export function AdminPanelModal({
     try {
       const res = await fetch(`/api/v1/admin/custom-fields/${deleteFieldPrompt.id}?force=true`, {
         method: "DELETE",
-        headers: getAuthHeaders(),
+        headers: authHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();

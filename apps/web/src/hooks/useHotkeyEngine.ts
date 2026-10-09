@@ -25,7 +25,7 @@ export interface HotkeyEngineOptions {
    * shown instead (e.g. the selected run is closed). j/k navigation still works. */
   blockVerdictsReason?: string;
   notesInputRef?: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
-  targetTargetWindow?: Window;
+  targetWindow?: Window;
   /** When true no hotkey is handled at all (e.g. while the Reports view replaces the
    * workspace, so a stray "p" can't record a verdict on a case that isn't even on screen). */
   disabled?: boolean;
@@ -270,12 +270,12 @@ export function useHotkeyEngine(options: HotkeyEngineOptions) {
   );
 
   useEffect(() => {
-    const win = options.targetTargetWindow || (typeof window !== 'undefined' ? window : null);
+    const win = options.targetWindow || (typeof window !== 'undefined' ? window : null);
     if (!win || options.disabled) return;
 
     win.addEventListener('keydown', handler as any);
     return () => {
       win.removeEventListener('keydown', handler as any);
     };
-  }, [handler, options.targetTargetWindow, options.disabled]);
+  }, [handler, options.targetWindow, options.disabled]);
 }

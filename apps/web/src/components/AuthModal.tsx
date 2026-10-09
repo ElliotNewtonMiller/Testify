@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { validatePasswordPolicy } from "../../../../packages/core/src/security/passwordPolicy";
-import { authHeaders as sessionHeaders } from "../utils/session";
+import { jsonHeaders } from "../utils/session";
 
 export interface UserProfile {
   id: string;
@@ -53,7 +53,7 @@ export function AuthModal({
     try {
       const res = await fetch("/api/v1/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...sessionHeaders() },
+        headers: jsonHeaders(),
         body: JSON.stringify({ username: identifier, password, session: "cookie" }),
       });
 
@@ -93,10 +93,7 @@ export function AuthModal({
     try {
       const res = await fetch("/api/v1/auth/credentials", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...sessionHeaders(),
-        },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           newUsername:
             newUsername !== currentUser?.username ? newUsername : undefined,

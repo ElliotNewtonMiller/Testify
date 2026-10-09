@@ -8,7 +8,7 @@ import { CaseHistoryDrawer } from "./CaseHistoryDrawer";
 import { InfoTip, type EmailContext } from "./shared";
 import { SchedulesTab } from "./SchedulesTab";
 import { EmailReportDialog } from "./EmailReportDialog";
-import { authHeaders as sessionHeaders } from "../../utils/session";
+import { authHeaders } from "../../utils/session";
 
 export const REPORT_TABS = [
   { id: "overview", label: "Overview", hint: "Status of every active plan: its latest run, new failures, spec health and testing activity." },
@@ -96,7 +96,7 @@ export function ReportsView({ projectId, projectName, planId, runId, runs, plans
 
   const loadFields = React.useCallback(() => {
     if (!projectId) return;
-    fetch(`/api/v1/projects/${projectId}/case-search/fields`, { headers: sessionHeaders() })
+    fetch(`/api/v1/projects/${projectId}/case-search/fields`, { headers: authHeaders() })
       .then((res) => (res.ok ? res.json() : { fields: [] }))
       .then((d) => setFields(d.fields || []))
       .catch(() => setFields([]));
