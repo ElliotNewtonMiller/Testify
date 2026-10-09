@@ -137,8 +137,13 @@ async function readJsonResponse(res: Response): Promise<any> {
   }
 }
 
+// Matches IMPORT_MAX_FILE_BYTES in apps/server/src/routes/ingestion.ts; checked here too so a
+// too-large file is refused before it's uploaded.
+const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
+
 function describeFailedResponse(res: Response, fallback: string): string {
-  if (res.status === 413) return "The file is too large to import.";
+  if (res.status === 413) return "The file is too large to import (the limit is 50 MB).";
+  if (res.status === 429) return "Other imports are running. Try again in a moment.";
   if (res.status >= 500) return `${fallback}: the server didn't return a usable response (HTTP ${res.status}).`;
   return `${fallback} (HTTP ${res.status}).`;
 }
@@ -147,7 +152,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
   const [step, setStep] = useState<WizardStep>("UPLOAD");
 
   const [fileName, setFileName] = useState<string>("");
-  const [fileBase64, setFileBase64] = useState<string>("");
+  const [file, setFile] = useState<File | null>(null);
   const [format, setFormat] = useState<FieldFormatId>("");
   const [targetProjectId, setTargetProjectId] = useState<string>("");
 
@@ -189,7 +194,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
   const resetWizard = () => {
     setStep("UPLOAD");
     setFileName("");
-    setFileBase64("");
+    setFile(null);
     setFormat("");
     setDryRunResult(null);
     setFieldOptions([]);
@@ -203,19 +208,35 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
   if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const chosen = e.target.files?.[0];
+    if (!chosen) return;
     setErrorMessage(null);
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // FileReader.readAsDataURL yields "data:<mime>;base64,<payload>" -- strip the prefix.
-      const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : result;
-      setFileBase64(base64);
-    };
-    reader.onerror = () => setErrorMessage("Failed to read the selected file.");
-    reader.readAsDataURL(file);
+    if (chosen.size > MAX_IMPORT_FILE_BYTES) {
+      setFile(null);
+      setFileName("");
+      setErrorMessage(`${chosen.name} is too large to import (the limit is 50 MB).`);
+      return;
+    }
+    setFileName(chosen.name);
+    setFile(chosen);
+  };
+
+  // The file goes up as multipart/form-data, which the server reads as a stream -- not
+  // base64 inside JSON, which was a third larger and had to be held whole to parse. The
+  // browser keeps the File, so dry-run and execute just send it again.
+  const buildImportForm = (): FormData => {
+    const form = new FormData();
+    if (format) form.append("format", format);
+    form.append("target_project_id", targetProjectId);
+    form.append(
+      "configuration",
+      JSON.stringify({
+        field_mappings: Object.entries(fieldMappings).map(([incoming_key, choice]) => ({ incoming_key, ...choice })),
+        duplicate_resolution: { default_action: duplicateAction },
+      }),
+    );
+    if (file) form.append("file", file, fileName);
+    return form;
   };
 
   const runDryRun = async (): Promise<DryRunResult | null> => {
@@ -224,18 +245,9 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
     try {
       const res = await fetch("/api/v1/imports/dry-run", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          file_content: fileBase64,
-          is_base64: true,
-          filename: fileName,
-          format: format || undefined,
-          target_project_id: targetProjectId,
-          configuration: {
-            field_mappings: Object.entries(fieldMappings).map(([incoming_key, choice]) => ({ incoming_key, ...choice })),
-            duplicate_resolution: { default_action: duplicateAction },
-          },
-        }),
+        // No Content-Type: the browser sets multipart/form-data with its boundary.
+        headers: getAuthHeaders(),
+        body: buildImportForm(),
       });
       const data = await readJsonResponse(res);
       if (!res.ok) {
@@ -252,7 +264,7 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
   };
 
   const handleUploadNext = async () => {
-    if (!fileBase64) {
+    if (!file) {
       setErrorMessage("Choose a file first.");
       return;
     }
@@ -309,18 +321,9 @@ export function ImportWizardModal({ isOpen, onClose, currentUser, projects, defa
     try {
       const res = await fetch("/api/v1/imports/execute", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          file_content: fileBase64,
-          is_base64: true,
-          filename: fileName,
-          format: format || undefined,
-          target_project_id: targetProjectId,
-          configuration: {
-            field_mappings: Object.entries(fieldMappings).map(([incoming_key, choice]) => ({ incoming_key, ...choice })),
-            duplicate_resolution: { default_action: duplicateAction },
-          },
-        }),
+        // No Content-Type: the browser sets multipart/form-data with its boundary.
+        headers: getAuthHeaders(),
+        body: buildImportForm(),
       });
       const data = await readJsonResponse(res);
       if (!res.ok) {

@@ -26,11 +26,42 @@ import {
 import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
 import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage } from '../errors.js';
 
-// The web wizard sends the file base64-encoded inside a JSON body (~1.33x the file size).
-// Fastify's default 1 MB body limit cut real TestLink exports off mid-upload -- the request
-// was dropped with no response, which reached the browser as an empty 500. Sized to match
-// the 100 MB multipart file limit in server.ts once base64 overhead is included.
-const IMPORT_BODY_LIMIT_BYTES = 140 * 1024 * 1024;
+/**
+ * Import size limits. An import file is held in memory while it's parsed (and its parsed tree
+ * with it), so these bound how much one request -- and the server as a whole -- can take:
+ *
+ * - The web wizard uploads the file as multipart/form-data, which Fastify reads as a stream:
+ *   up to IMPORT_MAX_FILE_BYTES, one file, small fields (registered in server.ts).
+ * - A JSON body with `file_content` (scripts, tests) is buffered and parsed whole, and base64
+ *   adds a third, so it's kept small: IMPORT_JSON_BODY_LIMIT_BYTES. Bigger files go multipart.
+ * - At most MAX_CONCURRENT_IMPORTS imports (dry-run or execute) run at once per server; more
+ *   get 429 IMPORT_BUSY. The slot is taken before the body is read, so a refused request never
+ *   buffers its file.
+ */
+export const IMPORT_MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const IMPORT_JSON_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
+export const IMPORT_FIELD_LIMIT_BYTES = 1024 * 1024;
+export const MAX_CONCURRENT_IMPORTS = 2;
+const mb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
+
+/** Turns the body/multipart size errors into a message that says what to do. */
+function sendImportTooLarge(reply: FastifyReply, err: any): boolean {
+  const code = err?.code;
+  if (code === 'FST_REQ_FILE_TOO_LARGE' || code === 'FST_ERR_CTP_BODY_TOO_LARGE' || code === 'FST_FILES_LIMIT' || code === 'FST_PARTS_LIMIT' || code === 'FST_FIELDS_LIMIT') {
+    reply.status(413).send({
+      error:
+        code === 'FST_ERR_CTP_BODY_TOO_LARGE'
+          ? `A JSON import body can be at most ${mb(IMPORT_JSON_BODY_LIMIT_BYTES)}. Upload larger files as multipart/form-data (a "file" field), up to ${mb(IMPORT_MAX_FILE_BYTES)}.`
+          : code === 'FST_REQ_FILE_TOO_LARGE'
+            ? `The file is too large to import. The limit is ${mb(IMPORT_MAX_FILE_BYTES)}.`
+            : 'Send one file per import.',
+      code: 'IMPORT_TOO_LARGE',
+      max_file_bytes: IMPORT_MAX_FILE_BYTES,
+    });
+    return true;
+  }
+  return false;
+}
 
 /**
  * Resolves the project a request should import into, given the caller's identity and
@@ -69,6 +100,29 @@ const PARSER_WARNING_MESSAGES: Record<string, string> = {
 };
 
 export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
+  // Import slots (see MAX_CONCURRENT_IMPORTS). Taken in onRequest -- before the body is read --
+  // and only for an authenticated caller, so anonymous requests can't hold them; given back
+  // once when the response is sent or the client goes away.
+  let importsRunning = 0;
+  const holdsSlot = new WeakSet<FastifyRequest>();
+  async function takeImportSlot(req: FastifyRequest, reply: FastifyReply) {
+    const user = await authenticateRequest(req, reply, db, jwtSecret);
+    if (!user) return reply;
+    if (importsRunning >= MAX_CONCURRENT_IMPORTS) {
+      return reply
+        .header('Retry-After', '10')
+        .status(429)
+        .send({ error: 'Other imports are running. Try again in a moment.', code: 'IMPORT_BUSY' });
+    }
+    importsRunning++;
+    holdsSlot.add(req);
+  }
+  async function releaseImportSlot(req: FastifyRequest) {
+    if (holdsSlot.delete(req)) importsRunning--;
+  }
+  function importErrorHandler(err: any, _req: FastifyRequest, reply: FastifyReply) {
+    if (!sendImportTooLarge(reply, err)) throw err;
+  }
   // Helper to extract file buffer and configuration from request
   async function parseImportRequest(req: FastifyRequest) {
     let fileBuffer: Buffer | null = null;
@@ -81,6 +135,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       const parts = req.parts();
       for await (const part of parts) {
         if (part.type === 'file') {
+          if (fileBuffer) throw Object.assign(new Error('Send one file per import.'), { code: 'FST_FILES_LIMIT' });
           fileBuffer = await part.toBuffer();
           filename = part.filename;
         } else if (part.type === 'field') {
@@ -148,7 +203,15 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   }
 
   // POST /api/v1/imports/dry-run
-  app.post('/api/v1/imports/dry-run', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/imports/dry-run', {
+    bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
+    onRequest: takeImportSlot,
+    onResponse: releaseImportSlot,
+    onRequestAbort: releaseImportSlot,
+    // A JSON body over the limit fails before the handler runs; explain the limit instead of
+    // Fastify's bare "body is too large". Anything else goes on to the app's error handler.
+    errorHandler: importErrorHandler,
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
 
@@ -362,15 +425,24 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
       return reply.status(200).send(result);
     } catch (err) {
-      // A problem with the file (parse errors, missing file) is the user's to fix; anything else
-      // is unexpected and answered by the global error handler.
+      // A problem with the file (too large, parse errors, missing file) is the user's to fix;
+      // anything else is unexpected and answered by the global error handler.
+      if (sendImportTooLarge(reply, err)) return;
       if (!isPublicError(err)) throw err;
       return reply.status(400).send({ error: err.message });
     }
   });
 
   // POST /api/v1/imports/execute
-  app.post('/api/v1/imports/execute', { bodyLimit: IMPORT_BODY_LIMIT_BYTES }, async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/imports/execute', {
+    bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
+    onRequest: takeImportSlot,
+    onResponse: releaseImportSlot,
+    onRequestAbort: releaseImportSlot,
+    // A JSON body over the limit fails before the handler runs; explain the limit instead of
+    // Fastify's bare "body is too large". Anything else goes on to the app's error handler.
+    errorHandler: importErrorHandler,
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
 
@@ -777,8 +849,9 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
           : {}),
       });
     } catch (err) {
-      // A problem with the file (parse errors, missing file) is the user's to fix; anything else
-      // is unexpected and answered by the global error handler.
+      // A problem with the file (too large, parse errors, missing file) is the user's to fix;
+      // anything else is unexpected and answered by the global error handler.
+      if (sendImportTooLarge(reply, err)) return;
       if (!isPublicError(err)) throw err;
       return reply.status(400).send({ error: err.message });
     }

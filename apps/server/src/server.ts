@@ -12,7 +12,7 @@ import {
   type Database,
 } from '@testify/db';
 import type { Kysely } from 'kysely';
-import { registerIngestionRoutes } from './routes/ingestion.js';
+import { registerIngestionRoutes, IMPORT_FIELD_LIMIT_BYTES, IMPORT_MAX_FILE_BYTES } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -65,7 +65,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   if (corsOrigins.length > 0) {
     await app.register(cors, { origin: corsOrigins, credentials: true });
   }
-  await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB max file size
+  // Multipart is only used for import uploads; see the limits in routes/ingestion.ts.
+  await app.register(multipart, {
+    limits: { fileSize: IMPORT_MAX_FILE_BYTES, files: 1, fields: 20, fieldSize: IMPORT_FIELD_LIMIT_BYTES },
+  });
 
   // `options.db` lets tests start a second server against the same database -- a restart.
   const db: Kysely<Database> = options.db ?? createDbClient({ connectionString });
