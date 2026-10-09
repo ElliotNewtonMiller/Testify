@@ -1463,6 +1463,25 @@ New tests: `apps/server/tests/password_reset.test.ts` (3):
 
 550/550. Verified live in a separate browser origin: the roster shows Reset Password on other users but not your own row, the confirmation and the once-only password appear, and signing in as that user with it lands on "Choose a new password".
 
+## Fixed: case ids could collide -- concurrent creation, and random ids in imports (2026-10-09)
+
+Audit item 23 (`docs/audit_2026-10-07.md`).
+- **Creating a case**: `POST /api/v1/projects/:projectId/test-cases` read the highest PREFIX-n (`getNextExternalId`) and inserted separately. Two cases created at once against a real Postgres (connection pool) could pick the same id, and one failed on `uq_test_case_external` with a 500. The case and its first version were also separate transactions, so a failure in between left a case with no version.
+- **Imports, worse**: a case without an id got a random `PREFIX-1000..9999`. In a file of a few hundred unnumbered cases two are very likely to clash (birthday problem), failing the whole import with a 500. A random id could also hit an existing one. A duplicate imported with "create new" reused the original's id, which collided every time.
+
+The fix:
+- **`TestCaseRepository.lockExternalIds(projectId)`**: takes `pg_advisory_xact_lock(0x7e57, hashtext(projectId))` until the transaction ends. Being a Postgres advisory lock, it serializes id assignment per project across server instances too. It must be called inside a transaction.
+- **Creating a case** now locks, picks the id, and inserts the case and its first version in one transaction. `TestCaseVersionRepository` gained `runInTransaction` (as other repositories have), so `create`/`updateSteps` run inside a caller's transaction instead of opening a nested one.
+- **Imports** (`routes/ingestion.ts` execute) hold the lock for the whole import transaction. A new case keeps the file's id unless it's already taken; otherwise -- no id, or a "create new" copy -- it gets the next PREFIX-n after the highest in the project, skipping ids taken in the project and ids the file itself uses later.
+
+Numbering stays "highest + 1". In the core-loop seed (SHOP-101…109, SHOP-1010) new cases start at SHOP-1011.
+
+New tests: `apps/server/tests/external_ids.test.ts` (2):
+- 12 cases created at once all succeed with consecutive ids, each with its version. This test can't reproduce the race itself: the in-memory database has one connection, so the transactions run one after another, and it passes without the lock too. A real Postgres wasn't available to show the overlap.
+- An import of 300 unnumbered cases, plus one using SHOP-1012 and a "create new" copy of SHOP-101, imports all 302 with no duplicates and no gaps. The file's SHOP-1012 is kept, and the copy gets a fresh id. This test fails with a 500 on the old code.
+
+552/552.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

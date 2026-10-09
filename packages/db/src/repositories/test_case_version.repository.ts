@@ -44,6 +44,12 @@ export interface TestCaseVersionWithSteps extends TestCaseVersion {
 export class TestCaseVersionRepository {
   constructor(private db: Kysely<Database>) {}
 
+  /** Runs in the caller's transaction when this repository was given one (no nesting). */
+  private async runInTransaction<T>(fn: (trx: Kysely<Database>) => Promise<T>): Promise<T> {
+    if ((this.db as any).isTransaction) return fn(this.db);
+    return this.db.transaction().execute(fn);
+  }
+
   async create(input: CreateTestCaseVersionInput): Promise<TestCaseVersionWithSteps> {
     const now = new Date().toISOString();
     const versionId = input.id || uuidv7();
@@ -72,7 +78,7 @@ export class TestCaseVersionRepository {
       updated_at: now,
     }));
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.insertInto('test_case_versions').values(versionRow).execute();
       if (stepRows.length > 0) {
         await trx.insertInto('test_steps').values(stepRows).execute();
@@ -280,7 +286,7 @@ export class TestCaseVersionRepository {
       updated_at: now,
     }));
 
-    await this.db.transaction().execute(async (trx) => {
+    await this.runInTransaction(async (trx) => {
       await trx.deleteFrom('test_steps').where('test_case_version_id', '=', versionId).execute();
       if (newStepRows.length > 0) {
         await trx.insertInto('test_steps').values(newStepRows).execute();

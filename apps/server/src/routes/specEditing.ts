@@ -228,22 +228,6 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const externalId = await caseRepo.getNextExternalId(projectId, project.prefix);
-
-      // Two sequential calls, not one shared transaction: TestCaseVersionRepository.create
-      // already opens its own transaction internally (for the version+steps insert), and
-      // Kysely doesn't support nesting a second .transaction() inside an existing one --
-      // matching the same not-atomic-across-repos tradeoff already accepted elsewhere in
-      // this codebase (e.g. TestSuiteRepository.deleteWithForce's per-case cascade calls).
-      const testCase = await caseRepo.create({
-        project_id: projectId,
-        test_suite_id: testSuiteId,
-        external_id: externalId,
-        title,
-        priority,
-        execution_type: executionType,
-      });
-
       // SYSTEM_ADMIN isn't checked explicitly here -- evaluatePermissions already expands it
       // to the full registry (see CLAUDE.md's "machine API tokens" entry), so any SYSTEM_ADMIN
       // holder's permissions array already contains this key.
@@ -260,15 +244,33 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
           autoApprove = false;
         }
       }
-      const version = await versionRepo.create({
-        test_case_id: testCase.id,
-        version_number: 1,
-        status: autoApprove ? 'APPROVED' : 'DRAFT',
-        summary: summary ?? null,
-        preconditions: preconditions ?? null,
-        author_id: actor.id,
-        reviewer_id: autoApprove ? actor.id : null,
-        steps: checkedSteps.steps,
+      // The id is picked and the case and its first version are inserted in one transaction,
+      // holding the project's id lock: two cases created at once used to get the same
+      // PREFIX-n, and the second failed with a 500. (One transaction also means a failure
+      // can't leave a case without a version.)
+      const { testCase, version, externalId } = await db.transaction().execute(async (trx) => {
+        const trxCases = new TestCaseRepository(trx);
+        await trxCases.lockExternalIds(projectId);
+        const externalId = await trxCases.getNextExternalId(projectId, project.prefix);
+        const testCase = await trxCases.create({
+          project_id: projectId,
+          test_suite_id: testSuiteId,
+          external_id: externalId,
+          title,
+          priority,
+          execution_type: executionType,
+        });
+        const version = await new TestCaseVersionRepository(trx).create({
+          test_case_id: testCase.id,
+          version_number: 1,
+          status: autoApprove ? 'APPROVED' : 'DRAFT',
+          summary: summary ?? null,
+          preconditions: preconditions ?? null,
+          author_id: actor.id,
+          reviewer_id: autoApprove ? actor.id : null,
+          steps: checkedSteps.steps,
+        });
+        return { testCase, version, externalId };
       });
 
       await insertAuditLog({

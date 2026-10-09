@@ -1,8 +1,11 @@
-import type { Kysely, Selectable, Insertable, Updateable } from 'kysely';
+import { sql, type Kysely, type Selectable, type Insertable, type Updateable } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database, TestCasesTable } from '../types.js';
 
 export type TestCase = Selectable<TestCasesTable>;
+
+/** First key of the advisory lock that serializes external id assignment (second: the project). */
+const EXTERNAL_ID_LOCK_NAMESPACE = 0x7e57;
 export type NewTestCase = Insertable<TestCasesTable>;
 export type TestCaseUpdate = Updateable<TestCasesTable>;
 
@@ -184,6 +187,19 @@ export class TestCaseRepository {
    * highest existing numeric suffix among that project's cases already using this prefix.
    * Non-numeric-suffix ids (e.g. from legacy imports) are simply ignored rather than
    * breaking the scan. */
+  /**
+   * Takes this project's external id lock until the surrounding transaction ends, so that
+   * picking the next id (getNextExternalId) and inserting the case can't interleave with
+   * another request doing the same -- otherwise two people creating cases at once both got
+   * PREFIX-n and one failed on the unique constraint. A Postgres advisory lock, so it holds
+   * across server instances too. Must be called inside a transaction (outside one it's
+   * released as soon as the statement ends).
+   */
+  async lockExternalIds(projectId: string): Promise<void> {
+    await sql`select pg_advisory_xact_lock(${EXTERNAL_ID_LOCK_NAMESPACE}, hashtext(${projectId}))`.execute(this.db);
+  }
+
+  /** The next PREFIX-n after the highest one in the project. Hold lockExternalIds while using it. */
   async getNextExternalId(projectId: string, prefix: string): Promise<string> {
     const rows = await this.db
       .selectFrom('test_cases')

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { Readable } from 'node:stream';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
-import { CustomFieldRepository, type Database } from '@testify/db';
+import { CustomFieldRepository, TestCaseRepository, type Database } from '@testify/db';
 import {
   SaxXmlParser,
   JsonSchemaParser,
@@ -499,6 +499,39 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
         const customFieldRepo = new CustomFieldRepository(trx);
         const customFieldIdMap = new Map<string, string>(); // incomingKey -> cfDefId
 
+        // External ids for new cases. The project's id lock is held for the whole import, so
+        // a case created at the same time (Spec mode, another import) can't take the same id.
+        // A case without an id -- or whose id is already taken, e.g. a "create new" copy of a
+        // duplicate -- gets the next PREFIX-n after the highest in the project, skipping ids
+        // the file itself uses. (This used to be a random PREFIX-1000..9999, which clashed
+        // often enough in a file of a few hundred unnumbered cases to fail the whole import.)
+        const trxCases = new TestCaseRepository(trx);
+        await trxCases.lockExternalIds(targetProjectId!);
+        const idsInFile = new Set<string>();
+        const collectIds = (suites: ParsedSuite[]) => {
+          for (const su of suites) {
+            for (const c of su.test_cases) if (c.external_id) idsInFile.add(c.external_id.toLowerCase());
+            collectIds(su.sub_suites);
+          }
+        };
+        collectIds(parsedSuites);
+        const usedIds = new Set(
+          (await trx.selectFrom('test_cases').select('external_id').where('project_id', '=', targetProjectId!).execute()).map((r) =>
+            r.external_id.toLowerCase()
+          )
+        );
+        const prefix = project!.prefix;
+        let nextNumber = Number((await trxCases.getNextExternalId(targetProjectId!, prefix)).slice(prefix.length + 1));
+        const externalIdFor = (wanted: string | undefined): string => {
+          let id = wanted && !usedIds.has(wanted.toLowerCase()) ? wanted : '';
+          while (!id) {
+            const candidate = `${prefix}-${nextNumber++}`;
+            if (!usedIds.has(candidate.toLowerCase()) && !idsInFile.has(candidate.toLowerCase())) id = candidate;
+          }
+          usedIds.add(id.toLowerCase());
+          return id;
+        };
+
         const existingCfs = await customFieldRepo.listVisibleToProject(targetProjectId!, 'TestCase');
         for (const cf of existingCfs) {
           customFieldIdMap.set(cf.name.toLowerCase(), cf.id);
@@ -628,7 +661,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
             if (!existingCase || action === 'CREATE_NEW') {
               caseId = uuidv4();
-              const extId = tc.external_id || `${project!.prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+              const extId = externalIdFor(tc.external_id);
               const finalTitle = existingCase && action === 'CREATE_NEW' ? `${tc.title} (Copy)` : tc.title;
 
               await trx
