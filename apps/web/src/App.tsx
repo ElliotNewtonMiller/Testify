@@ -37,7 +37,7 @@ import {
   EntityType,
   ActionType,
 } from "./components/EntityManagementModal";
-import { authHeaders as sessionHeaders } from "./utils/session";
+import { authHeaders as sessionHeaders, watchForEndedSession } from "./utils/session";
 
 interface Step {
   id: string;
@@ -128,6 +128,8 @@ export interface CustomFieldValueEntry {
 
 // The sign-in is an HttpOnly cookie the browser sends itself; see utils/session.ts.
 const authHeaders = sessionHeaders;
+
+const SESSION_ENDED_NOTICE = "Your sign-in has ended. Please sign in again.";
 
 // Grows a textarea to fit its content instead of showing a scrollbar -- resetting height to
 // "auto" first (rather than just reading scrollHeight directly) is required so the element
@@ -529,6 +531,8 @@ export default function App() {
 
   // Authentication & RBAC User State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  // Shown on the login screen after a sign-in ends on its own (see handleAuthExpiry).
+  const [sessionEndedNotice, setSessionEndedNotice] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(false);
@@ -771,10 +775,17 @@ export default function App() {
   // (drop back to a logged-out state, toast a clear message) so every
   // Spec-mode save handler behaves the same way execution recording already does.
   const handleAuthExpiry = useCallback(() => {
+    setSessionEndedNotice(SESSION_ENDED_NOTICE);
     setCurrentUser(null);
     setUserPermissions([]);
-    showToast("Session expired -- please log in again");
-  }, [showToast]);
+  }, []);
+
+  // Any API request that finds the sign-in ended (from any screen or dialog) returns to the
+  // login screen with a note, rather than leaving that screen showing the raw 401 error.
+  useEffect(() => {
+    if (!currentUser) return;
+    return watchForEndedSession(handleAuthExpiry);
+  }, [currentUser?.id, handleAuthExpiry]);
 
   const openEntityModal = (entityType: EntityType, actionType: ActionType) => {
     let targetItem: EntityItem | null = null;
@@ -2682,7 +2693,9 @@ export default function App() {
   if (!currentUser) {
     return (
       <LoginPage
+        notice={sessionEndedNotice}
         onLoginSuccess={(user) => {
+          setSessionEndedNotice(null);
           setCurrentUser(user);
           setUserPermissions(user.permissions || []);
           showToast(`Welcome back, ${user.username}!`);

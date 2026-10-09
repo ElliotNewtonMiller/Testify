@@ -1306,6 +1306,15 @@ Audit item 16 (`docs/audit_2026-10-07.md`). The import wizard sent the file base
 
 New tests: `apps/server/tests/import_limits.test.ts` (3 -- a multipart dry-run and execute import a case, and a file larger than the JSON limit imports fine as multipart; an oversized JSON body, a file over 50 MB and two files each get the 413; two held-open uploads fill the slots so a third gets 429, three anonymous requests before them took none, and a later upload succeeds once they finish). 531/531. Verified live in a separate browser origin: the wizard's preview and import go up as multipart and import the case, and a 51 MB file is refused in the browser with "huge.xml is too large to import (the limit is 50 MB)."
 
+## Fixed: an ended sign-in showed "Unauthorized: Invalid signature" instead of the login screen (2026-10-09)
+
+Reported: importing a TestLink file that used to work failed with "Unauthorized: Invalid signature". The file was fine (preview: 179 suites, 724 cases; import: 723 cases plus a second version of one case the file lists twice). The sign-in wasn't. The dev API server signs with a random key per start, so after a restart the browser's session cookie no longer verifies. But the app only checks the sign-in on load, so it still looked signed in, and the import dialog showed the server's raw 401.
+
+- **Server** (`middleware/auth.ts`): a JWT that fails to verify (wrong key, expired, malformed) and a token whose session has ended both answer `401 {error: "Unauthorized: your sign-in has ended -- please sign in again", code: "SESSION_ENDED"}`; the verify failure keeps the detail in `reason` (e.g. `Invalid signature`).
+- **Web**: `watchForEndedSession(onEnded)` (`utils/session.ts`) wraps `window.fetch` while someone is signed in. Any `/api/...` reply of 401, other than login, logout and `/auth/me` (handled where they're called), triggers `handleAuthExpiry`, which signs out locally. `App.tsx` installs it in an effect keyed on the user. So every screen and dialog (import, admin panel, reports, ...) goes back to the login screen instead of showing the error. `LoginPage` gained a `notice` prop: "Your sign-in has ended. Please sign in again." in an amber box, cleared on sign-in. `handleAuthExpiry` used to toast "Session expired", but toasts don't show on the login screen; it now sets the notice instead.
+
+Test: `session_cookie.test.ts` +1 (a cookie signed with another key gets 401 `SESSION_ENDED` with `reason: "Invalid signature"`). 532/532. Reproduced live and confirmed fixed: signed in, restarted the API server, clicked Preview Import, and the app returned to the login screen with the notice instead of the raw error.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { signJwt } from '@testify/core';
 import { createServer } from '../src/server.js';
 
 /** The web app signs in with an HttpOnly cookie instead of keeping a token in localStorage. */
@@ -108,6 +109,15 @@ describe('Session cookie (web sign-in)', () => {
     expect(viaCookie.statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: 'testify_session=not-a-jwt' } })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: 'other=1' } })).statusCode).toBe(401);
+  });
+
+  it('a sign-in signed with another key (e.g. from before a server restart) says it has ended', async () => {
+    const stale = signJwt({ sub: 'someone', sid: 'old' }, 'the-previous-servers-key', 3600);
+    const res = await app.inject({ method: 'POST', url: '/api/v1/imports/dry-run', headers: { cookie: `testify_session=${stale}`, 'x-testify-client': 'web' } });
+    expect(res.statusCode).toBe(401);
+    expect(body(res).code).toBe('SESSION_ENDED');
+    expect(body(res).error).toBe('Unauthorized: your sign-in has ended -- please sign in again');
+    expect(body(res).reason).toBe('Invalid signature');
   });
 
   it('signing out ends the session and clears the cookie', async () => {

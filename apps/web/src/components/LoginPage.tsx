@@ -4,9 +4,11 @@ import { authHeaders as sessionHeaders } from '../utils/session';
 
 interface LoginPageProps {
   onLoginSuccess: (user: UserProfile) => void;
+  /** Why you're back here, e.g. the sign-in ended while you were working. */
+  notice?: string | null;
 }
 
-export function LoginPage({ onLoginSuccess }: LoginPageProps) {
+export function LoginPage({ onLoginSuccess, notice }: LoginPageProps) {
   // Pre-filled only in the Vite dev build, for the throwaway in-memory dev database's admin.
   // A production build starts empty: a real database has no well-known admin password.
   const [username, setUsername] = useState<string>(import.meta.env.DEV ? 'admin' : '');
@@ -280,6 +282,21 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
           </div>
 
           {/* ERROR ALERT ABOVE LOG IN BUTTON */}
+          {notice && !errorMessage && (
+            <div
+              style={{
+                backgroundColor: 'rgba(251, 191, 36, 0.12)',
+                border: '1px solid rgba(251, 191, 36, 0.45)',
+                color: '#fde68a',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                marginBottom: '12px',
+              }}
+            >
+              {notice}
+            </div>
+          )}
           {errorMessage && (
             <div
               style={{

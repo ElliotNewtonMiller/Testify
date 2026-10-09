@@ -264,7 +264,13 @@ export async function authenticateRequest(
 
   const result = verifyJwt(token, jwtSecret);
   if (!result.valid || !result.payload) {
-    reply.status(401).send({ error: `Unauthorized: ${result.reason || 'invalid token'}` });
+    // E.g. signed with another key (a server restart without JWT_SECRET) or expired. The
+    // message is shown to people, so it says what to do; `reason` keeps the detail.
+    reply.status(401).send({
+      error: 'Unauthorized: your sign-in has ended -- please sign in again',
+      code: 'SESSION_ENDED',
+      reason: result.reason || 'invalid token',
+    });
     return null;
   }
 
@@ -274,7 +280,7 @@ export async function authenticateRequest(
   // ends sessions, so a copied token stops working then rather than when it expires.
   const sessionId = typeof result.payload.sid === 'string' ? result.payload.sid : null;
   if (!sessionId || !(await new SessionRepository(db).findActive(sessionId, userId))) {
-    reply.status(401).send({ error: 'Unauthorized: this session has ended -- please sign in again' });
+    reply.status(401).send({ error: 'Unauthorized: your sign-in has ended -- please sign in again', code: 'SESSION_ENDED' });
     return null;
   }
 
