@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
@@ -278,6 +279,91 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     return reply.status(200).send({ id: updatedUser.id, status: updatedUser.status });
   });
 
+  // POST /api/v1/admin/users/:userId/reset-password -- for someone who forgot theirs. Sets a
+  // temporary password (generated unless one is given, and returned once when generated) that
+  // the user must change at their next sign-in, ends all of their sessions, and clears any
+  // sign-in lock. Not for your own account: that's the profile form, which asks for the
+  // current password. And not for someone with permissions you don't have, in any project --
+  // otherwise USER_MANAGE could take over an admin's account (the guard's rank rule).
+  app.post('/api/v1/admin/users/:userId/reset-password', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+    const activeUser = request.user!;
+    const { userId } = request.params as { userId: string };
+    const { password } = ((request.body as any) || {}) as { password?: unknown };
+
+    if (userId === activeUser.id) {
+      return reply.status(400).send({
+        error: 'Change your own password from your profile instead (it asks for your current one).',
+        code: 'CANNOT_RESET_OWN_PASSWORD',
+      });
+    }
+    if (password !== undefined && password !== null && typeof password !== 'string') {
+      return reply.status(400).send({ error: 'password must be text', code: 'INVALID_PASSWORD' });
+    }
+    const target = await userRepo.findById(userId);
+    if (!target) return reply.status(404).send({ error: 'User not found' });
+
+    const generated = !password;
+    const temporaryPassword = generated ? randomBytes(18).toString('base64url') : (password as string);
+
+    // Every scope the user has access in: global, plus each project where they have a role
+    // or permission override -- the rank rule is checked in all of them.
+    const projectIds = new Set<string>();
+    for (const row of await db.selectFrom('user_project_roles').select('project_id').where('user_id', '=', userId).execute()) {
+      projectIds.add(row.project_id);
+    }
+    for (const row of await db
+      .selectFrom('user_permission_overrides')
+      .select('project_id')
+      .where('user_id', '=', userId)
+      .where('project_id', 'is not', null)
+      .execute()) {
+      projectIds.add(row.project_id!);
+    }
+
+    let sessionsEnded = 0;
+    try {
+      await guard.run(
+        activeUser,
+        [{ userId, projectId: null }, ...[...projectIds].map((projectId) => ({ userId, projectId }))],
+        async (trx) => {
+          await new UserRepository(trx).resetPassword(userId, temporaryPassword);
+          sessionsEnded = await new SessionRepository(trx).revokeAllForUser(userId);
+        }
+      );
+    } catch (err: any) {
+      if (sendGuardError(reply, err)) return;
+      if (typeof err?.message === 'string' && err.message.startsWith('PASSWORD_POLICY_VIOLATION: ')) {
+        return reply.status(400).send({ error: err.message.slice('PASSWORD_POLICY_VIOLATION: '.length), code: 'PASSWORD_POLICY_VIOLATION' });
+      }
+      throw err;
+    }
+
+    await db
+      .insertInto('audit_logs')
+      .values({
+        id: crypto.randomUUID(),
+        actor_id: activeUser.id,
+        actor_type: 'USER',
+        action: 'PASSWORD_RESET',
+        resource_type: 'user',
+        resource_id: userId,
+        // Never the password itself.
+        diff: JSON.stringify({ generated, sessions_ended: sessionsEnded, must_change_password: true }),
+        ip_address: '127.0.0.1',
+        user_agent: 'TestifyAdminService',
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+
+    return reply.status(200).send({
+      id: userId,
+      username: target.username,
+      must_change_password: true,
+      sessions_ended: sessionsEnded,
+      ...(generated ? { temporary_password: temporaryPassword } : {}),
+    });
+  });
+
   // GET /api/v1/admin/audit-logs - Filtered Security Audit Log Viewer (Gated by USER_MANAGE or SYSTEM_ADMIN)
   app.get('/api/v1/admin/audit-logs', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     const securityActions = [
@@ -287,6 +373,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'ROLE_ASSIGNED',
       'PROJECT_ACCESS_GRANTED',
       'CREDENTIALS_CHANGED',
+      'PASSWORD_RESET',
       'API_TOKEN_GENERATED',
       'API_TOKEN_REVOKED',
       'PROJECT_CREATED',

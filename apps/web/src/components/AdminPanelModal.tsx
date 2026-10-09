@@ -220,6 +220,11 @@ export function AdminPanelModal({
   // re-rendered after dismissal, or round-trip back from a refetch.
   const [justCreatedToken, setJustCreatedToken] = useState<{ plaintext: string; name: string } | null>(null);
   const [copyButtonLabel, setCopyButtonLabel] = useState<string>("Copy");
+  // Password reset (User Roster): the user being confirmed, then the temporary password,
+  // shown once like a new API token.
+  const [resetPrompt, setResetPrompt] = useState<{ id: string; username: string } | null>(null);
+  const [resetResult, setResetResult] = useState<{ username: string; password: string } | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Shared, dynamically-fetched role option list -- replaces 3 previously-hardcoded
   // <select> option lists (create-user form, Matrix global-role picker, Matrix per-project
@@ -278,6 +283,13 @@ export function AdminPanelModal({
   useEffect(() => {
     setJustCreatedToken(null);
   }, [tokenProjectScope]);
+  // Same for a temporary password: gone once you leave the roster or close the panel.
+  useEffect(() => {
+    if (!isOpen || activeTab !== "ROSTER") {
+      setResetPrompt(null);
+      setResetResult(null);
+    }
+  }, [isOpen, activeTab]);
 
   // The session cookie authenticates; changes also need the client header (utils/session.ts).
   const getAuthHeaders = (): Record<string, string> => sessionHeaders();
@@ -523,6 +535,35 @@ export function AdminPanelModal({
       }
     } catch {
       setErrorMessage("Unable to reach the server.");
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetPrompt) return;
+    setErrorMessage(null);
+    setIsResetting(true);
+    try {
+      const res = await fetch(`/api/v1/admin/users/${resetPrompt.id}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: "{}",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // e.g. a user who has more access than you.
+        setErrorMessage(data.error || "Failed to reset the password");
+        setResetPrompt(null);
+        return;
+      }
+      setResetResult({ username: data.username, password: data.temporary_password });
+      setCopyButtonLabel("Copy");
+      setResetPrompt(null);
+      fetchUsers();
+      fetchAuditLogs();
+    } catch {
+      setErrorMessage("Unable to reach the server.");
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -1351,6 +1392,86 @@ export function AdminPanelModal({
                 padding: "12px",
               }}
             >
+              {resetPrompt && (
+                <div
+                  role="alert"
+                  style={{
+                    padding: "10px 12px",
+                    marginBottom: "12px",
+                    backgroundColor: "#78350f",
+                    border: "1px solid #92400e",
+                    borderRadius: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                  }}
+                >
+                  <div style={{ fontSize: "12px", color: "#fde68a", flex: 1 }}>
+                    <strong style={{ color: "#fbbf24" }}>Reset {resetPrompt.username}'s password?</strong> They'll be signed out
+                    everywhere and get a temporary password, which they must change when they sign in.
+                  </div>
+                  <button
+                    onClick={() => setResetPrompt(null)}
+                    style={{ padding: "5px 12px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleResetPassword}
+                    disabled={isResetting}
+                    style={{ padding: "5px 12px", backgroundColor: "#b45309", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {isResetting ? "Resetting..." : "Reset Password"}
+                  </button>
+                </div>
+              )}
+              {resetResult && (
+                <div
+                  style={{
+                    padding: "12px",
+                    marginBottom: "12px",
+                    backgroundColor: "rgba(34, 197, 94, 0.1)",
+                    border: "1px solid #22c55e",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: "#4ade80", marginBottom: "6px" }}>
+                    ✓ {resetResult.username}'s password was reset
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#fca5a5", marginBottom: "8px" }}>
+                    Give them this temporary password privately. It's shown only once; they'll choose a new one when they sign in.
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <code
+                      style={{
+                        flex: 1,
+                        padding: "8px 10px",
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: "4px",
+                        color: "#e2e8f0",
+                        fontSize: "12px",
+                        overflowX: "auto",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {resetResult.password}
+                    </code>
+                    <button
+                      onClick={() => handleCopyToken(resetResult.password)}
+                      style={{ padding: "8px 12px", backgroundColor: "#16a34a", border: "none", borderRadius: "4px", color: "#fff", fontWeight: 600, fontSize: "12px", cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      {copyButtonLabel}
+                    </button>
+                    <button
+                      onClick={() => setResetResult(null)}
+                      style={{ padding: "8px 10px", backgroundColor: "transparent", border: "1px solid #4b5563", borderRadius: "4px", color: "#9ca3af", fontSize: "12px", cursor: "pointer" }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
               <table
                 style={{
                   width: "100%",
@@ -1437,6 +1558,27 @@ export function AdminPanelModal({
                             }}
                           >
                             Unlock
+                          </button>
+                        )}
+                        {u.id !== currentUser?.id && (
+                          <button
+                            onClick={() => {
+                              setResetResult(null);
+                              setResetPrompt({ id: u.id, username: u.username });
+                            }}
+                            title="Give them a temporary password to sign in with; they choose a new one at sign-in"
+                            style={{
+                              backgroundColor: "#334155",
+                              border: "none",
+                              color: "#fff",
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              fontSize: "11px",
+                              cursor: "pointer",
+                              marginRight: "6px",
+                            }}
+                          >
+                            Reset Password
                           </button>
                         )}
                         <button

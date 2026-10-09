@@ -1440,6 +1440,29 @@ New test: `spec_editing.test.ts` +1:
 
 547/547.
 
+## Added: administrators can reset another user's password (2026-10-09)
+
+Audit item 22 (`docs/audit_2026-10-07.md`). The login page's "Forgot password?" dialog tells people to ask an administrator, but there was no way for one to help: `USER_MANAGE` could create, disable and re-role users, not reset a password.
+
+- **`POST /api/v1/admin/users/:userId/reset-password`** (`USER_MANAGE`, `routes/admin.ts`):
+  - Sets a temporary password, generated (24 characters, `randomBytes(18)` base64url) unless the body gives one, which must pass the password policy (`400 PASSWORD_POLICY_VIOLATION`).
+  - The user must change it at next sign-in: `must_change_password`, the same flow as the first admin's generated password.
+  - All of their sessions end, and any sign-in lock is cleared (`UserRepository.resetPassword`).
+  - The response includes `temporary_password` only when it was generated; it's never stored anywhere else.
+  - Writes a `PASSWORD_RESET` audit row (`generated`, `sessions_ended`; never the password), shown in the Security Audit Log.
+- **Guards**:
+  - Not for your own account: `400 CANNOT_RESET_OWN_PASSWORD`, since the profile form asks for the current password.
+  - Not for someone with permissions you don't have: `AdminGuard`'s rank rule, `403 TARGET_OUTRANKS_ACTOR`, checked globally and in every project where the user has a role or override. Otherwise `USER_MANAGE` could take over an admin's account, even one that's only an admin in one project.
+  - API tokens the user issued are untouched (they follow access, not the password).
+- **Admin Panel → User Roster**: a "Reset Password" button on every row but your own. It asks for confirmation in an amber banner ("Reset X's password? They'll be signed out everywhere..."), then shows the temporary password once in a green panel with Copy and Dismiss, styled like a new API token. It's cleared when you leave the tab or close the panel. A refusal shows the server's message in the panel's error banner.
+
+New tests: `apps/server/tests/password_reset.test.ts` (3):
+- A locked-out Tester's reset gives a 24-character temporary password, ends their old session, refuses the old password, and lets the temporary one in (lock cleared). Until they choose their own password they get 403 elsewhere; afterwards they're in. The audit row has no password and shows in the Security Audit Log.
+- A chosen password is checked against the policy and not echoed.
+- Your own account gets 400 and an unknown user 404. A user manager holding a Tester's permissions can reset a Tester, but gets 403 for the admin and for a Viewer who is Admin in one project, both of whom keep their passwords. A Tester without `USER_MANAGE` gets 403.
+
+550/550. Verified live in a separate browser origin: the roster shows Reset Password on other users but not your own row, the confirmation and the once-only password appear, and signing in as that user with it lands on "Choose a new password".
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

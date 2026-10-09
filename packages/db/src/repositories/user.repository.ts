@@ -176,6 +176,30 @@ export class UserRepository {
     return (await this.findById(input.userId))!;
   }
 
+  /**
+   * An administrator resets someone's password: sets `newPassword` (checked against the
+   * policy), makes them choose their own at next sign-in, and clears any sign-in lock.
+   * Ending their sessions is up to the caller.
+   */
+  async resetPassword(userId: string, newPassword: string): Promise<void> {
+    const validation = validatePasswordPolicy(newPassword);
+    if (!validation.valid) {
+      throw new Error(`PASSWORD_POLICY_VIOLATION: ${validation.reason}`);
+    }
+    const { hash, salt } = hashPassword(newPassword);
+    await this.db
+      .updateTable('users')
+      .set({
+        password_hash: `${salt}:${hash}`,
+        must_change_password: true,
+        failed_login_count: 0,
+        locked_until: null,
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', userId)
+      .execute();
+  }
+
   async updateStatus(userId: string, status: 'ACTIVE' | 'DISABLED'): Promise<User> {
     const now = new Date().toISOString();
     await this.db.updateTable('users').set({ status, updated_at: now }).where('id', '=', userId).execute();
