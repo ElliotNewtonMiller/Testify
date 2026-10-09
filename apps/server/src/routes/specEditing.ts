@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
@@ -13,6 +13,8 @@ import {
   sendRequiredCustomFieldsMissingError,
   isPublicError,
 } from '../errors.js';
+import { validateStepsInput } from '../services/stepValidation.js';
+import type { InvalidParam } from '../services/resultValidation.js';
 
 /**
  * Create/edit/delete for Test Suites and Test Cases (including versioned content:
@@ -212,6 +214,9 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       if (!testSuiteId || !title || typeof title !== 'string') {
         return reply.status(400).send({ error: 'test_suite_id and title (string) are required' });
       }
+      // Steps are checked before anything is created (a bad step used to fail half-way, as a 500).
+      const checkedSteps = steps === undefined || steps === null ? { steps: [] } : validateStepsInput(steps);
+      if ('invalid' in checkedSteps) return sendInvalidSteps(reply, checkedSteps.invalid, request.url);
 
       const suite = await suiteRepo.findById(testSuiteId);
       if (!suite || suite.project_id !== projectId) {
@@ -263,7 +268,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         preconditions: preconditions ?? null,
         author_id: actor.id,
         reviewer_id: autoApprove ? actor.id : null,
-        steps: Array.isArray(steps) ? steps : [],
+        steps: checkedSteps.steps,
       });
 
       await insertAuditLog({
@@ -532,12 +537,14 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       if (version.status !== 'DRAFT') {
         return sendCaseVersionLockedError(reply, versionId, request.url);
       }
+      const checkedSteps = steps === undefined || steps === null ? null : validateStepsInput(steps);
+      if (checkedSteps && 'invalid' in checkedSteps) return sendInvalidSteps(reply, checkedSteps.invalid, request.url);
 
       if (summary !== undefined || preconditions !== undefined) {
         await versionRepo.updateContent(versionId, { summary, preconditions });
       }
-      if (Array.isArray(steps)) {
-        await versionRepo.updateSteps(versionId, steps);
+      if (checkedSteps) {
+        await versionRepo.updateSteps(versionId, checkedSteps.steps);
       }
 
       const updated = await versionRepo.findById(versionId);
@@ -548,7 +555,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         resourceType: 'test_case_version',
         resourceId: versionId,
         projectId,
-        diff: { summary, preconditions, step_count: Array.isArray(steps) ? steps.length : undefined },
+        diff: { summary, preconditions, step_count: checkedSteps ? checkedSteps.steps.length : undefined },
       });
 
       return reply.status(200).send({ version: updated });
@@ -683,4 +690,16 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
     );
   }
+}
+
+/** 400 for steps that can't be stored (see services/stepValidation.ts). */
+function sendInvalidSteps(reply: FastifyReply, invalid: InvalidParam[], instance: string) {
+  return sendProblemDetails(reply, {
+    status: 400,
+    title: 'Bad Request',
+    code: 'INVALID_STEPS',
+    detail: invalid.map((p) => `${p.name} ${p.reason}`).join('; '),
+    invalid_params: invalid,
+    instance,
+  });
 }

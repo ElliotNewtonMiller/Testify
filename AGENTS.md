@@ -1413,7 +1413,32 @@ New tests: `apps/server/tests/batch_results.test.ts` (4):
 
 546/546. The demo script reloads with identical report results (flaky, slowing, always failing, stale).
 
-Found while testing, not fixed here: creating a case whose step has no `step_number` fails with a 500 (the create-case route doesn't validate steps). Flagged as a separate task.
+Found while testing: creating a case whose step has no `step_number` failed with a 500 -- fixed right after, see the next entry.
+
+## Fixed: creating a case with an unnumbered step was a 500 (2026-10-09)
+
+Found while testing batch results (above). `POST /api/v1/projects/:projectId/test-cases` and `PUT .../test-case-versions/:versionId` (saving a draft) passed `steps` straight to `TestCaseVersionRepository`. A step without `step_number` hit the column's NOT NULL constraint, and the request failed with a generic 500. The same happened with:
+- a missing `action`/`expected_result`;
+- a duplicate `step_number` (the `uq_step_order` constraint);
+- a client-supplied step `id` that collided.
+
+The web app always sends numbered steps, so this only affected API callers. Imports were already safe (they number by position).
+
+- **New `apps/server/src/services/stepValidation.ts`** (`validateStepsInput`):
+  - `steps` must be a list of at most 500 objects.
+  - `step_number` is optional and defaults to the step's position; given, it must be a positive whole number, unique within the list.
+  - `action`/`expected_result` must be text up to 20,000 characters (missing means empty).
+  - `execution_type` must be MANUAL or AUTOMATED if given.
+  - Step ids are always assigned by the server; a client `id` is ignored.
+- **Both routes** check steps before changing anything, answering `400 INVALID_STEPS` (problem details, every problem in `invalid_params`). Creating a case no longer leaves a case with no version behind, and a refused draft save changes neither its steps nor its summary/preconditions.
+
+New test: `spec_editing.test.ts` +1:
+- unnumbered steps are numbered 1, 2 and a missing expected result is empty;
+- a non-list, a non-object, non-text action, a 0 or fractional number, a clash between a positional number and an explicit one, and an unknown execution type each get 400 naming the field, and no case is created;
+- a draft save with a duplicate number is refused with "2 is already used by steps[0]" and leaves the draft untouched;
+- an unnumbered step saves as step 1.
+
+547/547.
 
 ## Implementation status vs. the roadmap
 

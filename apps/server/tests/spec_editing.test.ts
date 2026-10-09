@@ -595,4 +595,58 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       void h;
     });
   });
+
+  it('checks steps when a case is created or a draft is saved: numbers by position, 400 for bad input, nothing half-saved', async () => {
+    const { app, db, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const headers = { authorization: `Bearer ${token}` };
+    const body = (res: any) => JSON.parse(res.payload);
+    const create = (steps: unknown) =>
+      app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases`, headers, payload: { test_suite_id: seed.suiteId, title: 'Steps check', steps } });
+    const caseCount = async () => Number((await db.selectFrom('test_cases').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
+
+    // Steps without numbers (this used to be a 500) are numbered by position; a missing text is empty.
+    const ok = await create([{ action: 'Open the page', expected_result: 'It loads' }, { action: 'Click Save' }]);
+    expect(ok.statusCode).toBe(201);
+    expect(body(ok).version.steps.map((s: any) => [s.step_number, s.action, s.expected_result])).toEqual([
+      [1, 'Open the page', 'It loads'],
+      [2, 'Click Save', ''],
+    ]);
+
+    const before = await caseCount();
+    const cases: Array<[unknown, string]> = [
+      ['three steps', 'steps'],
+      [['not an object'], 'steps[0]'],
+      [[{ action: 5, expected_result: 'x' }], 'steps[0].action'],
+      [[{ step_number: 0, action: 'a', expected_result: 'b' }], 'steps[0].step_number'],
+      [[{ step_number: 1.5, action: 'a', expected_result: 'b' }], 'steps[0].step_number'],
+      [[{ action: 'a' }, { step_number: 1, action: 'b' }], 'steps[1].step_number'],
+      [[{ action: 'a', execution_type: 'ROBOT' }], 'steps[0].execution_type'],
+    ];
+    for (const [steps, field] of cases) {
+      const res = await create(steps);
+      expect(res.statusCode, field).toBe(400);
+      expect(body(res).code).toBe('INVALID_STEPS');
+      expect(body(res).invalid_params[0].name).toBe(field);
+    }
+    expect(await caseCount()).toBe(before);
+
+    // Saving a draft: the same check, and the existing steps stay as they were.
+    const draft = body(
+      await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases/${seed.caseIds[0]}/versions/draft`, headers })
+    ).version;
+    const stepsBefore = draft.steps.map((s: any) => s.action);
+    const put = (steps: unknown) =>
+      app.inject({ method: 'PUT', url: `/api/v1/projects/${seed.projectId}/test-case-versions/${draft.id}`, headers, payload: { summary: 'changed', steps } });
+    const bad = await put([{ step_number: 2, action: 'a' }, { step_number: 2, action: 'b' }]);
+    expect(bad.statusCode).toBe(400);
+    expect(body(bad).invalid_params[0].reason).toBe('2 is already used by steps[0]');
+    const after = body(await app.inject({ method: 'GET', url: `/api/v1/test-cases/${seed.caseIds[0]}/latest-version`, headers }));
+    expect(after.version.steps.map((s: any) => s.action)).toEqual(stepsBefore);
+    expect(after.version.summary).toBe(draft.summary); // refused as a whole
+
+    const good = await put([{ action: 'Only step' }]);
+    expect(good.statusCode).toBe(200);
+    expect(body(good).version.steps.map((s: any) => [s.step_number, s.action])).toEqual([[1, 'Only step']]);
+  });
 });
