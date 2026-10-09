@@ -1559,6 +1559,23 @@ Audit item 36 (`docs/audit_2026-10-07.md`), minus its first part: splitting the 
 
 New test: `spec_editing.test.ts` +1 (blank, whitespace-only, non-text and 256-character names and titles each get 400 on suite/case create and edit; valid ones are trimmed; a 255-character name is accepted; other case fields still edit on their own). 555/555; `tsc --noEmit` clean. Verified live in a separate browser origin: sign-in, a title rename (PUT 200), recording a result, the Admin Panel roster and Reports all work with the shared helpers. Clearing a case's title shows "title can't be blank" in the case pane, and the box goes back to the saved title.
 
+## Added: smoke tests for the whole web app (2026-10-09)
+
+The first stage of splitting `App.tsx` (audit item 36). The web app had no component tests -- only pure logic (`hotkeys`, `executionCaseOrder`, `auth_flow`) -- so a safety net came first.
+
+- **New dev dependencies** (`apps/web`, approved by Elliot): `@testing-library/react` 16.3.3, its peer `@testing-library/dom` 10.4.2, and `jsdom` 25.0.1. The new file runs in jsdom via a `// @vitest-environment jsdom` header; every other test stays on node.
+- **`apps/web/src/tests/app.smoke.test.tsx`** (7 tests) renders `<App />` against a fake API: one project, plan and run; two suites; three cases. The response shapes were copied from the real server's. The fake records every request. The tests check what a person sees and which requests go out, not internal state, so they survive code moving around:
+  - signed out shows the login page;
+  - the header shows the project, plan and run;
+  - Spec mode shows the suites and cases;
+  - selecting a case loads its details and steps;
+  - Execute mode shows the queue, and Pass posts `{build_id, test_plan_case_id, verdict}` for the selected run;
+  - a Viewer gets no Admin Panel, Import, + Suite or + Case;
+  - a 403 on recording shows the "Not permitted" banner.
+- **Corrected counts**: there are 31 pure-logic web tests (38 with these). The "web tests 54/54" in several entries above also counted the old worktree's copies (see the worktree entry).
+
+562/562. The tests run in under a second.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
