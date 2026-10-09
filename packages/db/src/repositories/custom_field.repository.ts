@@ -4,6 +4,7 @@ import type { Database, CustomFieldDefinitionsTable } from '../types.js';
 import {
   CUSTOM_FIELD_TYPES,
   CUSTOM_FIELD_ENTITY_TYPES,
+  checkValidationPattern,
   parseCustomFieldValue,
   readCustomFieldValue,
   resolveDefaultValue,
@@ -202,6 +203,7 @@ export class CustomFieldRepository {
     if (!CUSTOM_FIELD_TYPES.includes(input.field_type)) {
       throw new Error(`UNKNOWN_FIELD_TYPE: '${input.field_type}' is not a registered custom field type`);
     }
+    assertValidationPattern(input.validation_regex);
     const scopedProjectId = input.project_id ?? null;
     if (await this.nameTaken(input.entity_type, input.name, scopedProjectId)) {
       const scope = scopedProjectId === null ? 'global' : `project-scoped (project ${scopedProjectId})`;
@@ -387,6 +389,7 @@ export class CustomFieldRepository {
       throw new Error(`FIELD_NAME_TAKEN: a ${scope} '${existing.entity_type}' field named '${input.name}' already exists`);
     }
 
+    assertValidationPattern(input.validation_regex);
     const now = new Date().toISOString();
 
     await this.runInTransaction(async (trx) => {
@@ -668,4 +671,11 @@ export class CustomFieldRepository {
       .where('entity_id', '=', entityId)
       .execute();
   }
+}
+
+/** A validation pattern must compile and be a reasonable length (see @testify/core). */
+function assertValidationPattern(pattern: string | null | undefined): void {
+  if (!pattern) return;
+  const problem = checkValidationPattern(pattern);
+  if (problem) throw new Error(`INVALID_VALIDATION_PATTERN: ${problem}`);
 }

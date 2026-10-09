@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { CustomFieldRepository, TestCaseRepository, TestSuiteRepository } from '@testify/db';
@@ -138,6 +138,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
         return reply.status(201).send({ definition, seeded_count: seededCount });
       } catch (err: any) {
+        if (sendInvalidPattern(reply, err)) return;
         if (err.message?.startsWith('UNKNOWN_ENTITY_TYPE') || err.message?.startsWith('UNKNOWN_FIELD_TYPE')) {
           return reply.status(400).send({ error: err.message });
         }
@@ -214,6 +215,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
         return reply.status(200).send({ definition, applied_default_count: appliedDefaultCount });
       } catch (err: any) {
+        if (sendInvalidPattern(reply, err)) return;
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
           return reply.status(409).send({ error: err.message });
         }
@@ -377,4 +379,12 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       return reply.status(204).send();
     }
   );
+}
+
+/** A validation pattern that doesn't compile or is too long (CustomFieldRepository). */
+function sendInvalidPattern(reply: FastifyReply, err: any): boolean {
+  const prefix = 'INVALID_VALIDATION_PATTERN: ';
+  if (typeof err?.message !== 'string' || !err.message.startsWith(prefix)) return false;
+  reply.status(400).send({ error: err.message.slice(prefix.length), code: 'INVALID_VALIDATION_PATTERN' });
+  return true;
 }

@@ -2510,6 +2510,7 @@ export function AdminPanelModal({
                         value={fieldValidationRegex}
                         onChange={(e) => setFieldValidationRegex(e.target.value)}
                         placeholder="e.g. ^[A-Z]+-\d+$"
+                        maxLength={500}
                         style={{
                           width: "100%",
                           boxSizing: "border-box",
@@ -2521,6 +2522,9 @@ export function AdminPanelModal({
                           fontSize: "12px",
                         }}
                       />
+                      <div style={{ fontSize: "10px", color: "#64748b", marginTop: "3px" }}>
+                        A JavaScript regular expression, up to 500 characters. A value whose check takes too long is refused, so keep patterns simple.
+                      </div>
                     </div>
                   )}
 

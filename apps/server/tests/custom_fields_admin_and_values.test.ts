@@ -709,4 +709,58 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     ).values;
     expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toBe('High');
   });
+
+  it('refuses a validation pattern that does not compile or is too long, and stops a catastrophic one from freezing the server', async () => {
+    const { app, seed } = serverInstance;
+    const { token } = await loginAsAdmin(app);
+    const create = (name: string, validation_regex: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/custom-fields',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { entity_type: 'TestCase', name, field_label: name, field_type: 'TEXT', validation_regex },
+      });
+
+    const broken = await create('broken_pattern', '([a-z]');
+    expect(broken.statusCode).toBe(400);
+    expect(JSON.parse(broken.payload).code).toBe('INVALID_VALIDATION_PATTERN');
+    expect(JSON.parse(broken.payload).error).toMatch(/^The validation pattern isn't a valid regular expression/);
+    expect((await create('long_pattern', 'a'.repeat(501))).statusCode).toBe(400);
+
+    // A pattern that compiles but backtracks catastrophically can be saved...
+    const evil = await create('evil_pattern', '^(a+)+$');
+    expect(evil.statusCode).toBe(201);
+    const definitionId = JSON.parse(evil.payload).definition.id;
+
+    // ...and can't be changed to a broken one later.
+    const badUpdate = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/custom-fields/${definitionId}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { validation_regex: '(' },
+    });
+    expect(badUpdate.statusCode).toBe(400);
+    expect(JSON.parse(badUpdate.payload).code).toBe('INVALID_VALIDATION_PATTERN');
+
+    // A value that would make it run for ages is refused quickly (not a 500, not a hang).
+    const started = Date.now();
+    const slow = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values/${definitionId}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { value: 'a'.repeat(40) + '!' },
+    });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(slow.statusCode).toBe(422);
+    expect(JSON.stringify(JSON.parse(slow.payload))).toContain('took too long');
+
+    // Ordinary values still work.
+    const ok = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values/${definitionId}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { value: 'aaaa' },
+    });
+    expect(ok.statusCode).toBe(200);
+  });
 });

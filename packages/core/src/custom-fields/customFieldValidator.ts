@@ -1,3 +1,5 @@
+import { matchesValidationPattern } from './validationPattern.js';
+
 export const CUSTOM_FIELD_TYPES = ['TEXT', 'NUMBER', 'CHECKBOX', 'DATE', 'SINGLE_SELECT', 'MULTI_SELECT'] as const;
 export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
 
@@ -63,8 +65,8 @@ export function parseCustomFieldValue(
         throw new Error('INVALID_FIELD_VALUE: expected a string for a TEXT field');
       }
       if (opts.validationRegex) {
-        const regex = new RegExp(opts.validationRegex);
-        if (!regex.test(rawValue)) {
+        // Time-limited: an admin-written pattern could otherwise backtrack for ages.
+        if (!matchesValidationPattern(opts.validationRegex, rawValue)) {
           throw new Error(`INVALID_FIELD_VALUE: '${rawValue}' does not match the required pattern`);
         }
       }

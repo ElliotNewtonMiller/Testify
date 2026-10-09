@@ -1315,6 +1315,20 @@ Reported: importing a TestLink file that used to work failed with "Unauthorized:
 
 Test: `session_cookie.test.ts` +1 (a cookie signed with another key gets 401 `SESSION_ENDED` with `reason: "Invalid signature"`). 532/532. Reproduced live and confirmed fixed: signed in, restarted the API server, clicked Preview Import, and the app returned to the login screen with the notice instead of the raw error.
 
+## Fixed: custom-field validation patterns could freeze the server (2026-10-09)
+
+Audit item 17 (`docs/audit_2026-10-07.md`). A TEXT custom field's validation pattern is a regular expression an admin types in, and `parseCustomFieldValue` ran it with `new RegExp(pattern).test(value)`. A catastrophically backtracking pattern (`^(a+)+$`, `^(a|a)*$`) on the right value runs for minutes or longer, and a JavaScript regex can't be interrupted, so one value save (or import row) would freeze the whole server. Patterns also weren't checked when saved: one that didn't compile was stored, and then every value save for that field threw a `SyntaxError` -- a 500.
+
+- **New `packages/core/src/custom-fields/validationPattern.ts`**:
+  - `checkValidationPattern(pattern)`: refuses a pattern that doesn't compile, or is over `MAX_VALIDATION_PATTERN_LENGTH` (500 characters).
+  - `matchesValidationPattern(pattern, value)`: runs the match in a `node:vm` context with a `VALIDATION_PATTERN_TIME_LIMIT_MS` (50 ms) timeout. A vm timeout does stop a running regex (verified); a normal match costs about 0.06 ms. Running out of time throws `VALIDATION_PATTERN_TIMEOUT_MESSAGE` ("INVALID_FIELD_VALUE: checking this value ... took too long, so it was refused. Ask an administrator to simplify the pattern."), a plain `Error` on purpose so the routes show it (`isPublicError`) as a 422. A stored pattern from before this fix that doesn't compile is refused with a clear `INVALID_FIELD_VALUE` instead of a 500.
+  - `parseCustomFieldValue` uses it, which covers every path that saves values: Spec-mode case/suite values, imports, and defaults seeded or applied.
+- **Checked on save**: `CustomFieldRepository.createDefinition`/`updateDefinition` throw `INVALID_VALIDATION_PATTERN: ...`, which `POST`/`PUT /api/v1/admin/custom-fields` answer as `400 {code: 'INVALID_VALIDATION_PATTERN'}` (message without the code prefix, shown by the Admin Panel).
+- **Admin Panel**: the "Validation Regex" input is capped at 500 characters, with a caption saying it's a JavaScript regex and that values whose check takes too long are refused.
+- **Deliberately not used**: a "safe regex" heuristic. `safe-regex2` (already installed via Fastify) was tried: it misses `^(a|a)*$` and rejects the safe, useful `^([a-z0-9]+\.)*[a-z]+$`. The time limit is what actually holds, so a slow-but-compiling pattern can still be saved; it just can't hang anything.
+
+New tests: `packages/core/tests/validationPattern.test.ts` (4 -- save-time checks incl. the length boundary; normal matches; `^(a+)+$` is stopped well under 2s and the next check still works; `parseCustomFieldValue` uses it, incl. a stored pattern that doesn't compile). `custom_fields_admin_and_values.test.ts` +1 (a pattern that doesn't compile, or is too long, gets 400 on create and update; a catastrophic pattern can be saved but a value that would hang it gets 422 "took too long" in under 3s, and ordinary values still save). 537/537.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
