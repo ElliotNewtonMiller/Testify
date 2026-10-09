@@ -7,6 +7,7 @@ import type {
   ParsedStep,
 } from './types.js';
 import { parseCsvLine, bufferStreamToLines, splitSuitePath, slugifyColumnName } from './csvHelpers.js';
+import { restoreNeutralizedFormula } from '../export/spreadsheetFormula.js';
 
 export class CsvParser implements IFileParser {
   readonly formatId = 'STANDARD_CSV';
@@ -84,7 +85,8 @@ export class CsvParser implements IFileParser {
 
     for (const rawLine of dataLines) {
       if (!rawLine.trim()) continue;
-      const row = parseCsvLine(rawLine);
+      // Undo the apostrophe our CSV export puts before formula-like text, so an export re-imports exactly.
+      const row = parseCsvLine(rawLine).map(restoreNeutralizedFormula);
 
       const suitePath = (suitePathIdx !== -1 ? row[suitePathIdx] : 'Default Suite') || 'Default Suite';
       const title = (titleIdx !== -1 ? row[titleIdx] : 'Unnamed Case') || 'Unnamed Case';

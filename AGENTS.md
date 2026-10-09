@@ -1254,6 +1254,17 @@ Two requests.
 
 New tests: `apps/server/tests/execute_only_access.test.ts` (3 -- an `EXECUTE_RUN`-only user sees the project, plans, runs and queue and records a result; their spec tree holds only the plan's 9 cases (one was taken out of the plan) and nothing without a plan, while an admin sees all 10; they get 403 on case content, suite fields, reports, and every plan/run/project change). `migrations.test.ts` +1 (005 renames the key and a token's capability in a database built up to 004). `read_permissions.test.ts` and `case_search.test.ts` now use an export-only role as their "no access" example. 516/516. Verified live as an `EXECUTE_RUN`-only user: the app opens in Execute mode with project/plan/run selected and the queue loaded, no add/edit/delete buttons.
 
+## Fixed: CSV exports didn't neutralise spreadsheet formulas (2026-10-08)
+
+Audit item 13 (`docs/audit_2026-10-07.md`). A CSV cell starting with `=`, `+`, `-` or `@` runs as a formula when the file is opened in Excel, LibreOffice or Google Sheets, so a case titled `=HYPERLINK("http://evil.example","Click")` (or a CI failure message) became live in whoever opened the export.
+
+- New `packages/core/src/export/spreadsheetFormula.ts` (exported from `@testify/core`): `neutralizeSpreadsheetFormula` prefixes an apostrophe to text starting with `=`, `+`, `-`, `@`, tab or carriage return -- spreadsheets then show it as text -- but leaves plain numbers (`-5`, `+3.2`, `1e5`) alone. `restoreNeutralizedFormula` undoes exactly that.
+- Used by both CSV writers: `CsvExportSerializer` (definitions and execution-results exports) and `reporting/csv.ts`'s `toCsv` (every report CSV; numeric cells are written as-is).
+- The native CSV importer (`CsvParser`) restores each cell, so a definitions export still re-imports exactly (the existing export-then-import test in `exports.test.ts` still passes). The TestRail CSV parser is untouched -- those files come from TestRail.
+- Edge case, accepted: a value that genuinely starts with an apostrophe followed by a formula character (e.g. `'=x`) loses that apostrophe on import from a CSV.
+
+New tests: `packages/core/tests/spreadsheetFormula.test.ts` (4 -- which values get prefixed and which don't; restore is the exact inverse; a report CSV neutralizes text but not numbers; a definitions export with formula-like suite name, title, summary, preconditions and step text contains no live formula and re-imports unchanged). 520/520.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

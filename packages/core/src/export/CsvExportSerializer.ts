@@ -5,11 +5,13 @@ import type {
   ExportableSuite,
   ExportableCase,
 } from './types.js';
+import { neutralizeSpreadsheetFormula } from './spreadsheetFormula.js';
 
 /** Quote-if-needed CSV field escaping (RFC 4180-ish) -- no existing CSV-writing utility
  * exists in this package yet (csvHelpers.ts is read-side only, for the importer). */
-function csvEscape(value: string): string {
-  if (value === '') return '';
+function csvEscape(raw: string): string {
+  if (raw === '') return '';
+  const value = neutralizeSpreadsheetFormula(raw);
   if (/[",\n\r]/.test(value)) {
     return '"' + value.replace(/"/g, '""') + '"';
   }
