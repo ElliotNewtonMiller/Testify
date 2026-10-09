@@ -6,6 +6,7 @@ import { LastEmailRepository, SystemSettingsRepository } from '@testify/db';
 import { escapeHtml, isValidEmail } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
 import { EMAIL_SETTING_KEYS, loadEmailSettings, sendEmail } from '../services/mailer.js';
+import { getSecretBox } from '../services/secrets.js';
 
 /**
  * Outgoing email settings and the last email sent (SYSTEM_ADMIN only):
@@ -26,7 +27,11 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
       smtp_port: s.smtp_port,
       smtp_secure: s.smtp_secure,
       smtp_user: s.smtp_user,
-      has_password: Boolean(s.smtp_password),
+      has_password: Boolean(s.smtp_password) || s.smtp_password_unreadable,
+      // Stored but undecryptable (SECRETS_KEY missing or changed): it must be entered again.
+      password_unreadable: s.smtp_password_unreadable,
+      // Without SECRETS_KEY (on a real database) no password can be stored.
+      can_store_password: Boolean(getSecretBox()),
       from: s.from,
       public_url: s.public_url,
       // Without a host nothing is actually sent -- emails are only captured.
@@ -66,8 +71,23 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
       [EMAIL_SETTING_KEYS.public_url]: publicUrl || null,
     };
     // Password: left out = keep the current one; "" = remove it; anything else = replace it.
+    // Stored encrypted (services/secrets.ts); refused when the server has no SECRETS_KEY.
     const passwordChanged = typeof body.smtp_password === 'string';
-    if (passwordChanged) entries[EMAIL_SETTING_KEYS.smtp_password] = (body.smtp_password as string) || null;
+    if (passwordChanged) {
+      const password = body.smtp_password as string;
+      if (password) {
+        const box = getSecretBox();
+        if (!box) {
+          return reply.status(400).send({
+            error: 'SECRETS_KEY_REQUIRED',
+            message: "The server can't store an SMTP password securely: set SECRETS_KEY (32+ characters) in its environment and restart it.",
+          });
+        }
+        entries[EMAIL_SETTING_KEYS.smtp_password] = box.encrypt(password);
+      } else {
+        entries[EMAIL_SETTING_KEYS.smtp_password] = null;
+      }
+    }
     await settingsRepo.setMany(entries);
 
     await db

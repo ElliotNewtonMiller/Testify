@@ -31,7 +31,9 @@ import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
-import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, ConfigError } from './config.js';
+import { setSecretBox } from './services/secrets.js';
+import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
@@ -88,6 +90,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // ONLY for the test suite, which builds on its fixed ids (`seed`); a dev or real server starts
   // with no projects at all, and SEED_SAMPLE_DATA=true brings the sample back locally if wanted.
   await migrateToLatest(db);
+  // Key for secrets stored in the database (SECRETS_KEY), then encrypt an SMTP password saved
+  // in plaintext by an older version.
+  setSecretBox(resolveSecretsKey({ inMemory: !connectionString }));
+  await encryptStoredSmtpPassword(db);
   await seedRbacRegistry(db);
   const seedSampleData = process.env.NODE_ENV === 'test' || process.env.SEED_SAMPLE_DATA === 'true';
   const seed = seedSampleData ? await seedCoreLoopData(db) : null;

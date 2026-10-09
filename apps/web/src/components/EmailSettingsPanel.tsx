@@ -6,6 +6,10 @@ interface EmailSettings {
   smtp_secure: boolean;
   smtp_user: string | null;
   has_password: boolean;
+  /** A password is saved but the server can't decrypt it (its SECRETS_KEY is missing or changed). */
+  password_unreadable?: boolean;
+  /** False when the server has no SECRETS_KEY, so it can't store a password. */
+  can_store_password?: boolean;
   from: string | null;
   public_url: string | null;
   delivery: "smtp" | "capture_only";
@@ -162,6 +166,16 @@ export function EmailSettingsPanel() {
       <section style={{ backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: "8px", padding: "16px" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "14px", color: "#e2e8f0" }}>Outgoing mail server (SMTP)</h3>
         <p style={{ margin: "0 0 12px", fontSize: "11px", color: "#64748b" }}>Used for report emails. Ask your IT team or email provider for these details.</p>
+        {settings?.password_unreadable && (
+          <div style={{ fontSize: "12px", color: "#fde68a", backgroundColor: "#78350f", border: "1px solid #92400e", borderRadius: "6px", padding: "8px 10px", marginBottom: "12px" }}>
+            ⚠️ The saved SMTP password can't be read: the server's SECRETS_KEY is missing or has changed. Enter the password again and save.
+          </div>
+        )}
+        {settings && settings.can_store_password === false && (
+          <div style={{ fontSize: "12px", color: "#fde68a", backgroundColor: "#78350f", border: "1px solid #92400e", borderRadius: "6px", padding: "8px 10px", marginBottom: "12px" }}>
+            ⚠️ The server has no SECRETS_KEY, so it can't store an SMTP password securely. Set SECRETS_KEY (32+ characters) in its environment and restart it to save one.
+          </div>
+        )}
         {settings?.delivery === "capture_only" && (
           <div style={{ fontSize: "12px", color: "#fde68a", backgroundColor: "#78350f", border: "1px solid #92400e", borderRadius: "6px", padding: "8px 10px", marginBottom: "12px" }}>
             No mail server is set, so report emails are only captured, not sent. The last one is shown below.
@@ -174,7 +188,11 @@ export function EmailSettingsPanel() {
           {field("smtp_password", "PASSWORD", {
             type: "password",
             autoComplete: "new-password",
-            placeholder: settings?.has_password ? "•••••••• (saved — type to replace)" : "",
+            placeholder: settings?.password_unreadable
+              ? "Saved password unreadable — enter it again"
+              : settings?.has_password
+                ? "•••••••• (saved, encrypted — type to replace)"
+                : "",
           })}
           {field("from", "FROM ADDRESS", { placeholder: "Testify <qa@example.com>" })}
           <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "6px", marginTop: "20px", cursor: "pointer" }}>

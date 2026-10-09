@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import nodemailer, { type Transporter } from 'nodemailer';
 import type { Database, LastEmail } from '@testify/db';
 import { LastEmailRepository, SystemSettingsRepository } from '@testify/db';
+import { getSecretBox, isEncryptedSecret, SecretDecryptError } from './secrets.js';
 
 /** system_settings keys for outgoing email. */
 export const EMAIL_SETTING_KEYS = {
@@ -20,6 +21,8 @@ export interface EmailSettings {
   smtp_secure: boolean;
   smtp_user: string | null;
   smtp_password: string | null;
+  /** A password is stored but can't be decrypted (SECRETS_KEY missing or changed). */
+  smtp_password_unreadable: boolean;
   from: string | null;
   /** Base URL of the Testify web app, for "Open in Testify" links. */
   public_url: string | null;
@@ -28,15 +31,49 @@ export interface EmailSettings {
 export async function loadEmailSettings(db: Kysely<Database>): Promise<EmailSettings> {
   const raw = await new SystemSettingsRepository(db).getMany(Object.values(EMAIL_SETTING_KEYS));
   const port = Number(raw[EMAIL_SETTING_KEYS.smtp_port]);
+  const stored = raw[EMAIL_SETTING_KEYS.smtp_password] || null;
+  let password: string | null = stored;
+  let unreadable = false;
+  if (stored && isEncryptedSecret(stored)) {
+    const box = getSecretBox();
+    try {
+      password = box ? box.decrypt(stored) : null;
+      unreadable = !box;
+    } catch (err) {
+      if (!(err instanceof SecretDecryptError)) throw err;
+      password = null;
+      unreadable = true;
+    }
+  }
   return {
     smtp_host: raw[EMAIL_SETTING_KEYS.smtp_host] || null,
     smtp_port: Number.isInteger(port) && port > 0 ? port : null,
     smtp_secure: raw[EMAIL_SETTING_KEYS.smtp_secure] === 'true',
     smtp_user: raw[EMAIL_SETTING_KEYS.smtp_user] || null,
-    smtp_password: raw[EMAIL_SETTING_KEYS.smtp_password] || null,
+    smtp_password: password,
+    smtp_password_unreadable: unreadable,
     from: raw[EMAIL_SETTING_KEYS.from] || null,
     public_url: raw[EMAIL_SETTING_KEYS.public_url] || null,
   };
+}
+
+export const SMTP_PASSWORD_UNREADABLE_MESSAGE =
+  "The stored SMTP password can't be decrypted -- the server's SECRETS_KEY is missing or has changed. Re-enter the password in Admin Panel -> Email.";
+
+/**
+ * Encrypts an SMTP password stored in plaintext (by a version before encryption) once a key is
+ * available. Without a key it's left as it is, with a warning in the log.
+ */
+export async function encryptStoredSmtpPassword(db: Kysely<Database>): Promise<void> {
+  const repo = new SystemSettingsRepository(db);
+  const stored = (await repo.getMany([EMAIL_SETTING_KEYS.smtp_password]))[EMAIL_SETTING_KEYS.smtp_password];
+  if (!stored || isEncryptedSecret(stored)) return;
+  const box = getSecretBox();
+  if (box) {
+    await repo.setMany({ [EMAIL_SETTING_KEYS.smtp_password]: box.encrypt(stored) });
+  } else if (process.env.NODE_ENV !== 'test') {
+    console.warn('[testify] The SMTP password is stored unencrypted. Set SECRETS_KEY (32+ characters) and restart to encrypt it.');
+  }
 }
 
 const DEFAULT_FROM = 'Testify <testify@localhost>';
@@ -73,7 +110,10 @@ export async function sendEmail(
   const settings = await loadEmailSettings(db);
   let status: 'SENT' | 'CAPTURED' | 'FAILED' = 'CAPTURED';
   let error: string | null = null;
-  if (settings.smtp_host) {
+  if (settings.smtp_host && settings.smtp_password_unreadable) {
+    status = 'FAILED';
+    error = SMTP_PASSWORD_UNREADABLE_MESSAGE;
+  } else if (settings.smtp_host) {
     try {
       await transportFactory(settings).sendMail({ from: settings.from || DEFAULT_FROM, to: email.to, subject: email.subject, html: email.html, text: email.text });
       status = 'SENT';

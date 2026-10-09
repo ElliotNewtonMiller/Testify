@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { validatePasswordPolicy } from '@testify/core';
+import { SecretBox } from './services/secrets.js';
 
 /**
  * Where the server keeps its data, read from DATABASE_URL at startup. There's deliberately no
@@ -105,4 +106,24 @@ export function resolveCorsOrigins(env: NodeJS.ProcessEnv = process.env): string
     origins.push(url.origin);
   }
   return [...new Set(origins)];
+}
+
+/**
+ * The key for secrets stored in the database (the SMTP password), from SECRETS_KEY: any string
+ * of at least 32 characters, e.g. `openssl rand -hex 32`. Keep it out of the database and the
+ * same across restarts and instances -- if it changes, stored secrets must be entered again.
+ *
+ * - Set: used to encrypt and decrypt.
+ * - Unset, in-memory database: a random key for this process (that data is thrown away anyway).
+ * - Unset, real database: null -- nothing secret can be stored (saving an SMTP password is refused).
+ */
+export function resolveSecretsKey({ inMemory }: { inMemory: boolean }, env: NodeJS.ProcessEnv = process.env): SecretBox | null {
+  const secret = env.SECRETS_KEY;
+  if (secret) {
+    if (secret.length < 32) {
+      throw new ConfigError('SECRETS_KEY must be at least 32 characters long (e.g. the output of `openssl rand -hex 32`).');
+    }
+    return SecretBox.fromSecret(secret);
+  }
+  return inMemory ? SecretBox.ephemeral() : null;
 }
