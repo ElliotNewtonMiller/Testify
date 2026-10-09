@@ -1361,6 +1361,28 @@ Audit item 19 (`docs/audit_2026-10-07.md`). `POST /api/v1/executions` (what Exec
 
 New tests: `apps/server/tests/execution_validation.test.ts` (3 -- unknown verdict/status, non-text notes, a bad step verdict and a non-object step all named in one 400, missing ids, a lowercase verdict refused; an unknown step id, another case's step, a wrong step number and a duplicate step each get 400 and nothing is stored; a valid KNOWN_ISSUE result with steps sent out of order stores the right numbers, and status defaults to COMPLETED). 540/540.
 
+## Fixed: EXECUTE_OVERWRITE was only checked by the verdict hotkeys (2026-10-09)
+
+Audit item 20 (`docs/audit_2026-10-07.md`). Elliot couldn't reproduce "anyone with `EXECUTE_RUN` can overwrite results", and re-checking explained why: the web app's verdict hotkeys (`p/f/b/s`, `useHotkeyEngine` via `useFocusFSM.canOverwrite`) do refuse a user without `EXECUTE_OVERWRITE` once a case has a result. Two other paths didn't check it at all:
+- The Pass/Fail/Block/Skip buttons only checked `EXECUTE_RUN`.
+- The server never checked it, for `POST /api/v1/executions` or the batch route.
+
+Reproduced against the dev server: the fixture `tester` (Tester role, no `EXECUTE_OVERWRITE`) re-recorded DEMO-1 in an open run and got 201.
+
+- **The rule** (new `apps/server/src/services/resultOverwrite.ts`): recording a result for a test case that already has one in the run needs `EXECUTE_OVERWRITE` (or `SYSTEM_ADMIN`). Results are never edited -- a new row becomes the case's verdict -- so that's what overwriting means.
+  - **Exception:** re-recording your own latest result with the same verdict (adding notes). That's the web app's Ctrl+Enter "submit notes" after picking a verdict, which `useHotkeyEngine` deliberately allows Testers.
+  - **Which result counts:** `latestResultsInRun` takes the latest result per test case across all of the case's links to the plan, by `execution_timestamp` then `created_at` -- the same order reports use.
+- **Single-result route** (`server.ts`): refused with `403 RESULT_OVERWRITE_NOT_PERMITTED` (problem details); nothing is stored.
+- **Batch route** (`batchExecution.ts`): the check is against results recorded before the request, and several results for one case within a request are retries, not overwrites. A refused item gets a per-item 403; in all-or-nothing mode the whole batch is refused with a 403 and nothing is recorded. The Automation Service role doesn't hold `EXECUTE_OVERWRITE` by default, matching RFC 04's matrix: a CI token that should change earlier results in the same run needs the capability.
+- **Batch ordering fix, found by the tests:** items without `executed_at` all got the same `execution_timestamp` and `created_at`, so which of a failure and its retry was "latest" was arbitrary -- for this check and for reports alike. Each item's `created_at`/`updated_at` is now the request time plus its index in milliseconds, so later items are later.
+- **Web** (`App.tsx`): the four verdict buttons now refuse like the hotkeys (`!fsm.canOverwrite`). `executionDenied` became a message (`string | null`), so the yellow "Not permitted" banner says which permission is missing: `RUN_DENIED_MESSAGE`, or `OVERWRITE_DENIED_MESSAGE` for the buttons, the hotkeys' refusal, or a server `RESULT_OVERWRITE_NOT_PERMITTED`.
+
+New tests: `apps/server/tests/result_overwrite.test.ts` (2):
+- A Tester records a first result and adds notes to it, but can't change it. A Test Lead and an admin can, after which the Tester can't re-record even the same verdict, since the latest result is no longer theirs. Refusals store nothing.
+- A batch token with only `EXECUTE_RUN` records a failure and its retry in one request, gets a per-item 403 for changing it in a later request while other items still record, may resend the same verdict, and in atomic mode gets a whole-batch 403 with nothing recorded. A token with `EXECUTE_OVERWRITE` may change it.
+
+542/542. The demo script still loads fully: test health shows the same flaky, slowing and always-failing cases and SSO login's passed-on-retry run.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

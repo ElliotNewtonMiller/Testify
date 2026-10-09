@@ -11,6 +11,7 @@ import type {
   BatchExecutionResponse,
   BatchExecutionSingleResult,
 } from '@testify/core';
+import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
 
 export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   app.post(
@@ -72,7 +73,8 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
         return sendTokenProjectMismatchError(reply, user.api_token.project_id, projectId, req.url);
       }
 
-      const now = new Date().toISOString();
+      const nowMs = Date.now();
+      const now = new Date(nowMs).toISOString();
 
       // 2. Pre-fetched key resolution cache
       const existingPlanCases = await db
@@ -104,6 +106,13 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             .execute()
         ).map((r) => r.test_case_id)
       );
+
+      // EXECUTE_OVERWRITE (services/resultOverwrite.ts): a case that already had a result in
+      // this run before this request can only get a different one with the permission.
+      // Several results for one case within this request are retries, not overwrites.
+      const mayOverwrite = canOverwriteResults(user.permissions);
+      const priorResults = mayOverwrite ? new Map() : await latestResultsInRun(db, buildId);
+      const casesInThisRequest = new Set<string>();
 
       const planCasesByExternalId = new Map<string, typeof existingPlanCases[0]>();
       const planCasesByUuid = new Map<string, typeof existingPlanCases[0]>();
@@ -273,8 +282,33 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           }
         }
 
+        if (
+          !mayOverwrite &&
+          !casesInThisRequest.has(resolvedPlanCase.test_case_id) &&
+          isOverwrite(priorResults.get(resolvedPlanCase.test_case_id), user.id, item.verdict)
+        ) {
+          failedCount++;
+          if (allOrNothing) {
+            return reply.header('content-type', 'application/problem+json').status(403).send({
+              type: 'https://api.testify.dev/errors/RESULT_OVERWRITE_NOT_PERMITTED',
+              title: 'Forbidden',
+              status: 403,
+              code: 'RESULT_OVERWRITE_NOT_PERMITTED',
+              detail: `Batch execution failed in atomic mode: item at index ${i}: ${RESULT_OVERWRITE_MESSAGE}`,
+              invalid_params: [{ name: `executions[${i}].case_identifier`, reason: RESULT_OVERWRITE_MESSAGE }],
+            });
+          }
+          results.push({ index: i, status: 403, error: RESULT_OVERWRITE_MESSAGE });
+          continue;
+        }
+        casesInThisRequest.add(resolvedPlanCase.test_case_id);
+
         const execId = uuidv4();
         const execTimestamp = item.executed_at || now;
+        // Each later item is recorded a millisecond later, so results with the same
+        // execution time (e.g. a failure and its retry, neither sending executed_at) have a
+        // definite order: reports and the overwrite check take the newest as the verdict.
+        const itemCreatedAt = new Date(nowMs + i).toISOString();
         const envTags = item.environment_tags || (body.environment ? { environment: body.environment } : null);
 
         executionsToInsert.push({
@@ -294,8 +328,8 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           runner: runnerJson,
           source: 'API',
           execution_timestamp: execTimestamp,
-          created_at: now,
-          updated_at: now,
+          created_at: itemCreatedAt,
+          updated_at: itemCreatedAt,
         });
 
         // Step results

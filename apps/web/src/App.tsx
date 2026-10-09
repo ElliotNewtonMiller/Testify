@@ -131,6 +131,12 @@ const authHeaders = sessionHeaders;
 
 const SESSION_ENDED_NOTICE = "Your sign-in has ended. Please sign in again.";
 
+// Messages for the yellow "Not permitted" banner in Execute mode.
+const RUN_DENIED_MESSAGE =
+  "Your role can't record executions in this project, so that result was not saved. Ask an administrator if you need to.";
+const OVERWRITE_DENIED_MESSAGE =
+  "This test case already has a result in this run, and your role can't change existing results (EXECUTE_OVERWRITE), so that result was not saved. Ask a test lead or administrator if it needs to change.";
+
 // Grows a textarea to fit its content instead of showing a scrollbar -- resetting height to
 // "auto" first (rather than just reading scrollHeight directly) is required so the element
 // can shrink back down too, not just grow: scrollHeight never reports smaller than the
@@ -457,7 +463,8 @@ export default function App() {
   const [noPlanSetWarning, setNoPlanSetWarning] = useState(false);
   // Shown as a yellow banner when the server refuses to record a result (403): easy to miss as
   // a status-bar message, especially when recording with the keyboard.
-  const [executionDenied, setExecutionDenied] = useState(false);
+  // The yellow "Not permitted" banner's message, or null when it's hidden.
+  const [executionDenied, setExecutionDenied] = useState<string | null>(null);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -1567,7 +1574,7 @@ export default function App() {
 
   // A refusal in one project says nothing about the next one.
   useEffect(() => {
-    setExecutionDenied(false);
+    setExecutionDenied(null);
   }, [selectedProjectId]);
 
   // Real plan list for whichever project is currently selected.
@@ -2428,7 +2435,7 @@ export default function App() {
         });
 
         if (response.ok) {
-          setExecutionDenied(false);
+          setExecutionDenied(null);
           setSyncStatus(
             `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
           );
@@ -2448,8 +2455,14 @@ export default function App() {
           setSyncStatus("Session expired -- please log in again");
         } else if (response.status === 403) {
           revertOptimisticUpdate();
-          setSyncStatus("Not permitted: your role can't record executions");
-          setExecutionDenied(true);
+          const denial = await response.json().catch(() => ({}));
+          if (denial.code === "RESULT_OVERWRITE_NOT_PERMITTED") {
+            setSyncStatus("Not permitted: your role can't change an existing result");
+            setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
+          } else {
+            setSyncStatus("Not permitted: your role can't record executions");
+            setExecutionDenied(RUN_DENIED_MESSAGE);
+          }
         } else {
           revertOptimisticUpdate();
           setSyncStatus("API Error recording verdict");
@@ -2592,7 +2605,8 @@ export default function App() {
     },
     onPermissionDeniedToast: (msg) => {
       // No permission to record results at all: the same yellow banner as a server refusal.
-      if (msg.includes("EXECUTE_RUN")) setExecutionDenied(true);
+      if (msg.includes("EXECUTE_RUN")) setExecutionDenied(RUN_DENIED_MESSAGE);
+      else if (msg.includes("EXECUTE_OVERWRITE")) setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
       else showToast(msg);
     },
     blockVerdictsReason: verdictBlockReason ?? undefined,
@@ -3741,11 +3755,11 @@ export default function App() {
             ⚠️ Not permitted
           </div>
           <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
-            Your role can't record executions in this project, so that result was not saved. Ask an administrator if you need to.
+            {executionDenied}
           </div>
           <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
             <button
-              onClick={() => setExecutionDenied(false)}
+              onClick={() => setExecutionDenied(null)}
               style={{
                 padding: "5px 12px",
                 backgroundColor: "#334155",
@@ -5345,6 +5359,9 @@ export default function App() {
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
                         );
+                      // Same rule as the verdict hotkeys: changing an existing result needs
+                      // EXECUTE_OVERWRITE (the server enforces it too).
+                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
                       submitVerdict("PASSED");
                       // Covers the case this button doesn't auto-advance from (the last case
                       // in the list) -- without this, a note-only Ctrl+Enter afterward would
@@ -5379,6 +5396,9 @@ export default function App() {
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
                         );
+                      // Same rule as the verdict hotkeys: changing an existing result needs
+                      // EXECUTE_OVERWRITE (the server enforces it too).
+                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
                       submitVerdict("FAILED");
                       pendingVerdictRef.current = "FAILED";
                       if (notesInputRef.current) notesInputRef.current.focus();
@@ -5407,6 +5427,9 @@ export default function App() {
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
                         );
+                      // Same rule as the verdict hotkeys: changing an existing result needs
+                      // EXECUTE_OVERWRITE (the server enforces it too).
+                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
                       submitVerdict("BLOCKED");
                       pendingVerdictRef.current = "BLOCKED";
                       if (notesInputRef.current) notesInputRef.current.focus();
@@ -5435,6 +5458,9 @@ export default function App() {
                         return showToast(
                           "Permission Denied: EXECUTE_RUN required",
                         );
+                      // Same rule as the verdict hotkeys: changing an existing result needs
+                      // EXECUTE_OVERWRITE (the server enforces it too).
+                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
                       submitVerdict("SKIPPED");
                       // Same reasoning as the Pass button above -- keeps a subsequent
                       // note-only Ctrl+Enter correct when this is the last case (no advance).

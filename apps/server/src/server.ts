@@ -27,6 +27,7 @@ import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
 import { sendCaseRemovedFromPlanError, sendProblemDetails, INTERNAL_ERROR_MESSAGE, logServerError } from './errors.js';
 import { validateManualResult } from './services/resultValidation.js';
+import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from './services/resultOverwrite.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
@@ -185,7 +186,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     const planCase = await db
       .selectFrom('test_plan_cases as tpc')
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
-      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tpc.test_case_version_id', 'tc.external_id'])
+      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tpc.test_case_version_id', 'tpc.test_case_id', 'tc.external_id'])
       .where('tpc.id', '=', body.test_plan_case_id)
       .executeTakeFirst();
     if (!planCase || planCase.test_plan_id !== build.test_plan_id) {
@@ -215,6 +216,21 @@ export async function createServer(connectionString?: string, options: { db?: Ky
         detail: 'Test plan is locked. Executions are frozen.',
         instance: request.url,
       });
+    }
+
+    // Changing a case's existing result in this run needs EXECUTE_OVERWRITE (adding notes to
+    // your own result with the same verdict doesn't) -- see services/resultOverwrite.ts.
+    if (!canOverwriteResults(request.user!.permissions)) {
+      const existing = (await latestResultsInRun(db, body.build_id, [planCase.test_case_id])).get(planCase.test_case_id);
+      if (isOverwrite(existing, actorId, body.verdict)) {
+        return sendProblemDetails(reply, {
+          status: 403,
+          title: 'Forbidden',
+          code: 'RESULT_OVERWRITE_NOT_PERMITTED',
+          detail: RESULT_OVERWRITE_MESSAGE,
+          instance: request.url,
+        });
+      }
     }
 
     // Step results must be steps of the version this case runs at in the plan (its pinned
