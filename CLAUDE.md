@@ -1535,6 +1535,16 @@ Audit item 34 (`docs/audit_2026-10-07.md`). Its legacy routes were already gone 
 
 554/554; `tsc --noEmit` clean.
 
+## Fixed: an old worktree's tests ran in `npm test` (2026-10-09)
+
+Audit item 35 (`docs/audit_2026-10-07.md`). `npm test` (root `vitest run`) also collected the tests in `.claude/worktrees/vigilant-haslett-05b0d0`, a Claude Code worktree last touched 2026-09-18. Those are old copies of the tests, run against this checkout's shared packages, so they always failed: the "usual 3/4 failures" mentioned in many entries above, and 52 by the end. Every session worked around it with `--exclude '.claude/**'`.
+
+- **Root `vitest.config.ts`** now excludes `.claude/**` (on top of vitest's default excludes), so no worktree there is ever picked up again.
+- **The worktree was removed** with `git worktree remove`, which refuses if there are uncommitted changes. It had none, no stashes, and no files changed since 2026-09-18.
+- **Its branch `claude/vigilant-haslett-05b0d0` was kept.** It holds one commit not on `main` (3b00f47, "Fix stale custom field values in open Spec-mode case detail after Admin Panel edits"), an earlier attempt at what audit item 26 fixed on `main` the same day. It can be deleted (`git branch -D claude/vigilant-haslett-05b0d0`) once nobody wants it.
+
+Plain `npm test`: 554/554, no flags needed.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
