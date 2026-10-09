@@ -842,7 +842,7 @@ ${tc('SEL-4', 'Done', '')}
 
       expect(res.statusCode).toBe(422);
       const data = JSON.parse(res.body);
-      expect(data.code).toBe('VALIDATION_FAILED');
+      expect(data.code).toBe('CASE_NOT_FOUND');
       expect(data.invalid_params).toBeDefined();
     });
 

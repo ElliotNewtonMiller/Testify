@@ -175,7 +175,7 @@ export interface ExecutionStepResult {
 export interface BatchExecutionItem {
   case_identifier: CaseIdentifier;
   verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE';
-  status?: 'UNTESTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED';
+  status?: 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED';
   duration_ms?: number;
   executed_at?: string;
   notes?: string;
@@ -206,6 +206,10 @@ export interface BatchExecutionSingleResult {
   case_id?: string;
   verdict?: string;
   error?: string;
+  /** Why the item was refused, e.g. INVALID_RESULT, CASE_NOT_FOUND, UNKNOWN_STEP. */
+  code?: string;
+  /** For a refused item: each problem, by field name. */
+  invalid_params?: Array<{ name: string; reason: string }>;
 }
 
 export interface BatchExecutionResponse {

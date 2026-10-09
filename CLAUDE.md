@@ -1383,6 +1383,38 @@ New tests: `apps/server/tests/result_overwrite.test.ts` (2):
 
 542/542. The demo script still loads fully: test health shows the same flaky, slowing and always-failing cases and SSO login's passed-on-retry run.
 
+## Fixed: batch results -- no transaction, leftover auto-links, guessed steps, unchecked verdicts (2026-10-09)
+
+Audit item 21 (`docs/audit_2026-10-07.md`). `POST /api/v1/test-plans/:planId/builds/:buildId/executions/batch` (CI and API tokens):
+- inserted results and step results one row at a time with no transaction, so a failure part-way left a partial batch, and a big batch was slow -- the 1,000-item test was the suite's usual timeout;
+- in all-or-nothing mode it returned the rejection after it had already linked cases to the plan;
+- recorded a step result with an unknown `step_number` against step 1, and stored the request's `step_number` rather than the step's;
+- stored any verdict or status string.
+
+- **Every item is validated up front** (`validateBatchItem`, `apps/server/src/services/resultValidation.ts`):
+  - a case identifier (`external_id`, `by_uuid` or `by_path_title.title`);
+  - verdict and status from `@testify/core`'s `EXECUTION_VERDICTS`/`EXECUTION_STATUSES` (status defaults to COMPLETED);
+  - `duration_ms` a whole number ≥ 0, `executed_at` a date-time (stored normalised to ISO);
+  - `notes`, `failure_message` and `stack_trace` text within limits;
+  - `environment_tags` an object of up to 50 text values;
+  - each step result with a `test_step_id` or `step_number` and a `STEP_VERDICTS` verdict.
+
+  `executions` must be a list of 1 to `MAX_BATCH_RESULTS` (5,000) items, else `400 INVALID_RESULT`. Not atomic: an invalid item gets a per-item 400 with `code` and `invalid_params`. Atomic: every invalid item is reported in one 400, before anything touches the database.
+- **Steps are matched exactly**: by `test_step_id` or `step_number` against the version the case runs at in the plan. An unknown step, a mismatched number, or a step repeated within an item refuses the item with `422 UNKNOWN_STEP`. The stored step number is the step's own.
+- **One transaction** for the whole request: auto-links, results, step results and the audit row. Results and step results go in as multi-row inserts in chunks of 500. Not atomic: accepted items are saved together and refused ones reported. Atomic: a refused item throws `AtomicRejection` inside the transaction, so everything rolls back, auto-links included, and the error is returned as problem details.
+- **A case is linked to the plan only once its item has passed every check** (resolved, overwrite rule, steps), so even outside atomic mode a refused item never leaves a link behind; the link is then reused by later items in the same request.
+- **Per-item results** gained `code` (`INVALID_RESULT`, `CASE_NOT_FOUND`, `CASE_REMOVED_FROM_PLAN`, `RESULT_OVERWRITE_NOT_PERMITTED`, `UNKNOWN_STEP`) and `invalid_params` (`BatchExecutionSingleResult` in `@testify/core`). An unresolvable case is now coded `CASE_NOT_FOUND` (was `VALIDATION_FAILED` in atomic mode); `batch_and_xml.test.ts` was updated. `BatchExecutionItem.status` no longer lists `UNTESTED`.
+
+New tests: `apps/server/tests/batch_results.test.ts` (4):
+- Invalid verdict, status, duration/date, step verdict and a missing case identifier each get a per-item 400 naming the field. In atomic mode all problems come back in one 400 with nothing stored. An empty, non-list or missing `executions` gets a 400.
+- Steps by number and by id are stored with the right ids and numbers. An unknown step number, another case's step, a mismatched number and a repeated step each get 422 `UNKNOWN_STEP`.
+- A rejected atomic batch leaves no link, result or audit row. A non-atomic item refused for its steps doesn't link its case. An accepted case appearing twice is linked once.
+- 2,000 results are recorded in one request (about 1.5 s; the old 1,000-item test now takes about 2 s).
+
+546/546. The demo script reloads with identical report results (flaky, slowing, always failing, stale).
+
+Found while testing, not fixed here: creating a case whose step has no `step_number` fails with a 500 (the create-case route doesn't validate steps). Flagged as a separate task.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
