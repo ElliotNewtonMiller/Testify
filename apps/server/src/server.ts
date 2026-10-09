@@ -25,7 +25,8 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
-import { sendCaseRemovedFromPlanError, INTERNAL_ERROR_MESSAGE, logServerError } from './errors.js';
+import { sendCaseRemovedFromPlanError, sendProblemDetails, INTERNAL_ERROR_MESSAGE, logServerError } from './errors.js';
+import { validateManualResult } from './services/resultValidation.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { runDueSchedules } from './services/reportEmailService.js';
@@ -153,14 +154,19 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // POST /api/v1/executions - Execution logging endpoint (Gated by EXECUTE_RUN)
   app.post('/api/v1/executions', { preHandler: requirePermission('EXECUTE_RUN', db, jwtSecret) }, async (request, reply) => {
     const actorId = request.user!.id;
-    const body = request.body as {
-      build_id: string;
-      test_plan_case_id: string;
-      verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
-      status?: 'COMPLETED' | 'IN_PROGRESS';
-      notes?: string;
-      step_results?: Array<{ test_step_id: string; step_number: number; verdict: string; actual_result?: string }>;
-    };
+    // Verdict, status and step verdicts must be known values (they're stored as plain strings).
+    const validated = validateManualResult(request.body);
+    if ('invalid' in validated) {
+      return sendProblemDetails(reply, {
+        status: 400,
+        title: 'Bad Request',
+        code: 'INVALID_RESULT',
+        detail: validated.invalid.map((p) => `${p.name} ${p.reason}`).join('; '),
+        invalid_params: validated.invalid,
+        instance: request.url,
+      });
+    }
+    const body = validated.result;
 
     // 1. Verify build and plan lock state
     const build = await db
@@ -179,7 +185,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     const planCase = await db
       .selectFrom('test_plan_cases as tpc')
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
-      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tc.external_id'])
+      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tpc.test_case_version_id', 'tc.external_id'])
       .where('tpc.id', '=', body.test_plan_case_id)
       .executeTakeFirst();
     if (!planCase || planCase.test_plan_id !== build.test_plan_id) {
@@ -211,69 +217,99 @@ export async function createServer(connectionString?: string, options: { db?: Ky
       });
     }
 
-    const now = new Date().toISOString();
-    const execId = uuidv4();
-
-    // 2. Insert immutable execution snapshot
-    await db
-      .insertInto('executions')
-      .values({
-        id: execId,
-        build_id: body.build_id,
-        test_plan_case_id: body.test_plan_case_id,
-        tester_id: actorId,
-        status: body.status || 'COMPLETED',
-        verdict: body.verdict,
-        // Manual execution isn't timed: this is the single-result route the UI uses, so it
-        // never stores a duration, even if one is sent. Durations come only from automated
-        // results via the batch route (routes/batchExecution.ts), which is all Reports'
-        // "Slowest" table ranks.
-        execution_duration_ms: null,
-        notes: body.notes || null,
-        custom_fields_snapshot: '{}',
-        source: 'UI',
-        execution_timestamp: now,
-        created_at: now,
-        updated_at: now,
-      })
-      .execute();
-
-    // 3. Insert step verdicts if provided
-    if (body.step_results && body.step_results.length > 0) {
-      for (const s of body.step_results) {
-        await db
-          .insertInto('execution_steps')
-          .values({
-            id: uuidv4(),
-            execution_id: execId,
-            test_step_id: s.test_step_id,
-            step_number: s.step_number,
-            verdict: s.verdict,
-            actual_result: s.actual_result || null,
-            created_at: now,
-          })
-          .execute();
+    // Step results must be steps of the version this case runs at in the plan (its pinned
+    // version); an unknown step id used to fail the insert with a 500.
+    const stepNumberById = new Map<string, number>();
+    if (body.step_results.length > 0) {
+      const steps = await db
+        .selectFrom('test_steps')
+        .select(['id', 'step_number'])
+        .where('test_case_version_id', '=', planCase.test_case_version_id)
+        .execute();
+      for (const st of steps) stepNumberById.set(st.id, st.step_number);
+      const invalidSteps = body.step_results.flatMap((sr, i) => {
+        const actual = stepNumberById.get(sr.test_step_id);
+        if (actual === undefined) return [{ name: `step_results[${i}].test_step_id`, reason: "isn't a step of this test case" }];
+        if (sr.step_number !== undefined && sr.step_number !== actual) {
+          return [{ name: `step_results[${i}].step_number`, reason: `is ${actual} for this step` }];
+        }
+        return [];
+      });
+      if (invalidSteps.length > 0) {
+        return sendProblemDetails(reply, {
+          status: 400,
+          title: 'Bad Request',
+          code: 'INVALID_RESULT',
+          detail: invalidSteps.map((p) => `${p.name} ${p.reason}`).join('; '),
+          invalid_params: invalidSteps,
+          instance: request.url,
+        });
       }
     }
 
-    // 4. Emit Audit Event
-    await db
-      .insertInto('audit_logs')
-      .values({
-        id: uuidv4(),
-        actor_id: actorId,
-        actor_type: 'USER',
-        action: 'EXECUTION_RECORDED',
-        resource_type: 'execution',
-        resource_id: execId,
-        // The run's real project (this used to be hardwired to the sample project's id).
-        project_id: build.project_id,
-        diff: JSON.stringify({ verdict: body.verdict, plan_case_id: body.test_plan_case_id }),
-        ip_address: '127.0.0.1',
-        user_agent: 'FastifyCoreLoopServer',
-        created_at: now,
-      })
-      .execute();
+    const now = new Date().toISOString();
+    const execId = uuidv4();
+
+    // The result, its step results and the audit row are saved together or not at all.
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .insertInto('executions')
+        .values({
+          id: execId,
+          build_id: body.build_id,
+          test_plan_case_id: body.test_plan_case_id,
+          tester_id: actorId,
+          status: body.status,
+          verdict: body.verdict,
+          // Manual execution isn't timed: this is the single-result route the UI uses, so it
+          // never stores a duration, even if one is sent. Durations come only from automated
+          // results via the batch route (routes/batchExecution.ts), which is all Reports'
+          // "Slowest" table ranks.
+          execution_duration_ms: null,
+          notes: body.notes,
+          custom_fields_snapshot: '{}',
+          source: 'UI',
+          execution_timestamp: now,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute();
+
+      if (body.step_results.length > 0) {
+        await trx
+          .insertInto('execution_steps')
+          .values(
+            body.step_results.map((sr) => ({
+              id: uuidv4(),
+              execution_id: execId,
+              test_step_id: sr.test_step_id,
+              step_number: stepNumberById.get(sr.test_step_id)!,
+              verdict: sr.verdict,
+              actual_result: sr.actual_result,
+              created_at: now,
+            }))
+          )
+          .execute();
+      }
+
+      await trx
+        .insertInto('audit_logs')
+        .values({
+          id: uuidv4(),
+          actor_id: actorId,
+          actor_type: 'USER',
+          action: 'EXECUTION_RECORDED',
+          resource_type: 'execution',
+          resource_id: execId,
+          // The run's real project (this used to be hardwired to the sample project's id).
+          project_id: build.project_id,
+          diff: JSON.stringify({ verdict: body.verdict, plan_case_id: body.test_plan_case_id }),
+          ip_address: '127.0.0.1',
+          user_agent: 'FastifyCoreLoopServer',
+          created_at: now,
+        })
+        .execute();
+    });
 
     // 5. Auto-close the run once every case in its plan has a result.
     const buildStatus = await autoCloseBuildIfComplete(db, body.build_id, {
@@ -284,7 +320,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     return reply.status(201).send({
       id: execId,
       verdict: body.verdict,
-      status: body.status || 'COMPLETED',
+      status: body.status,
       created_at: now,
       build_status: buildStatus,
     });

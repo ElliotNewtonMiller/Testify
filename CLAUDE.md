@@ -1345,6 +1345,22 @@ Audit item 18 (`docs/audit_2026-10-07.md`). `App.tsx`'s `DEFAULT_FALLBACK_WORKSP
 
 No new automated tests (client-side state). Web tests 54/54; `tsc --noEmit` clean. Verified live in a separate browser origin: a project with no plans, an empty plan, and the demo plan (its 12 real cases, no TFY-10x anywhere) each show the right thing. A simulated failed load of the plan's cases shows the error with Retry, and Retry loads the 12 cases.
 
+## Fixed: the single-result route stored any verdict string, and an unknown step id was a 500 (2026-10-09)
+
+Audit item 19 (`docs/audit_2026-10-07.md`). `POST /api/v1/executions` (what Execute mode's verdict buttons and hotkeys call) took its body as-is. Any `verdict`/`status` string was stored, and reports then counted the result as "OTHER" or not at all. Step results were inserted unchecked, so an unknown `test_step_id` hit a foreign key and came back as a 500. A step from another case, or a wrong `step_number`, was stored silently. The result, its steps and its audit row were separate inserts, so a failure part-way left a partial result.
+
+- **New `packages/core/src/execution/results.ts`** (exported from `@testify/core`): `EXECUTION_VERDICTS` (PASSED, FAILED, BLOCKED, SKIPPED, RETEST_REQUIRED, KNOWN_ISSUE), `EXECUTION_STATUSES` (COMPLETED, IN_PROGRESS, ABORTED), `STEP_VERDICTS` (PASSED, FAILED, BLOCKED, SKIPPED, UNTESTED), `MAX_RESULT_NOTES_LENGTH` (20,000), and `is...` guards. These are the values the DB columns' comments already listed; the batch route (audit item 21) can reuse them.
+- **New `apps/server/src/services/resultValidation.ts`** (`validateManualResult`): checks every field at once:
+  - `build_id` and `test_plan_case_id` are present.
+  - `verdict` and `status` (status defaults to COMPLETED) are known values, exact case.
+  - `notes` is text within the limit.
+  - `step_results` is a list of objects, each with a unique `test_step_id`, an optional positive whole `step_number`, a known step `verdict`, and text `actual_result`.
+
+  Failures answer `400 INVALID_RESULT` (problem details) with every problem in `invalid_params`.
+- **The route** (`server.ts`) then checks each step id against the steps of the version the case is pinned to in the plan (`test_plan_cases.test_case_version_id`): `400` "isn't a step of this test case", or "is N for this step" for a mismatched `step_number`. A step's stored number now always comes from the step itself, so `step_number` is optional. The execution, its step results (one multi-row insert) and the audit row are written in one transaction.
+
+New tests: `apps/server/tests/execution_validation.test.ts` (3 -- unknown verdict/status, non-text notes, a bad step verdict and a non-object step all named in one 400, missing ids, a lowercase verdict refused; an unknown step id, another case's step, a wrong step number and a duplicate step each get 400 and nothing is stored; a valid KNOWN_ISSUE result with steps sent out of order stores the right numbers, and status defaults to COMPLETED). 540/540.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
