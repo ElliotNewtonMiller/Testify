@@ -106,22 +106,6 @@ export class TestSuiteRepository {
       .execute();
   }
 
-  async findChildren(parentSuiteId: string | null, projectId?: string): Promise<TestSuite[]> {
-    let query = this.db.selectFrom('test_suites').selectAll();
-
-    if (parentSuiteId === null) {
-      query = query.where('parent_suite_id', 'is', null);
-    } else {
-      query = query.where('parent_suite_id', '=', parentSuiteId);
-    }
-
-    if (projectId) {
-      query = query.where('project_id', '=', projectId);
-    }
-
-    return await query.orderBy('position', 'asc').orderBy('name', 'asc').execute();
-  }
-
   async findDescendants(suiteId: string): Promise<TestSuite[]> {
     const target = await this.findById(suiteId);
     if (!target) return [];

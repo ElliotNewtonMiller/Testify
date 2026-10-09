@@ -185,54 +185,11 @@ export class ExecutionRepository {
     };
   }
 
-  async findByBuildAndPlanCase(
-    buildId: string,
-    testPlanCaseId: string
-  ): Promise<Execution[]> {
-    return await this.db
-      .selectFrom('executions')
-      .selectAll()
-      .where('build_id', '=', buildId)
-      .where('test_plan_case_id', '=', testPlanCaseId)
-      .orderBy('execution_timestamp', 'desc')
-      .execute();
-  }
-
-  async getLatestExecutionForPlanCase(
-    buildId: string,
-    testPlanCaseId: string
-  ): Promise<ExecutionWithSteps | undefined> {
-    const execution = await this.db
-      .selectFrom('executions')
-      .selectAll()
-      .where('build_id', '=', buildId)
-      .where('test_plan_case_id', '=', testPlanCaseId)
-      .orderBy('execution_timestamp', 'desc')
-      .executeTakeFirst();
-
-    if (!execution) return undefined;
-
-    const steps = await this.getExecutionSteps(execution.id);
-    return {
-      ...execution,
-      steps,
-    };
-  }
-
   async findByBuild(buildId: string): Promise<Execution[]> {
     return await this.db
       .selectFrom('executions')
       .selectAll()
       .where('build_id', '=', buildId)
-      .orderBy('execution_timestamp', 'desc')
-      .execute();
-  }
-
-  async findByTestPlanCase(testPlanCaseId: string): Promise<Execution[]> {
-    return await this.db
-      .selectFrom('executions')
-      .selectAll()
-      .where('test_plan_case_id', '=', testPlanCaseId)
       .orderBy('execution_timestamp', 'desc')
       .execute();
   }
@@ -472,75 +429,4 @@ export class ExecutionRepository {
     return rows.map((r) => ({ day: r.day, source: r.source, count: Number(r.count) }));
   }
 
-  async createBatch(inputs: CreateExecutionInput[]): Promise<ExecutionWithSteps[]> {
-    if (inputs.length === 0) return [];
-
-    const now = new Date().toISOString();
-    const executionRows: NewExecution[] = [];
-    const allStepRows: NewExecutionStep[] = [];
-    const executionIds: string[] = [];
-
-    for (const input of inputs) {
-      const id = input.id || uuidv7();
-      executionIds.push(id);
-      const snapshotStr =
-        typeof input.custom_fields_snapshot === 'object'
-          ? JSON.stringify(input.custom_fields_snapshot)
-          : input.custom_fields_snapshot || '{}';
-
-      const executionRow: NewExecution = {
-        id,
-        build_id: input.build_id,
-        test_plan_case_id: input.test_plan_case_id,
-        tester_id: input.tester_id,
-        status: input.status ?? 'COMPLETED',
-        verdict: input.verdict,
-        execution_duration_ms: input.execution_duration_ms ?? null,
-        notes: input.notes ?? null,
-        custom_fields_snapshot: snapshotStr,
-        failure_message: input.failure_message ?? null,
-        stack_trace: input.stack_trace ?? null,
-        environment: jsonOrNull(input.environment),
-        runner: jsonOrNull(input.runner),
-        source: input.source ?? null,
-        execution_timestamp: input.execution_timestamp ?? now,
-        created_at: now,
-        updated_at: now,
-      };
-
-      const stepRows: NewExecutionStep[] = (input.steps ?? []).map((step) => ({
-        id: step.id || uuidv7(),
-        execution_id: id,
-        test_step_id: step.test_step_id,
-        step_number: step.step_number,
-        verdict: step.verdict,
-        actual_result: step.actual_result ?? null,
-        created_at: now,
-      }));
-
-      executionRows.push(executionRow);
-      allStepRows.push(...stepRows);
-    }
-
-    await this.db.transaction().execute(async (trx) => {
-      const BATCH_SIZE = 500;
-      for (let i = 0; i < executionRows.length; i += BATCH_SIZE) {
-        const chunk = executionRows.slice(i, i + BATCH_SIZE);
-        await trx.insertInto('executions').values(chunk).execute();
-      }
-
-      for (let i = 0; i < allStepRows.length; i += BATCH_SIZE) {
-        const chunk = allStepRows.slice(i, i + BATCH_SIZE);
-        await trx.insertInto('execution_steps').values(chunk).execute();
-      }
-    });
-
-    const results: ExecutionWithSteps[] = [];
-    for (const id of executionIds) {
-      const exec = await this.findById(id);
-      if (exec) results.push(exec);
-    }
-
-    return results;
-  }
 }

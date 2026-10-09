@@ -1,7 +1,7 @@
 import type { Kysely, Selectable, Insertable, Updateable } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
 import crypto from 'node:crypto';
-import type { Database, UsersTable, UserRolesTable, UserProjectRolesTable } from '../types.js';
+import type { Database, UsersTable } from '../types.js';
 import { validatePasswordPolicy } from '@testify/core';
 import type { RoleName } from './role.repository.js';
 

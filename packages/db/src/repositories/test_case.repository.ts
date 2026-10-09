@@ -75,24 +75,6 @@ export class TestCaseRepository {
       .executeTakeFirst();
   }
 
-  async findByExternalId(projectId: string, externalId: string): Promise<TestCase | undefined> {
-    return await this.db
-      .selectFrom('test_cases')
-      .selectAll()
-      .where('project_id', '=', projectId)
-      .where('external_id', '=', externalId)
-      .executeTakeFirst();
-  }
-
-  async findBySuite(testSuiteId: string): Promise<TestCase[]> {
-    return await this.db
-      .selectFrom('test_cases')
-      .selectAll()
-      .where('test_suite_id', '=', testSuiteId)
-      .orderBy('external_id', 'asc')
-      .execute();
-  }
-
   async findByProject(projectId: string): Promise<TestCase[]> {
     return await this.db
       .selectFrom('test_cases')

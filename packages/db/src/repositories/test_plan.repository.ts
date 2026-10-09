@@ -173,24 +173,6 @@ export class TestPlanRepository {
   }
 
   /**
-   * Hard-deletes the active links of cases that have no results (by test_case_id). Cases with
-   * results can't be deleted (executions reference the link) -- use removeCases, which
-   * retires those instead.
-   */
-  async removeCasesBulk(testPlanId: string, testCaseIds: string[]): Promise<number> {
-    if (testCaseIds.length === 0) return 0;
-
-    const result = await this.db
-      .deleteFrom('test_plan_cases')
-      .where('test_plan_id', '=', testPlanId)
-      .where('test_case_id', 'in', testCaseIds)
-      .where('removed_at', 'is', null)
-      .executeTakeFirst();
-
-    return Number(result.numDeletedRows ?? 0n);
-  }
-
-  /**
    * Removes cases from a plan. A case with no results is simply unlinked. A case that has
    * results is **retired** instead: its link gets removed_at/removed_by and stays, so its
    * results keep showing in the runs that recorded them while it's gone from the plan and
@@ -294,26 +276,6 @@ export class TestPlanRepository {
       )
       .executeTakeFirst();
     return Number(result.numUpdatedRows ?? 0n);
-  }
-
-  async updateCaseVersionPin(
-    testPlanId: string,
-    testCaseId: string,
-    newTestCaseVersionId: string
-  ): Promise<TestPlanCase | undefined> {
-    const now = new Date().toISOString();
-    await this.db
-      .updateTable('test_plan_cases')
-      .set({
-        test_case_version_id: newTestCaseVersionId,
-        updated_at: now,
-      })
-      .where('test_plan_id', '=', testPlanId)
-      .where('test_case_id', '=', testCaseId)
-      .where('removed_at', 'is', null)
-      .execute();
-
-    return this.getPinnedCase(testPlanId, testCaseId);
   }
 
   async delete(id: string): Promise<boolean> {

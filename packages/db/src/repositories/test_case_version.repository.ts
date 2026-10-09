@@ -149,41 +149,12 @@ export class TestCaseVersionRepository {
     };
   }
 
-  async findByTestCase(testCaseId: string): Promise<TestCaseVersion[]> {
-    return await this.db
-      .selectFrom('test_case_versions')
-      .selectAll()
-      .where('test_case_id', '=', testCaseId)
-      .orderBy('version_number', 'asc')
-      .execute();
-  }
-
   async findLatestVersion(testCaseId: string): Promise<TestCaseVersionWithSteps | undefined> {
     const version = await this.db
       .selectFrom('test_case_versions')
       .selectAll()
       .where('test_case_id', '=', testCaseId)
       .orderBy('version_number', 'desc')
-      .executeTakeFirst();
-
-    if (!version) return undefined;
-
-    const steps = await this.getSteps(version.id);
-    return {
-      ...version,
-      steps,
-    };
-  }
-
-  async findVersionByNumber(
-    testCaseId: string,
-    versionNumber: number
-  ): Promise<TestCaseVersionWithSteps | undefined> {
-    const version = await this.db
-      .selectFrom('test_case_versions')
-      .selectAll()
-      .where('test_case_id', '=', testCaseId)
-      .where('version_number', '=', versionNumber)
       .executeTakeFirst();
 
     if (!version) return undefined;

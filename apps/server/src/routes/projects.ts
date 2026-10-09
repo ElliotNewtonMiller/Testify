@@ -43,7 +43,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     return { projects };
   });
 
-  // ---- Projects: real create/edit/delete (the UI's old "+ New Project" was client-only) ----
+  // ---- Projects: create/edit/delete ----
 
   app.post(
     '/api/v1/projects',

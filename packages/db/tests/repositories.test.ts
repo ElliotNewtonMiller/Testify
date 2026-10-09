@@ -120,11 +120,7 @@ describe('Repositories', () => {
     });
     expect(grandchild1.path).toBe(`/${root1.id}/${child1.id}/${grandchild1.id}`);
 
-    // Test findChildren & findDescendants
-    const childrenOfRoot1 = await suiteRepo.findChildren(root1.id);
-    expect(childrenOfRoot1).toHaveLength(1);
-    expect(childrenOfRoot1[0].name).toBe('Auth Endpoints');
-
+    // Test findDescendants
     const descendantsOfRoot1 = await suiteRepo.findDescendants(root1.id);
     expect(descendantsOfRoot1).toHaveLength(2);
     expect(descendantsOfRoot1.map((s) => s.name)).toEqual(['Auth Endpoints', 'OAuth2 Tokens']);
@@ -266,41 +262,29 @@ describe('Repositories', () => {
     expect(exec.verdict).toBe('PASSED');
     expect(exec.steps).toHaveLength(1);
 
-    const latestExec = await executionRepo.getLatestExecutionForPlanCase(build.id, planCase.id);
-    expect(latestExec?.id).toBe(exec.id);
-
-    // Record Batch Executions (CI/CD ingestion)
-    const batchExecs = await executionRepo.createBatch([
-      {
+    // Two more results for the same case (e.g. CI retries), without step results.
+    const retries = [];
+    for (const [verdict, ms] of [['PASSED', 120], ['FAILED', 300]] as const) {
+      retries.push(await executionRepo.create({
         build_id: build.id,
         test_plan_case_id: planCase.id,
         tester_id: 'ci_bot',
-        verdict: 'PASSED',
-        execution_duration_ms: 120,
-      },
-      {
-        build_id: build.id,
-        test_plan_case_id: planCase.id,
-        tester_id: 'ci_bot',
-        verdict: 'FAILED',
-        execution_duration_ms: 300,
-        notes: 'Retry failed',
-      },
-    ]);
-
-    expect(batchExecs).toHaveLength(2);
+        verdict,
+        execution_duration_ms: ms,
+      }));
+    }
 
     const allExecsForBuild = await executionRepo.findByBuild(build.id);
-    expect(allExecsForBuild).toHaveLength(3); // 1 manual + 2 batch
+    expect(allExecsForBuild).toHaveLength(3);
 
     // getExecutionStepsForExecutions: batched sibling of getExecutionSteps, built for
     // export -- one query for every execution's steps instead of one call per execution.
     const stepsMap = await executionRepo.getExecutionStepsForExecutions(allExecsForBuild.map((e) => e.id));
     expect(stepsMap.get(exec.id)).toEqual(await executionRepo.getExecutionSteps(exec.id));
     expect(stepsMap.get(exec.id)).toHaveLength(1);
-    // The 2 batch executions had no step_results -- no map entry, matching the same
-    // "group what exists" convention as the other new batched methods.
-    for (const be of batchExecs) {
+    // The 2 retries had no step results -- no map entry, matching the same
+    // "group what exists" convention as the other batched methods.
+    for (const be of retries) {
       expect(stepsMap.has(be.id)).toBe(false);
     }
     expect(await executionRepo.getExecutionStepsForExecutions([])).toEqual(new Map());
@@ -362,7 +346,7 @@ describe('Repositories', () => {
     expect(await caseRepo.findBySuiteIds([])).toEqual([]);
   });
 
-  it('TestPlanRepository.addCasesBulk / removeCasesBulk', async () => {
+  it('TestPlanRepository.addCasesBulk / removeCases', async () => {
     const project = await projectRepo.create({ name: 'Cascade Proj', prefix: 'CASC' });
     const suite = await suiteRepo.create({ project_id: project.id, name: 'Cascade Suite' });
     const plan = await planRepo.create({ project_id: project.id, name: 'Cascade Plan' });
@@ -411,14 +395,17 @@ describe('Repositories', () => {
     ]);
     expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(4);
 
-    // Bulk remove 2 of the 4
-    const removedCount = await planRepo.removeCasesBulk(plan.id, [cases[0].case.id, cases[1].case.id]);
-    expect(removedCount).toBe(2);
+    // Remove 2 of the 4 (no results, so they're unlinked rather than retired)
+    expect(await planRepo.removeCases(plan.id, [cases[0].case.id, cases[1].case.id], 'user_01')).toEqual({
+      blocked: false,
+      removed: 2,
+      retired: 0,
+    });
     expect(await planRepo.getPinnedCases(plan.id)).toHaveLength(2);
 
     // Empty-array calls are no-ops
     expect(await planRepo.addCasesBulk(plan.id, [])).toEqual([]);
-    expect(await planRepo.removeCasesBulk(plan.id, [])).toBe(0);
+    expect(await planRepo.removeCases(plan.id, [], 'user_01')).toEqual({ blocked: false, removed: 0, retired: 0 });
   });
 
   it('AuditLogRepository append-only logging & query', async () => {

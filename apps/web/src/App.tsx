@@ -525,8 +525,7 @@ export default function App() {
   useEffect(() => setRemoveFromPlanPrompt(null), [selectedPlanId]);
   const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
-  // No fake seed data here (unlike the historical prj_01/pln_01 placeholders elsewhere,
-  // which get overwritten quickly by the real bootstrap fetch) -- a Run can never exist
+  // Starts empty, like the project and plan lists -- a Run can never exist
   // without a real Test Plan (builds.test_plan_id is NOT NULL), so starting empty and
   // relying on refreshExecutionWorkspace's real per-plan fetch (or the clearing effect
   // below, when there's no plan at all) means the dropdown never shows a run that isn't
@@ -569,10 +568,9 @@ export default function App() {
   // textarea's onBlur handler, avoiding a duplicate submission from that same keypress.
   const notesDirtyRef = useRef(false);
 
-  // Guard against out-of-order fetch responses: selectedProjectId/selectedPlanId go through
-  // a fake-seed -> real-id bootstrap sequence (see loadProjects/loadPlans), which can fire
-  // several requests in quick succession. Without this, a slower, now-stale response (e.g.
-  // for the fake seed id) can resolve after a newer one and silently overwrite fresh data.
+  // Guard against out-of-order fetch responses: switching project or plan (and the initial
+  // load picking them) can fire several requests in quick succession. Without this, a
+  // slower, now-stale response can resolve after a newer one and silently overwrite fresh data.
   const specTreeRequestSeq = useRef(0);
   // Shared by BOTH refreshExecutionWorkspace and refreshRunsList -- they're two different
   // ways of populating the same runsList/selectedRunId state (the heavier one, used in
@@ -1181,12 +1179,9 @@ export default function App() {
   }, []);
 
   const loadPlans = useCallback(async (projectId: string) => {
-    // selectedProjectId itself goes through the same fake-seed -> real-id bootstrap sequence
-    // documented above (specTreeRequestSeq), so this effect can fire loadPlans twice in quick
-    // succession (once for the fake seed id, once for the real one) with no guarantee the
-    // fake id's fetch resolves first -- without a sequence guard, a slower-resolving stale
-    // call (even one that legitimately 404s/succeeds for its own now-abandoned project id)
-    // can overwrite the real project's freshly-loaded plansList with stale or empty data.
+    // Switching projects quickly can fire loadPlans several times with no guarantee the
+    // responses arrive in order -- without a sequence guard, a slower stale call (for a
+    // project no longer selected) can overwrite the current project's plansList.
     const seq = ++plansRequestSeq.current;
     try {
       const res = await fetch(`/api/v1/projects/${projectId}/plans`, {
@@ -1216,12 +1211,8 @@ export default function App() {
               : (mapped.find((p) => p.status !== "ARCHIVED") ?? mapped[0]).id,
         );
       } else {
-        // A non-ok response (e.g. a stale/fake project id from PROJECT's still-mock CREATE
-        // path -- see the "Notable gaps" entry in CLAUDE.md) previously left plansList/
-        // selectedPlanId (and via those, runsList/selectedRunId) untouched, so switching to
-        // a project whose plans-fetch fails kept showing the PREVIOUS project's plan/run --
-        // a live-reproduced instance of "test runs existing independently of test plans".
-        // Clearing here is more correct than showing data that isn't this project's.
+        // A failed plans fetch clears the plan (and, through it, the run) rather than leaving
+        // the previous project's plan/run on screen under this project.
         setPlansList([]);
         setSelectedPlanId("");
       }
@@ -1232,8 +1223,7 @@ export default function App() {
     }
   }, []);
 
-  // Execution-mode workspace: parameterized by the selected plan (and optionally build)
-  // instead of hardcoded to the seed plan/build like the old /api/v1/workspace endpoint.
+  // Execution-mode workspace: the selected plan's cases, with results from the selected run.
   const refreshExecutionWorkspace = useCallback(async () => {
     // Bump the sequence guard BEFORE the early-return, not after -- the effect below fires
     // on selectedProjectId changing even when selectedPlanId hasn't caught up yet (loadPlans

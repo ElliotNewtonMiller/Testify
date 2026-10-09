@@ -224,10 +224,9 @@ export async function registerTestPlanCaseRoutes(
     return { test_case: testCase, version: latestVersion };
   });
 
-  // GET /api/v1/test-plans/:planId/cases?build_id=... -- Execution-mode listing,
-  // parameterized by plan instead of hardcoded to the seed plan (unlike GET /api/v1/workspace).
-  // When build_id is given (or defaulted to the plan's most recent build), each case is
-  // annotated with its latest execution verdict for that build, same as the old endpoint did.
+  // GET /api/v1/test-plans/:planId/cases?build_id=... -- Execution mode's case queue for a
+  // plan. With build_id (or defaulting to the plan's most recent build), each case carries
+  // its latest result in that run.
   app.get('/api/v1/test-plans/:planId/cases', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { planId } = request.params as { planId: string };

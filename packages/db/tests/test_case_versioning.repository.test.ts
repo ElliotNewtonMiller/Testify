@@ -75,7 +75,7 @@ describe('Suite/case CRUD: external-id generation, draft versioning, and force-d
       const project = await projectRepo.create({ name: 'P', prefix: 'DRF' });
       const suite = await suiteRepo.create({ project_id: project.id, name: 'S' });
       const testCase = await caseRepo.create({ project_id: project.id, test_suite_id: suite.id, external_id: 'DRF-1', title: 'Case' });
-      await versionRepo.create({
+      const v1 = await versionRepo.create({
         test_case_id: testCase.id,
         version_number: 1,
         status: 'APPROVED',
@@ -94,7 +94,7 @@ describe('Suite/case CRUD: external-id generation, draft versioning, and force-d
       expect(draft.author_id).toBe('author_2');
       expect(draft.steps).toHaveLength(1);
       expect(draft.steps[0].action).toBe('Do X');
-      expect(draft.steps[0].id).not.toBe((await versionRepo.findVersionByNumber(testCase.id, 1))!.steps[0].id);
+      expect(draft.steps[0].id).not.toBe(v1.steps[0].id);
     });
 
     it('throws NO_EXISTING_VERSION for a case with zero versions', async () => {
