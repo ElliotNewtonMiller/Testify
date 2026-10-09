@@ -1504,6 +1504,10 @@ New tests: `apps/server/tests/audit_origin.test.ts` (2):
 
 Noticed, not changed: creating, editing and deleting test plans and runs writes no audit entry at all (projects, cases, plan membership, results and admin changes do).
 
+## Fixed: the Security Audit Log cut resource ids to 8 characters (2026-10-09)
+
+Per direct request. The Resource ID column showed `resource_id.substring(0, 8)...`, so the id couldn't be read or copied, and there's no way to widen columns. `AdminPanelModal.tsx`'s audit table now shows the full id on one line, selectable as a whole (`userSelect: all`), with its `resource_type` in small text above it. The Diff Payload column wraps (`wordBreak: break-all`, min 160px) instead of squeezing the other columns. The table fits the panel (774px in 788px) with no sideways scroll.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

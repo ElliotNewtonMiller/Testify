@@ -3170,9 +3170,12 @@ export function AdminPanelModal({
                         padding: "6px",
                         fontFamily: "monospace",
                         color: "#cbd5e1",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      {log.resource_id.substring(0, 8)}...
+                      {/* The whole id (selectable), with what kind of thing it is above it. */}
+                      <div style={{ fontSize: "10px", color: "#64748b", fontFamily: "inherit" }}>{log.resource_type}</div>
+                      <span style={{ userSelect: "all" }}>{log.resource_id}</span>
                     </td>
                     <td
                       style={{
@@ -3180,6 +3183,9 @@ export function AdminPanelModal({
                         fontFamily: "monospace",
                         color: "#94a3b8",
                         fontSize: "10px",
+                        // Long payloads wrap here rather than squeezing the other columns.
+                        wordBreak: "break-all",
+                        minWidth: "160px",
                       }}
                     >
                       {log.diff}
