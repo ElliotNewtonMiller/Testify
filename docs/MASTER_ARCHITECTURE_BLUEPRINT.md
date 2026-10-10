@@ -282,14 +282,11 @@ CREATE TABLE test_plan_cases (
     test_plan_id VARCHAR(36) NOT NULL REFERENCES test_plans(id) ON DELETE RESTRICT,
     test_case_id VARCHAR(36) NOT NULL REFERENCES test_cases(id) ON DELETE RESTRICT,
     test_case_version_id VARCHAR(36) NOT NULL REFERENCES test_case_versions(id) ON DELETE RESTRICT,
-    assigned_user_id VARCHAR(36),
     position INT NOT NULL DEFAULT 0,
-    custom_fields_snapshot TEXT DEFAULT '{}',
     created_at VARCHAR(30) NOT NULL,
     updated_at VARCHAR(30) NOT NULL,
     CONSTRAINT uq_plan_case UNIQUE (test_plan_id, test_case_id)
 );
-CREATE INDEX idx_plan_cases_assigned ON test_plan_cases(test_plan_id, assigned_user_id);
 
 -- 9. Executions Table (Immutable Historic Runs)
 CREATE TABLE executions (
@@ -301,7 +298,6 @@ CREATE TABLE executions (
     verdict VARCHAR(50) NOT NULL CHECK (verdict IN ('PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE')),
     execution_duration_ms INT DEFAULT 0,
     notes TEXT,
-    custom_fields_snapshot TEXT DEFAULT '{}',
     execution_timestamp VARCHAR(30) NOT NULL,
     created_at VARCHAR(30) NOT NULL,
     updated_at VARCHAR(30) NOT NULL

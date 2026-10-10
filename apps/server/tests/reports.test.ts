@@ -395,7 +395,7 @@ describe('Reports: catalog-driven report API', () => {
         .where('tpc.test_case_id', '=', case101.id)
         .where('e.verdict', '=', 'FAILED')
         .executeTakeFirstOrThrow();
-      expect(row).toMatchObject({ failure_message: 'boom', stack_trace: 'at line 1', source: 'API', custom_fields_snapshot: '{}' });
+      expect(row).toMatchObject({ failure_message: 'boom', stack_trace: 'at line 1', source: 'API' });
       expect(JSON.parse(row.environment)).toEqual({ environment: 'staging' });
       expect(JSON.parse(row.runner)).toEqual({ name: 'GitHub Actions', run_id: '42', commit_sha: 'abc123def456789' });
 

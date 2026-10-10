@@ -284,7 +284,6 @@ export async function createServer(connectionString?: string, options: { db?: Ky
           // "Slowest" table ranks.
           execution_duration_ms: null,
           notes: body.notes,
-          custom_fields_snapshot: '{}',
           source: 'UI',
           execution_timestamp: now,
           created_at: now,

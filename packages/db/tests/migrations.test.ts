@@ -75,4 +75,21 @@ describe('migrateToLatest', () => {
     expect(await db.selectFrom('permissions').select('permission_key').where('id', '=', 'perm-1').executeTakeFirst()).toEqual({ permission_key: 'RUN_MANAGE' });
     expect((await db.selectFrom('api_tokens').select('capabilities').executeTakeFirst())?.capabilities).toBe('["SPEC_VIEW","RUN_MANAGE"]');
   });
+
+  it('006 drops the unused snapshot and assignee columns, and rolling back restores them', async () => {
+    const columns = async (table: string) => {
+      const res = await sql<{ column_name: string }>`
+        SELECT column_name FROM information_schema.columns WHERE table_name = ${table}`.execute(db);
+      return res.rows.map((r) => r.column_name);
+    };
+    await migrateToLatest(db);
+    expect(await columns('test_plan_cases')).not.toContain('assigned_user_id');
+    expect(await columns('test_plan_cases')).not.toContain('custom_fields_snapshot');
+    expect(await columns('executions')).not.toContain('custom_fields_snapshot');
+
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('005_rename_build_manage')).error).toBeUndefined();
+    expect(await columns('test_plan_cases')).toEqual(expect.arrayContaining(['assigned_user_id', 'custom_fields_snapshot']));
+    expect(await columns('executions')).toContain('custom_fields_snapshot');
+  }, 30_000);
 });

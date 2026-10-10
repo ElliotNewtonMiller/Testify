@@ -4,6 +4,7 @@ import * as m002 from './002_password_change_required.js';
 import * as m003 from './003_sessions.js';
 import * as m004 from './004_login_lockout.js';
 import * as m005 from './005_rename_build_manage.js';
+import * as m006 from './006_drop_unused_columns.js';
 
 /**
  * Every schema migration, in the order they run. The keys are permanent names, recorded in
@@ -19,6 +20,7 @@ export const MIGRATIONS: Record<string, Migration> = {
   '003_sessions': m003,
   '004_login_lockout': m004,
   '005_rename_build_manage': m005,
+  '006_drop_unused_columns': m006,
 };
 
 const MIGRATION_TABLE = 'kysely_migration';

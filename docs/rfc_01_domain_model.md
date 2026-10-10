@@ -115,7 +115,7 @@ Unlike rigid snapshot systems that clone entire suite trees for every test plan,
 1. **Explicit Version Pinning:** When a `TestCase` is attached to a `TestPlan`, a `test_plan_cases` mapping row is generated, locking `(test_plan_id, test_case_id, test_case_version_id)`. Only versions in the `Approved` state can be linked to active test plans (unless the project-level setting `allow_draft_plan_linking` is explicitly enabled).
 2. **Specification Isolation:** If an author creates a new revision of an approved test case, the system increments `version_number` and sets the state to `Draft`. The existing `test_plan_cases` mapping remains pinned to the previously approved `test_case_version_id`.
 3. **Explicit Version Upgrade:** A Test Lead can selectively trigger a version upgrade for a test plan case. Upgrades overwrite `test_case_version_id` in `test_plan_cases` for *unexecuted* runs. Completed executions retain their original `test_case_version_id` reference forever.
-4. **Custom Field Freezing:** At the moment of execution creation (`executions` row), the current definitions and values of custom fields attached to the `TestCaseVersion` and `TestPlanCase` are serialized into `custom_fields_snapshot` (JSON). Future edits to custom field definitions do not distort historical execution records.
+4. **Custom fields aren't frozen into results:** custom field values belong to the test case itself (they aren't versioned), and results don't record them. A result shows the case's current values. (A `custom_fields_snapshot` column was planned for this but never used, and was dropped in migration `006_drop_unused_columns`.)
 
 ### 2.4 Operational Restrictions on Closed Entities
 
@@ -282,14 +282,11 @@ CREATE TABLE test_plan_cases (
     test_plan_id VARCHAR(36) NOT NULL REFERENCES test_plans(id) ON DELETE RESTRICT,
     test_case_id VARCHAR(36) NOT NULL REFERENCES test_cases(id) ON DELETE RESTRICT,
     test_case_version_id VARCHAR(36) NOT NULL REFERENCES test_case_versions(id) ON DELETE RESTRICT,
-    assigned_user_id VARCHAR(36),
     position INT NOT NULL DEFAULT 0,
-    custom_fields_snapshot TEXT DEFAULT '{}', -- JSON Snapshot at assignment
     created_at VARCHAR(30) NOT NULL,
     updated_at VARCHAR(30) NOT NULL,
     CONSTRAINT uq_plan_case UNIQUE (test_plan_id, test_case_id)
 );
-CREATE INDEX idx_plan_cases_assigned ON test_plan_cases(test_plan_id, assigned_user_id);
 
 -- Executions Table (Immutable Historical Runs)
 CREATE TABLE executions (
@@ -301,7 +298,6 @@ CREATE TABLE executions (
     verdict VARCHAR(50) NOT NULL CHECK (verdict IN ('PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE')),
     execution_duration_ms INT DEFAULT 0,
     notes TEXT,
-    custom_fields_snapshot TEXT DEFAULT '{}', -- Frozen custom fields
     execution_timestamp VARCHAR(30) NOT NULL,
     created_at VARCHAR(30) NOT NULL,
     updated_at VARCHAR(30) NOT NULL
@@ -483,7 +479,7 @@ Three storage architectures were evaluated for dynamic administrator-defined att
 3. **Chosen Hybrid Architecture:**
    - Definitions (`custom_field_definitions`) and Dropdown Options (`custom_field_options`) are strongly typed.
    - Active entity values (`custom_field_values`) are stored in a typed relational table supporting indexed scalar queries (`string_value`, `number_value`, `boolean_value`, `date_value`).
-   - At the time of execution, custom field values are **frozen into JSON snapshots** (`executions.custom_fields_snapshot`) for fast, immutable historical retrieval.
+   - Results don't record custom field values (see §2.3, point 4).
 
 ### 5.2 Supported Types & Validation Rules
 

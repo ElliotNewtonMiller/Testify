@@ -157,9 +157,7 @@ describe('Migration & CRUD Integrity', () => {
         test_plan_id: planId,
         test_case_id: caseId,
         test_case_version_id: versionId,
-        assigned_user_id: 'user_tester_01',
         position: 1,
-        custom_fields_snapshot: '{}',
         created_at: now,
         updated_at: now,
       })
@@ -177,7 +175,6 @@ describe('Migration & CRUD Integrity', () => {
         verdict: 'PASSED',
         execution_duration_ms: 1250,
         notes: 'Execution verified successfully',
-        custom_fields_snapshot: '{}',
         execution_timestamp: now,
         created_at: now,
         updated_at: now,

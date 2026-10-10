@@ -29,9 +29,7 @@ export interface AddCaseToPlanInput {
   test_plan_id: string;
   test_case_id: string;
   test_case_version_id: string;
-  assigned_user_id?: string | null;
   position?: number;
-  custom_fields_snapshot?: Record<string, any> | string;
 }
 
 export interface BulkAddCaseEntry {
@@ -118,19 +116,12 @@ export class TestPlanRepository {
   async addCase(input: AddCaseToPlanInput): Promise<TestPlanCase> {
     const now = new Date().toISOString();
     const id = input.id || uuidv7();
-    const snapshotStr =
-      typeof input.custom_fields_snapshot === 'object'
-        ? JSON.stringify(input.custom_fields_snapshot)
-        : input.custom_fields_snapshot || '{}';
-
     const planCase: NewTestPlanCase = {
       id,
       test_plan_id: input.test_plan_id,
       test_case_id: input.test_case_id,
       test_case_version_id: input.test_case_version_id,
-      assigned_user_id: input.assigned_user_id ?? null,
       position: input.position ?? 0,
-      custom_fields_snapshot: snapshotStr,
       created_at: now,
       updated_at: now,
     };
@@ -157,9 +148,7 @@ export class TestPlanRepository {
         test_plan_id: testPlanId,
         test_case_id: e.test_case_id,
         test_case_version_id: e.test_case_version_id,
-        assigned_user_id: null,
         position: e.position ?? 0,
-        custom_fields_snapshot: '{}',
         created_at: now,
         updated_at: now,
       }));

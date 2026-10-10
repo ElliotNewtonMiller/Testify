@@ -331,9 +331,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
                   test_plan_id: planId,
                   test_case_id: pendingLink.test_case_id,
                   test_case_version_id: pendingLink.test_case_version_id,
-                  assigned_user_id: null,
                   position: existingPlanCases.length + 1,
-                  custom_fields_snapshot: '{}',
                   created_at: now,
                   updated_at: now,
                 })

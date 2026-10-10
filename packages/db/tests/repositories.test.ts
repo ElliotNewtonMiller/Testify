@@ -236,8 +236,6 @@ describe('Repositories', () => {
       test_plan_id: plan.id,
       test_case_id: testCase.id,
       test_case_version_id: version.id,
-      assigned_user_id: 'tester_01',
-      custom_fields_snapshot: { env: 'staging' },
     });
     expect(planCase.test_case_version_id).toBe(version.id);
 

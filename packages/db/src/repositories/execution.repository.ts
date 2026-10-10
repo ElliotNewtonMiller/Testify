@@ -28,7 +28,6 @@ export interface CreateExecutionInput {
   verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE' | string;
   execution_duration_ms?: number;
   notes?: string | null;
-  custom_fields_snapshot?: Record<string, any> | string;
   failure_message?: string | null;
   stack_trace?: string | null;
   environment?: Record<string, unknown> | null;
@@ -124,11 +123,6 @@ export class ExecutionRepository {
   async create(input: CreateExecutionInput): Promise<ExecutionWithSteps> {
     const now = new Date().toISOString();
     const id = input.id || uuidv7();
-    const snapshotStr =
-      typeof input.custom_fields_snapshot === 'object'
-        ? JSON.stringify(input.custom_fields_snapshot)
-        : input.custom_fields_snapshot || '{}';
-
     const executionRow: NewExecution = {
       id,
       build_id: input.build_id,
@@ -138,7 +132,6 @@ export class ExecutionRepository {
       verdict: input.verdict,
       execution_duration_ms: input.execution_duration_ms ?? null,
       notes: input.notes ?? null,
-      custom_fields_snapshot: snapshotStr,
       failure_message: input.failure_message ?? null,
       stack_trace: input.stack_trace ?? null,
       environment: jsonOrNull(input.environment),

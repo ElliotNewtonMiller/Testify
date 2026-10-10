@@ -86,9 +86,7 @@ export interface TestPlanCasesTable {
   test_plan_id: string;
   test_case_id: string;
   test_case_version_id: string;
-  assigned_user_id: string | null;
   position: Generated<number>;
-  custom_fields_snapshot: Generated<string>;
   created_at: string;
   updated_at: string;
   /** Set when a case that already had results was removed from the plan (the link is
@@ -106,7 +104,6 @@ export interface ExecutionsTable {
   verdict: string; // 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE'
   execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
-  custom_fields_snapshot: Generated<string>;
   failure_message: string | null;
   stack_trace: string | null;
   environment: string | null; // JSON object of environment tags

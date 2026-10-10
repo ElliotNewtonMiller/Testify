@@ -620,8 +620,8 @@ apps/
 ##### Custom Field Dynamic Renderer:
 - Polymorphic form builder in Pane 3 and execution forms rendering inputs based on `field_type` (`TEXT`, `NUMBER`, `CHECKBOX`, `DROPDOWN`, `MULTI_SELECT`, `DATE`).
 
-##### Snapshot Invariant:
-- When an execution is saved, the current state of custom fields is frozen in `executions.custom_fields_snapshot` JSON text column. Future edits to `custom_field_definitions` do not modify historical execution snapshots.
+##### Custom fields and results:
+- Results don't record custom field values; a result shows the case's current values. (The planned `executions.custom_fields_snapshot` column was never used and was dropped in migration `006_drop_unused_columns`.)
 
 #### 3.4.6 Concrete Verification Strategy & Test Commands
 1. **RBAC Precedence Unit Test**:
@@ -635,11 +635,6 @@ apps/
    npm run test:integration:rbac-middleware --workspace=apps/server
    ```
    *Assertion*: Accessing `POST /test-suites` without `SPEC_CREATE` key returns `HTTP 403 Forbidden` with detailed error response.
-3. **Custom Field Snapshot Verification**:
-   ```bash
-   npm run test:integration:custom-fields --workspace=apps/server
-   ```
-   *Assertion*: Modifying custom field options after recording execution leaves `execution.custom_fields_snapshot` unaltered.
 
 #### 3.4.7 Prerequisite Dependencies & Parallel Execution Directives
 - **Prerequisite**: Slice 0 (DB Schema) & Slice 2 (Execution Loop).

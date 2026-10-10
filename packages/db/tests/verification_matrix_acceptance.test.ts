@@ -180,7 +180,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
   // -------------------------------------------------------------------------
   // Req 5: Version Freezing & Historic Execution Immutability
   // -------------------------------------------------------------------------
-  it('[Req 5] Version Freezing: Editing a test case (Version 2) preserves historical Version 1 execution runs & custom fields', async () => {
+  it('[Req 5] Version Freezing: Editing a test case (Version 2) preserves historical Version 1 execution runs', async () => {
     const project = await projectRepo.create({ name: 'Freeze Test Project', prefix: 'FRZ' });
     const suite = await suiteRepo.create({ project_id: project.id, name: 'Core Suite' });
     const testCase = await caseRepo.create({
@@ -205,7 +205,6 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
       test_plan_id: plan.id,
       test_case_id: testCase.id,
       test_case_version_id: v1.id,
-      custom_fields_snapshot: { env: 'Staging-V1' },
     });
 
     // Historical execution recorded under Version 1
@@ -216,7 +215,6 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
       status: 'COMPLETED',
       verdict: 'PASSED',
       notes: 'Ran against V1 spec',
-      custom_fields_snapshot: { env: 'Staging-V1', browser: 'Firefox 120' },
     });
 
     // Version 2 created (New edits)
@@ -230,13 +228,11 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
 
     await caseRepo.update(testCase.id, { title: 'Updated Title V2' });
 
-    // Verify historical execution remains locked to Version 1 and preserves V1 custom fields
+    // Verify the historical execution is kept, and its plan link stays pinned to Version 1
     const historicalRun = await execRepo.findById(execV1.id);
     expect(historicalRun?.verdict).toBe('PASSED');
-    expect(JSON.parse(historicalRun?.custom_fields_snapshot as string)).toEqual({
-      env: 'Staging-V1',
-      browser: 'Firefox 120',
-    });
+    expect(historicalRun?.test_plan_case_id).toBe(planCase.id);
+    expect((await planRepo.getPinnedCase(plan.id, testCase.id))?.test_case_version_id).toBe(v1.id);
 
     const fetchedV1 = await versionRepo.findById(v1.id);
     expect(fetchedV1?.summary).toBe('Version 1 Summary');

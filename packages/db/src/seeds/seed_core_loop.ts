@@ -183,9 +183,7 @@ export async function seedCoreLoopData(db: Kysely<Database>): Promise<{
         test_plan_id: planId,
         test_case_id: caseUuid,
         test_case_version_id: versionUuid,
-        assigned_user_id: 'usr_tester_01',
         position: caseIndex,
-        custom_fields_snapshot: JSON.stringify({ environment: 'STAGING' }),
         created_at: now,
         updated_at: now,
       })
