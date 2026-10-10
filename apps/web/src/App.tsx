@@ -247,6 +247,7 @@ export default function App() {
     specSelectedCaseIdRef,
     specCasesForSuite,
     specActiveSuite,
+    handleSpecCaseClick,
   } = specSelection;
 
   // Spec mode: editing the selected case (hooks/useCaseEditor.ts).
@@ -298,8 +299,10 @@ export default function App() {
         : selectedVisiblePos,
     onSelectIndex: (idx) => {
       if (workspaceMode === "SPECIFICATION") {
+        // Same as a plain click, so the list highlights the case shown in the details pane
+        // (setting only specSelectedCaseId left the highlight on the previously clicked row).
         const target = specCasesForSuite[idx];
-        if (target) setSpecSelectedCaseId(target.id);
+        if (target) handleSpecCaseClick(target.id);
       } else {
         const target = queueCaseIndices[idx];
         if (target !== undefined) setSelectedIndex(target);

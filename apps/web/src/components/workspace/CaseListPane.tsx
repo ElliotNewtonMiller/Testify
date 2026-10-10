@@ -294,6 +294,7 @@ export function CaseListPane({
           canManagePlan={hasPlanManagePermission}
           onToggleInclusion={handleToggleCaseInclusion}
           pendingCaseId={pendingToggleId}
+          scrollToCaseId={specSelectedCaseId}
         />
       ) : (
         <TestCaseQueueGrid

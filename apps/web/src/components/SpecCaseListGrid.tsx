@@ -29,6 +29,8 @@ export interface SpecCaseListGridProps {
   onToggleInclusion: (testCaseId: string, include: boolean) => void;
   /** test_case_id of a toggle currently in flight, shown with a subdued/disabled state. */
   pendingCaseId?: string | null;
+  /** The case to keep scrolled into view (the one shown in the details pane). */
+  scrollToCaseId?: string | null;
   containerHeight?: number;
 }
 
@@ -61,6 +63,7 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
   canManagePlan,
   onToggleInclusion,
   pendingCaseId = null,
+  scrollToCaseId = null,
   containerHeight,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -89,6 +92,19 @@ export const SpecCaseListGrid: React.FC<SpecCaseListGridProps> = ({
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   };
+
+  // Keep the shown case visible when it changes (e.g. moving with j/k), like TestCaseQueueGrid.
+  const scrollToIndex = scrollToCaseId ? filteredCases.findIndex((c) => c.id === scrollToCaseId) : -1;
+  useEffect(() => {
+    if (!containerRef.current || scrollToIndex < 0) return;
+    const targetScrollTop = scrollToIndex * ROW_HEIGHT;
+    const currentScrollTop = containerRef.current.scrollTop;
+    if (targetScrollTop < currentScrollTop) {
+      containerRef.current.scrollTop = targetScrollTop;
+    } else if (targetScrollTop + ROW_HEIGHT > currentScrollTop + computedHeight) {
+      containerRef.current.scrollTop = targetScrollTop + ROW_HEIGHT - computedHeight;
+    }
+  }, [scrollToIndex, computedHeight]);
 
   const totalCount = filteredCases.length;
   const totalHeight = totalCount * ROW_HEIGHT;
