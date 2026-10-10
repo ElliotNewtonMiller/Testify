@@ -18,8 +18,6 @@ export function ExecutionPane({ execution, executionWorkspace }: ExecutionPanePr
   const { workspace, execWorkspaceStatus, refreshExecutionWorkspace } = executionWorkspace;
   const {
     activeCase,
-    showStepDrawer,
-    setShowStepDrawer,
     execCaseCustomFieldValues,
     activeExecCaseId,
     notesInputRef,
@@ -117,36 +115,14 @@ export function ExecutionPane({ execution, executionWorkspace }: ExecutionPanePr
 
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
               marginBottom: "8px",
             }}
           >
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "#6b7280",
-                textTransform: "uppercase",
-              }}
-            >
-              Ordered Step Verification Table (Hotkey 'e' toggles drawer)
-            </span>
-            <button
-              onClick={() => setShowStepDrawer((prev) => !prev)}
-              style={{
-                backgroundColor: "#1f2937",
-                color: "#9ca3af",
-                border: "none",
-                padding: "2px 8px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                cursor: "pointer",
-              }}
-            >
-              {showStepDrawer ? "Hide Drawer" : "Show Drawer (e)"}
-            </button>
+            Ordered Step Verification Table
           </div>
 
           <table
@@ -201,34 +177,6 @@ export function ExecutionPane({ execution, executionWorkspace }: ExecutionPanePr
                   disabledTitle="Custom fields are read-only during execution -- edit them in Specification mode"
                 />
               ))}
-            </div>
-          )}
-
-          {/* DETAILED EXECUTION STEP DRAWER */}
-          {showStepDrawer && (
-            <div
-              style={{
-                marginTop: "16px",
-                padding: "12px",
-                backgroundColor: "#1e293b",
-                borderRadius: "6px",
-                border: "1px solid #3b82f6",
-                fontSize: "12px",
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 700,
-                  color: "#60a5fa",
-                  marginBottom: "6px",
-                }}
-              >
-                Step Detail Execution Drawer (e)
-              </div>
-              <div style={{ color: "#d1d5db" }}>
-                Inspect individual step-level actual logs, binary
-                artifacts, and defect attachments here.
-              </div>
             </div>
           )}
 

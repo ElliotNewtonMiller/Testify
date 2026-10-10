@@ -159,7 +159,6 @@ All shortcuts operate out-of-the-box without user key-mapping configuration in v
 | f       | Mark active case as FAILED        | Pane 3 Execution   | Logs FAIL; auto-focuses notes input. |
 | b       | Mark active case as BLOCKED       | Pane 3 Execution   | Logs BLOCK; opens defect ID prompt.  |
 | s       | Mark active case as SKIPPED       | Pane 3 Execution   | Logs SKIP; advances to next case.    |
-| e       | Toggle detailed execution drawer  | Pane 3 Execution   | Opens step-level drawer detail view. |
 | Ctrl+Ent| Submit execution verdict & notes  | Pane 3 Form        | Saves execution form from text input.|
 +---------+-----------------------------------+--------------------+--------------------------------------+
 ```

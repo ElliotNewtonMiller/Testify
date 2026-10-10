@@ -61,7 +61,6 @@ export function useExecution({
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [failureNotes, setFailureNotes] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("Connected");
-  const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   // Read-only custom field values for the case currently being executed (Execution mode).
   const [execCaseCustomFieldValues, setExecCaseCustomFieldValues] = useState<
     CustomFieldValueEntry[] | null
@@ -337,8 +336,6 @@ export function useExecution({
     failureNotes,
     setFailureNotes,
     syncStatus,
-    showStepDrawer,
-    setShowStepDrawer,
     executionDenied,
     setExecutionDenied,
     execCaseCustomFieldValues,

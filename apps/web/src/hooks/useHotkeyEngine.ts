@@ -17,7 +17,6 @@ export interface HotkeyEngineOptions {
    * the list -- lets the caller move on past the visible list (e.g. into the next suite when
    * the queue is narrowed to one suite). */
   onAdvancePastEnd?: () => void;
-  onToggleStepDrawer?: () => void;
   onToggleSuiteExpand?: (collapse?: boolean) => void;
   onFocusSearch?: () => void;
   onPermissionDeniedToast?: (message: string) => void;
@@ -46,7 +45,6 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
     onVerdict,
     onSubmitNotes,
     onAdvancePastEnd,
-    onToggleStepDrawer,
     onToggleSuiteExpand,
     onFocusSearch,
     onPermissionDeniedToast,
@@ -166,13 +164,6 @@ export function createHotkeyHandler(options: HotkeyEngineOptions) {
       return;
     }
 
-    // --- STEP DRAWER TOGGLE (e) ---
-    if (key === 'e') {
-      event.preventDefault();
-      onToggleStepDrawer?.();
-      return;
-    }
-
     // --- VERDICT HOTKEYS (p, f, b, s) WITH RBAC GUARDS ---
     if (key === 'p' || key === 'f' || key === 'b' || key === 's') {
       event.preventDefault();
@@ -260,7 +251,6 @@ export function useHotkeyEngine(options: HotkeyEngineOptions) {
       options.onVerdict,
       options.onSubmitNotes,
       options.onAdvancePastEnd,
-      options.onToggleStepDrawer,
       options.onToggleSuiteExpand,
       options.onFocusSearch,
       options.onPermissionDeniedToast,

@@ -381,7 +381,7 @@ apps/
 ### 3.3 Slice 2: The Write/Execution Loop
 
 #### 3.3.1 Overview & Scope
-Slice 2 adds full state management, keyboard shortcut execution engine (`j`, `k`, `p`, `f`, `b`, `s`, `e`), keyboard Focus Zone State Machine (Zone 1..5), test case version status transitions, execution run logging (single and high-throughput `/executions/batch`), and plan/build locking invariants (HTTP 422 `PLAN_LOCKED` / `BUILD_CLOSED`).
+Slice 2 adds full state management, keyboard shortcut execution engine (`j`, `k`, `p`, `f`, `b`, `s`), keyboard Focus Zone State Machine (Zone 1..5), test case version status transitions, execution run logging (single and high-throughput `/executions/batch`), and plan/build locking invariants (HTTP 422 `PLAN_LOCKED` / `BUILD_CLOSED`).
 
 #### 3.3.2 Target File Structure & Module Dependencies
 ```
@@ -411,7 +411,6 @@ apps/
     │   ├── components/
     │   │   ├── execution/
     │   │   │   ├── DockedActionBar.tsx  # Bottom bar with Hotkey Active badge & verdict buttons
-    │   │   │   ├── StepExecutionDrawer.tsx # Drawer for step-level evaluation
     │   │   │   └── DefectModal.tsx       # Defect logging modal (Zone 5)
     │   │   └── common/
     │   │       └── FocusIndicatorBadge.tsx # Visual indicator of hotkey status
@@ -485,7 +484,7 @@ apps/
 ##### Focus Zone State Machine Rules:
 - **ZONE 1**: Tree Navigation (Pane 1)
 - **ZONE 2**: List Queue (Pane 2)
-- **ZONE 3**: Execution Container (Pane 3) — **Single-key hotkeys ACTIVE (`p`, `f`, `b`, `s`, `j`, `k`, `e`)**.
+- **ZONE 3**: Execution Container (Pane 3) — **Single-key hotkeys ACTIVE (`p`, `f`, `b`, `s`, `j`, `k`)**.
 - **ZONE 4**: Text Input / Form Editing — **Hotkeys AUTO-PAUSED** (Typing mode). `Ctrl+Enter` submits notes.
 - **ZONE 5**: Modal Dialog (Defect/Setup) — Focus trapped in modal. `Esc` closes.
 

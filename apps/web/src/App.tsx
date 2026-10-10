@@ -181,7 +181,6 @@ export default function App() {
     selectedIndex,
     setSelectedIndex,
     syncStatus,
-    setShowStepDrawer,
     executionDenied,
     setExecutionDenied,
     notesInputRef,
@@ -344,7 +343,6 @@ export default function App() {
     onAdvancePastEnd: () => {
       if (crossSuiteNextCaseIndex !== undefined) advanceToCase(crossSuiteNextCaseIndex);
     },
-    onToggleStepDrawer: () => setShowStepDrawer((prev) => !prev),
     onToggleSuiteExpand: () => {
       showToast("Toggled suite folder tree state ([ / ])");
     },

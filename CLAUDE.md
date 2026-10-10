@@ -1624,6 +1624,16 @@ Audit item 36 (`docs/audit_2026-10-07.md`). `App.tsx` was one 5,592-line compone
 - Execute: `j`/`k`, `f` + note + Ctrl+Enter recorded and jumped to the next folder, the suite filter, search;
 - Spec: a case created → Edit → step added and saved on blur → Approve → deleted; Shift-range and Escape; Collapse all; the New Suite form.
 
+## Removed: the Execute-mode "step drawer" (2026-10-09)
+
+Per direct request. The "Show Drawer (e)" button and the `e` hotkey in Execute mode opened a box that only said step-level logs, artifacts and attachments would go there; nothing behind it was ever built. Removed:
+- the button and the box (`components/execute/ExecutionPane.tsx`; the heading now reads "Ordered Step Verification Table");
+- `showStepDrawer` (`hooks/useExecution.ts`);
+- the `e` key and its `onToggleStepDrawer` option (`hooks/useHotkeyEngine.ts`);
+- the `e` rows in the hotkey tables of `docs/rfc_02_ux_density_and_hotkeys.md` and `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`, and the roadmap's never-built `StepExecutionDrawer.tsx`.
+
+Step-level results themselves still work through the API (`step_results` on both result routes); the web app records a verdict for the whole case only.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

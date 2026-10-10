@@ -393,7 +393,6 @@ CREATE INDEX idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
 | `f` | Mark active case as **FAILED** | Pane 3 Execution | Sets `verdict=FAILED`, `status=IN_PROGRESS`; focuses notes input. | `EXECUTE_RUN` |
 | `b` | Mark active case as **BLOCKED** | Pane 3 Execution | Sets `verdict=BLOCKED`, `status=IN_PROGRESS`; opens defect modal. | `EXECUTE_RUN` |
 | `s` | Mark active case as **SKIPPED** | Pane 3 Execution | Commits `verdict=SKIPPED`, `status=COMPLETED`; advances case. | `EXECUTE_RUN` |
-| `e` | Toggle step execution drawer | Pane 3 Execution | Opens step-by-step evaluation drawer. | `EXECUTE_RUN` |
 | `Ctrl+Enter` | Submit execution form & notes | Pane 3 Form | Commits `status=COMPLETED`, `verdict`, and input notes. | `EXECUTE_RUN` |
 
 ---
