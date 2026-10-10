@@ -1,14 +1,13 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../types.js';
-import { PERMISSION_REGISTRY, DEFAULT_ROLE_PERMISSIONS, DEFAULT_ROLE_NAMES } from '@testify/core';
+import { PERMISSION_REGISTRY, DEFAULT_ROLE_PERMISSIONS, DEFAULT_ROLE_NAMES, DEFAULT_ROLE_DESCRIPTIONS } from '@testify/core';
 
 /**
- * Seeds the `permissions`, `roles`, and `role_permissions` tables on a fresh install:
- * the 16 permission keys from packages/core's PERMISSION_REGISTRY, the 5 built-in role
- * templates (Admin, Test Lead, Tester, Viewer, Automation Service) marked
- * `is_system_role`, and the role<->permission bundle matching what used to be the
- * hardcoded ROLE_PERMISSIONS map -- so behavior is unchanged the moment this seed runs.
- * Idempotent (fixed ids + onConflict doNothing), same convention as seed_core_loop.ts.
+ * Seeds the `permissions`, `roles`, and `role_permissions` tables: every permission key in
+ * packages/core's PERMISSION_REGISTRY, and the built-in role templates (DEFAULT_ROLE_PERMISSIONS:
+ * Admin, Test Lead, Tester, Viewer, Automation Service, No Access) marked `is_system_role`, with
+ * their permission bundles. Runs on every start and is idempotent (fixed ids + onConflict
+ * doNothing), so a built-in added later also reaches existing databases.
  */
 export async function seedRbacRegistry(db: Kysely<Database>): Promise<void> {
   const now = new Date().toISOString();
@@ -42,12 +41,13 @@ export async function seedRbacRegistry(db: Kysely<Database>): Promise<void> {
       .values({
         id: roleIdByName.get(roleName)!,
         name: roleName,
-        description: null,
+        description: DEFAULT_ROLE_DESCRIPTIONS[roleName] ?? null,
         is_system_role: 1,
         created_at: now,
         updated_at: now,
       })
-      .onConflict((oc) => oc.column('id').doNothing())
+      // Any conflict: already seeded, or an admin already made a role with that name.
+      .onConflict((oc) => oc.doNothing())
       .execute();
   }
 

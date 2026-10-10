@@ -114,6 +114,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
             setProjectsList((prev) => [...prev, { id: created.id, name: created.name, prefix: created.prefix }]);
             handleSelectProject(created.id);
             showToast(`Created New Project: ${created.name}`);
+            // Picks up what the user may do in the new project.
+            loadProjects();
           } catch (err: any) {
             showToast(err.message || "Failed to create project");
           }
@@ -130,7 +132,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
             if (!res.ok) throw new Error(data.error || data.detail || "Failed to update project");
             const updated = data.project;
             setProjectsList((prev) =>
-              prev.map((p) => (p.id === updated.id ? { id: updated.id, name: updated.name, prefix: updated.prefix } : p)),
+              prev.map((p) => (p.id === updated.id ? { ...p, name: updated.name, prefix: updated.prefix } : p)),
             );
             showToast(`Updated Project: ${updated.name}`);
           } catch (err: any) {
@@ -461,6 +463,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
           id: p.id,
           name: p.name,
           prefix: p.prefix,
+          permissions: Array.isArray(p.permissions) ? p.permissions : undefined,
         }));
         setProjectsList(mapped);
         setSelectedProjectId((prev) =>
@@ -573,6 +576,9 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   }, [selectedPlanId, selectedProjectId]);
 
   const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
+  // What the user may do in the selected project (a project role can differ from the global
+  // one); null until the project list has loaded it.
+  const selectedProjectPermissions = projectsList.find((p) => p.id === selectedProjectId)?.permissions ?? null;
 
   // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
   // every other run edit (PUT .../plans/:planId/builds/:buildId).
@@ -657,6 +663,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
     selectedRunId,
     setSelectedRunId,
     selectedRun,
+    selectedProjectPermissions,
+    loadProjects,
     entityModalOpen,
     setEntityModalOpen,
     modalEntityType,

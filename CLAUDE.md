@@ -1690,6 +1690,43 @@ New tests: `apps/server/tests/session_lifetime.test.ts` (5):
 
 `npm test`: 581/581.
 
+## Added: limiting users to some projects -- a "No Access" role, and the web app uses each project's permissions (2026-10-09)
+
+Audit item 30 (`docs/audit_2026-10-07.md`). Checked first what was still true:
+- **The server already handled access per project.** A project role replaces the global role in that project, overrides can be per project, and the project list and every route respect it (items 6 and 7).
+- **The gaps:**
+  - There was no way to say "only these projects": a global role applies to every project, including later ones, and there was no empty role to use instead.
+  - The web app decided its buttons and modes from the user's *global* permissions. A user who was a Tester only inside one project was forced into Execute mode and shown nothing to edit, though the server allowed it.
+
+Decided with Elliot: a built-in No Access role, used as a global role plus project roles. New users still default to Tester.
+
+- **`No Access` role** (`packages/core/src/rbac/registry.ts`):
+  - an empty bundle, appended last in `DEFAULT_ROLE_PERMISSIONS` (the seed derives role ids from position, so the others keep theirs);
+  - new `NO_ACCESS_ROLE` and `DEFAULT_ROLE_DESCRIPTIONS`; it's the only built-in with a description.
+  - `seed_rbac_registry.ts` runs on every start, so existing databases get the role too. Its role insert now uses `onConflict(doNothing)` for any conflict, so an admin's own role with that name doesn't stop startup.
+- **`GET /api/v1/projects`** (`routes/projects.ts`) returns each visible project with `permissions`: the caller's effective permissions there (via `permissionsInProject`). The rule for which projects are visible is unchanged.
+- **Web**:
+  - `useScope` keeps each project's `permissions` (`EntityItem.permissions`) and exposes `selectedProjectPermissions`. It reloads the list after creating a project, and an edit keeps the permissions.
+  - `App.tsx` computes `can` from the selected project's permissions (falling back to the global ones until a project is selected) and `globalCan` from the global ones. Both are in `AppContext`.
+  - Everything follows the project's permissions -- panes, Execute mode (`useExecution`'s option is now `permissions`), Reports, Import/Export, editing or deleting the project, plans and runs -- except the Admin Panel button and "Create project", which use `globalCan`.
+  - Execute-only mode is only forced once the selected project's permissions are known, so a project-only user isn't moved off Spec mode by their empty global ones.
+  - When admins change their own access, the project list reloads too.
+- **Admin Panel**:
+  - The roster and the Matrix's user list show "+N project roles", or "sees no projects" for a No Access user with none; the No Access badge is grey.
+  - In the Matrix, the project role dropdown's empty choice said "(No Explicit Access)" but meant the opposite; it now reads "Same as global role (X)". New text under the global role and the project roles says how they combine and how to limit someone with No Access.
+- **Docs**: `docs/rfc_04_rbac_security_matrix.md` lists the role and gains "Limiting a user to some projects".
+- **Not changed**: a user who has `PROJECT_CREATE` only through an override, with No Access globally, can create a project they then can't see. The Admin Panel's tabs still go by global permissions, so a Test Lead who's one only in a project doesn't get the API Tokens tab.
+
+New tests:
+- `apps/server/tests/project_access.test.ts` (3):
+  - No Access exists, grants nothing, and such a user sees no projects;
+  - a project role gives access to just that project, and a project created later stays hidden;
+  - the list carries per-project permissions that differ from the global role, and an admin's carries the full set.
+- `apps/web/src/tests/app.smoke.test.tsx` (+1): a No Access user with Tester permissions in the project gets Spec mode, "+ Suite" and Export, but no Admin Panel or Create project.
+- Updated for 6 built-in roles: `rbac.test.ts`, `role_templates.test.ts`, `admin_roles_and_overrides.test.ts`.
+
+`npm test`: 585/585. Checked live: a No Access user with a Tester role in the demo project sees only that project, with the Tester's controls; the admin's roster shows "No Access · +1 project role".
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

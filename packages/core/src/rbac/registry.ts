@@ -40,10 +40,13 @@ export const PERMISSION_REGISTRY: PermissionDefinition[] = [
 export const PERMISSION_KEYS: string[] = PERMISSION_REGISTRY.map((p) => p.key);
 
 /**
- * The permission bundle each of the 5 built-in roles held before roles became
- * database-backed. Used only to seed `roles`/`role_permissions` on a fresh install
- * (packages/db/src/seeds/seed_rbac_registry.ts) -- once seeded, the database rows are
- * authoritative and these roles are editable/deletable like any other template.
+ * The built-in roles and their permission bundles. Used only to seed `roles`/`role_permissions`
+ * (packages/db/src/seeds/seed_rbac_registry.ts, idempotent, run on every start) -- once seeded,
+ * the database rows are authoritative and these roles are editable/deletable like any other
+ * template. New built-ins go at the end: the seed derives each role's id from its position.
+ *
+ * "No Access" grants nothing. As a user's global role it limits them to the projects where
+ * they're given a project role (Admin Panel -> Matrix), including none at all.
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   Admin: [
@@ -86,6 +89,15 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   Tester: ['SPEC_VIEW', 'SPEC_CREATE', 'SPEC_EDIT', 'EXECUTE_RUN', 'EXPORT_DATA'],
   Viewer: ['SPEC_VIEW', 'EXPORT_DATA'],
   'Automation Service': ['SPEC_VIEW', 'RUN_MANAGE', 'EXECUTE_RUN'],
+  'No Access': [],
 };
 
 export const DEFAULT_ROLE_NAMES: string[] = Object.keys(DEFAULT_ROLE_PERMISSIONS);
+
+/** The role that grants nothing (see DEFAULT_ROLE_PERMISSIONS). */
+export const NO_ACCESS_ROLE = 'No Access';
+
+/** Descriptions seeded with the built-in roles (the others have none). */
+export const DEFAULT_ROLE_DESCRIPTIONS: Record<string, string> = {
+  [NO_ACCESS_ROLE]: 'Sees no projects. As a global role, the user only has access to projects where they have a project role.',
+};

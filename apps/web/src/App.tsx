@@ -109,7 +109,14 @@ export default function App() {
     modalSelectedItem,
     handleSaveEntity,
     refreshRunsList,
+    selectedProjectPermissions,
   } = scope;
+  // What the user may do here: the selected project's permissions (a project role can differ
+  // from the global one), or the global ones until a project is selected. The Admin Panel and
+  // creating a project are global, so they go by globalCan.
+  const projectPermissions = selectedProjectPermissions ?? userPermissions;
+  const can = permissionFlags(projectPermissions);
+  const globalCan = permissionFlags(userPermissions);
 
   // The selected plan's cases for Execute mode (hooks/useExecutionWorkspace.ts).
   const executionWorkspace = useExecutionWorkspace(scope);
@@ -166,7 +173,7 @@ export default function App() {
   const execution = useExecution({
     executionWorkspace,
     workspaceMode,
-    userPermissions,
+    permissions: projectPermissions,
     scope,
     filterResult,
     suiteNodes,
@@ -359,15 +366,16 @@ export default function App() {
     notesInputRef,
   });
 
-  const can = permissionFlags(userPermissions);
   const { hasSpecViewPermission, hasReportEmailPermission } = can;
-  // Someone who can run tests but not view the spec works in Execute mode only.
+  // Someone who can run tests but not view the spec works in Execute mode only. Decided once a
+  // project's permissions are known, so a user with access only through project roles isn't
+  // switched away from Spec mode by their (empty) global ones.
   const canViewSpec = hasSpecViewPermission;
   useEffect(() => {
-    if (currentUser && !canViewSpec && workspaceMode === "SPECIFICATION") {
+    if (currentUser && selectedProjectPermissions && !canViewSpec && workspaceMode === "SPECIFICATION") {
       setWorkspaceMode("EXECUTION");
     }
-  }, [currentUser, canViewSpec, workspaceMode]);
+  }, [currentUser, selectedProjectPermissions, canViewSpec, workspaceMode]);
 
   if (authChecking) {
     return (
@@ -425,6 +433,7 @@ export default function App() {
     handleAuthExpiry,
     showToast,
     can,
+    globalCan,
     scope,
   };
 
@@ -462,7 +471,11 @@ export default function App() {
           onClose={() => setAdminPanelOpen(false)}
           currentUser={currentUser}
           projects={projectsList}
-          onSelfPermissionsChanged={fetchCurrentUser}
+          onSelfPermissionsChanged={() => {
+            fetchCurrentUser();
+            // Project roles and overrides may have changed too.
+            scope.loadProjects();
+          }}
           onCustomFieldsChanged={() => setCustomFieldDefsVersion((v) => v + 1)}
         />
 

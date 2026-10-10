@@ -65,7 +65,7 @@ type Call = { method: string; path: string; body: any };
 let calls: Call[] = [];
 
 /** Serves the fixture above. `signedIn: null` makes /auth/me answer 401 (signed out). */
-function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionStatus?: number }) {
+function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionStatus?: number; projectPermissions?: string[] }) {
   calls = [];
   const json = (data: unknown, status = 200) =>
     Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }));
@@ -76,7 +76,8 @@ function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionS
     calls.push({ method, path: url.pathname, body });
     const p = url.pathname;
     if (p === '/api/v1/auth/me') return opts.signedIn ? json({ user: opts.signedIn }) : json({ error: 'Unauthorized' }, 401);
-    if (p === '/api/v1/projects' && method === 'GET') return json({ projects: [project] });
+    if (p === '/api/v1/projects' && method === 'GET')
+      return json({ projects: [{ ...project, permissions: opts.projectPermissions ?? opts.signedIn?.permissions ?? [] }] });
     if (p === '/api/v1/projects/prj-1/plans') return json({ plans: [plan] });
     if (p === '/api/v1/projects/prj-1/plans/pln-1/builds') return json({ builds: [run] });
     if (p === '/api/v1/projects/prj-1/spec-tree')
@@ -107,8 +108,8 @@ afterEach(() => {
 });
 
 /** Signs in (via /auth/me) and waits until the workspace has loaded the fixture's scope. */
-async function renderSignedIn(signedIn = ADMIN, executionStatus?: number) {
-  installApi({ signedIn, executionStatus });
+async function renderSignedIn(signedIn = ADMIN, executionStatus?: number, projectPermissions?: string[]) {
+  installApi({ signedIn, executionStatus, projectPermissions });
   render(<App />);
   await screen.findByRole('button', { name: /Sign Out/ });
   await waitFor(() => expect(screen.getByDisplayValue('Smoke Project (SMK)')).toBeTruthy());
@@ -171,6 +172,19 @@ describe('App smoke tests', () => {
     await renderSignedIn(ADMIN);
     expect(screen.getByRole('button', { name: /Admin Panel/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Import/ })).toBeTruthy();
+  });
+
+  it('a user with access only through a project role gets that role\'s controls in the project', async () => {
+    // Global role No Access (no permissions); Tester in the selected project.
+    const projectOnly = user('member', 'No Access', []);
+    await renderSignedIn(projectOnly, undefined, ['SPEC_VIEW', 'SPEC_CREATE', 'SPEC_EDIT', 'EXECUTE_RUN', 'EXPORT_DATA']);
+    // Spec mode stays available and shows the cases, with the Tester's create buttons.
+    expect(await screen.findByText('SMK-1')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /\+ Suite/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Export/ })).toBeTruthy();
+    // Global things stay off.
+    expect(screen.queryByRole('button', { name: /Admin Panel/ })).toBeNull();
+    expect(screen.queryByTitle('Create New Project')).toBeNull();
   });
 
   it('shows the "Not permitted" banner when the server refuses a result', async () => {

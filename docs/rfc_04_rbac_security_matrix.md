@@ -75,6 +75,8 @@ Testify ships with five standardized built-in role templates. Every role represe
 5. **`Viewer / Stakeholder`:**
    - Read-only stakeholder role.
    - Holds `SPEC_VIEW` and read-only access to plans, execution reports, metrics dashboards, and audit logs.
+6. **`No Access`:**
+   - Grants nothing. Used as a user's global role to limit them to the projects where they're given a project role (see §3.3).
 
 ### 3.2 Role vs. Permission Key Matrix
 
@@ -130,6 +132,9 @@ flowchart TD
 2. **Explicit Project Override:** If an action targets a resource belonging to `Project_X`, the authorization service queries `user_project_roles` for `(user_id, project_id)`. If a project-level role exists, its permission key mapping **replaces** the user's global role mapping for that request context.
 3. **Global Fallback:** If no project-level role override exists for `Project_X`, the authorization service falls back to evaluating the user's global system role (`user_global_role`).
 4. **Default Deny:** If neither the project role nor the global role explicitly grants the required permission key, the request returns `HTTP 403 Forbidden`.
+
+#### Limiting a user to some projects
+A global role applies in every project, including ones created later. To limit someone to certain projects, give them the `No Access` global role and a project role in each project they should see (Admin Panel → Privilege & Access Matrix). They see no other project: `GET /api/v1/projects` lists only projects where the caller holds `SPEC_VIEW` or `EXECUTE_RUN`, and returns, with each, the caller's permissions there, which the web app uses for the selected project. New users still default to `Tester`.
 
 ---
 

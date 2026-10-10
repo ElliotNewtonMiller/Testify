@@ -8,6 +8,8 @@ export interface EntityItem {
   name: string;
   prefix?: string;
   status?: string;
+  /** Projects only: what the signed-in user may do in this project (from GET /api/v1/projects). */
+  permissions?: string[];
 }
 
 interface EntityManagementModalProps {

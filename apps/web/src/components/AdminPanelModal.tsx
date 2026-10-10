@@ -3,6 +3,16 @@ import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { UserProfile } from "./AuthModal";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+/** The built-in role that grants nothing (see packages/core's DEFAULT_ROLE_PERMISSIONS). */
+const NO_ACCESS_ROLE = "No Access";
+
+/** "+2 project roles", or "sees no projects" for a No Access user with none. */
+function projectAccessSummary(u: { global_role: string; project_roles?: Array<{ project_id: string; role: string }> }): string {
+  const n = u.project_roles?.length ?? 0;
+  if (n > 0) return `+${n} project role${n === 1 ? "" : "s"}`;
+  return u.global_role === NO_ACCESS_ROLE ? "sees no projects" : "";
+}
+
 interface UserItem extends UserProfile {
   status: "ACTIVE" | "DISABLED";
   /** Set while the account is locked after too many failed sign-ins. */
@@ -1507,7 +1517,7 @@ export function AdminPanelModal({
                         <span
                           style={{
                             backgroundColor:
-                              u.global_role === "Admin" ? "#7c3aed" : "#0284c7",
+                              u.global_role === "Admin" ? "#7c3aed" : u.global_role === NO_ACCESS_ROLE ? "#475569" : "#0284c7",
                             padding: "2px 6px",
                             borderRadius: "4px",
                             fontSize: "10px",
@@ -1516,6 +1526,9 @@ export function AdminPanelModal({
                         >
                           {u.global_role}
                         </span>
+                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "3px" }}>
+                          {projectAccessSummary(u)}
+                        </div>
                       </td>
                       <td style={{ padding: "8px" }}>
                         <span
@@ -1648,6 +1661,7 @@ export function AdminPanelModal({
                   <div style={{ fontWeight: 600 }}>{u.username}</div>
                   <div style={{ fontSize: "10px", opacity: 0.8 }}>
                     {u.global_role}
+                    {projectAccessSummary(u) && ` · ${projectAccessSummary(u)}`}
                   </div>
                 </div>
               ))}
@@ -1713,6 +1727,10 @@ export function AdminPanelModal({
                         </option>
                       ))}
                     </select>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
+                      Applies in every project, including ones created later, unless a
+                      project role below says otherwise.
+                    </div>
                   </div>
 
                   <div
@@ -1740,8 +1758,9 @@ export function AdminPanelModal({
                         marginBottom: "12px",
                       }}
                     >
-                      Project access is explicit per user. Select custom role
-                      overrides per project workspace.
+                      A project role replaces the global role in that project. To
+                      limit this user to certain projects, set the global role to
+                      No Access and pick a role in each project they should see.
                     </span>
 
                     {projects.map((p) => (
@@ -1784,7 +1803,7 @@ export function AdminPanelModal({
                             fontSize: "11px",
                           }}
                         >
-                          <option value="">(No Explicit Access)</option>
+                          <option value="">Same as global role ({selectedGlobalRole})</option>
                           {roleOptions.map((o) => (
                             <option key={o.value} value={o.value}>
                               Project {o.value}

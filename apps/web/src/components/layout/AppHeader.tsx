@@ -23,7 +23,7 @@ export function AppHeader({
   setAdminPanelOpen,
   setAuthModalOpen,
 }: AppHeaderProps) {
-  const { currentUser, handleLogout, can, scope } = useApp();
+  const { currentUser, handleLogout, can, globalCan, scope } = useApp();
   const {
     projectsList,
     plansList,
@@ -42,8 +42,9 @@ export function AppHeader({
     showArchivedPlans,
     setShowArchivedPlans,
   } = scope;
+  // Creating a project and the Admin Panel are global; everything else is about the selected project.
+  const { hasAdminPanelAccess } = globalCan;
   const {
-    hasAdminPanelAccess,
     hasExportDataPermission,
     hasImportDataPermission,
     hasPlanManagePermission,
@@ -113,7 +114,7 @@ export function AppHeader({
               </option>
             ))}
           </select>
-          {hasProjectCreatePermission && (
+          {globalCan.hasProjectCreatePermission && (
             <button
               onClick={() => openEntityModal("PROJECT", "CREATE")}
               title="Create New Project"

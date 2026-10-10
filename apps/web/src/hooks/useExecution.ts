@@ -21,7 +21,8 @@ import { authHeaders, jsonHeaders } from "../utils/session";
 export interface ExecutionOptions {
   executionWorkspace: ExecutionWorkspace;
   workspaceMode: "EXECUTION" | "SPECIFICATION";
-  userPermissions: string[];
+  /** The user's permissions in the selected project. */
+  permissions: string[];
   scope: Scope;
   /** The active search/filter's matches, or null when none is active. */
   filterResult: { caseIds: Set<string>; suiteIds: Set<string> } | null;
@@ -45,7 +46,7 @@ export interface ExecutionOptions {
 export function useExecution({
   executionWorkspace,
   workspaceMode,
-  userPermissions,
+  permissions,
   scope,
   filterResult,
   suiteNodes,
@@ -87,7 +88,7 @@ export function useExecution({
   // Keyboard Focus FSM
   const fsm = useFocusFSM({
     initialZone: "EXECUTION_CONTAINER",
-    permissions: userPermissions,
+    permissions,
     isExecutionCompleted: Boolean(isCompleted),
   });
 

@@ -35,10 +35,13 @@ describe('RBAC permission registry', () => {
     );
   });
 
-  it('DEFAULT_ROLE_PERMISSIONS defines exactly the 5 built-in roles, each using only registered keys', () => {
-    expect(DEFAULT_ROLE_NAMES.sort()).toEqual(
-      ['Admin', 'Automation Service', 'Test Lead', 'Tester', 'Viewer'].sort()
+  it('DEFAULT_ROLE_PERMISSIONS defines exactly the 6 built-in roles, each using only registered keys', () => {
+    expect([...DEFAULT_ROLE_NAMES].sort()).toEqual(
+      ['Admin', 'Automation Service', 'No Access', 'Test Lead', 'Tester', 'Viewer'].sort()
     );
+    expect(DEFAULT_ROLE_PERMISSIONS['No Access']).toEqual([]);
+    // New built-ins go last: the seed derives each role's id from its position.
+    expect(DEFAULT_ROLE_NAMES.slice(0, 5)).toEqual(['Admin', 'Test Lead', 'Tester', 'Viewer', 'Automation Service']);
     for (const roleName of DEFAULT_ROLE_NAMES) {
       for (const key of DEFAULT_ROLE_PERMISSIONS[roleName]) {
         expect(PERMISSION_KEYS).toContain(key);
@@ -47,7 +50,7 @@ describe('RBAC permission registry', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.Admin).toContain('SYSTEM_ADMIN');
   });
 
-  it('CUSTOM_FIELD_MANAGE is granted only to Admin, not the other 4 built-in roles', () => {
+  it('CUSTOM_FIELD_MANAGE is granted only to Admin, not the other built-in roles', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.Admin).toContain('CUSTOM_FIELD_MANAGE');
     for (const roleName of DEFAULT_ROLE_NAMES) {
       if (roleName === 'Admin') continue;

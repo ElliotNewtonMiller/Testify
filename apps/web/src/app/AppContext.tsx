@@ -13,7 +13,10 @@ export interface AppContextValue {
   handleLogout: () => void;
   handleAuthExpiry: () => void;
   showToast: (msg: string) => void;
+  /** What the user may do in the selected project (the global permissions until one is selected). */
   can: PermissionFlags;
+  /** What the user may do globally: the Admin Panel, creating projects. */
+  globalCan: PermissionFlags;
   scope: Scope;
 }
 

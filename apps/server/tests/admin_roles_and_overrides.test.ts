@@ -105,7 +105,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     });
     expect(res.statusCode).toBe(200);
     const roles = JSON.parse(res.payload).roles;
-    expect(roles).toHaveLength(5);
+    expect(roles).toHaveLength(6);
     expect(roles.every((r: any) => r.is_system_role === true)).toBe(true);
   });
 

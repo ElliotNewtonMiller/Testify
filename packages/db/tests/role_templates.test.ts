@@ -31,7 +31,7 @@ describe('Role templates & permission overrides', () => {
     }
   });
 
-  it('seeds the 5 default roles, matching DEFAULT_ROLE_PERMISSIONS exactly', async () => {
+  it('seeds the 6 default roles, matching DEFAULT_ROLE_PERMISSIONS exactly', async () => {
     const roles = await roleRepo.listRoles();
     expect(roles.map((r) => r.name).sort()).toEqual([...DEFAULT_ROLE_NAMES].sort());
 
