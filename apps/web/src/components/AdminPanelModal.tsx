@@ -246,10 +246,10 @@ export function AdminPanelModal({
   // <select> option lists (create-user form, Matrix global-role picker, Matrix per-project
   // role picker), which had drifted from each other and were all missing "Automation
   // Service".
-  const roleOptions = roles.map((r) => ({
-    value: r.name,
-    label: r.description ? `${r.name} (${r.description})` : r.name,
-  }));
+  // Dropdowns show just the name; the chosen role's description goes underneath (a long one
+  // made the dropdown far too wide).
+  const roleOptions = roles.map((r) => ({ value: r.name, label: r.name }));
+  const roleDescription = (name: string) => roles.find((r) => r.name === name)?.description || null;
 
   useEffect(() => {
     if (isOpen) {
@@ -1365,6 +1365,11 @@ export function AdminPanelModal({
                       </option>
                     ))}
                   </select>
+                  {roleDescription(newRole) && (
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+                      {roleDescription(newRole)}
+                    </div>
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -1727,6 +1732,11 @@ export function AdminPanelModal({
                         </option>
                       ))}
                     </select>
+                    {roleDescription(selectedGlobalRole) && (
+                      <div style={{ fontSize: "11px", color: "#cbd5e1", marginTop: "6px" }}>
+                        {roleDescription(selectedGlobalRole)}
+                      </div>
+                    )}
                     <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
                       Applies in every project, including ones created later, unless a
                       project role below says otherwise.
