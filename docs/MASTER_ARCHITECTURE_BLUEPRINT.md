@@ -29,7 +29,7 @@ Testify is an enterprise-grade, modernized test management and execution platfor
 +---------------------------------------------------------------------------------------------------+
 |                                        APPLICATION & API GATEWAY                                  |
 |  +---------------------------------------------------------------------------------------------+  |
-|  | OpenAPI 3.1 Routing | RFC 7807 Error Handler | Token Bucket Rate Limiter (1,000 / 10,000 rpm)    |  |
+|  | OpenAPI 3.1 Routing | RFC 7807 Error Handler | Token Bucket Rate Limiter (1,200 rpm per token)   |  |
 |  | Security Middleware | JWT & Machine API Token Validator (tf_live_..., tf_ci_...)              |  |
 |  +---------------------------------------------------------------------------------------------+  |
 |  +-------------------------------------+       +-----------------------------------------------+  |

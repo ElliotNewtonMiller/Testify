@@ -30,6 +30,7 @@ import { validateManualResult } from './services/resultValidation.js';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from './services/resultOverwrite.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
+import { createRateLimits } from './services/rateLimits.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
@@ -48,6 +49,8 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
   const app = Fastify({ logger: false, trustProxy: process.env.TRUST_PROXY === 'true' });
+  // Per-process rate limits for API tokens, exports and report emails (services/rateLimits.ts).
+  app.decorate('rateLimits', createRateLimits());
   // Unexpected errors (database errors, bugs) are logged here and answered with a generic
   // message: their details -- SQL, table and constraint names, stack traces -- never reach the
   // client. Fastify's own request errors (bad JSON, body too large, ...) are about the request,

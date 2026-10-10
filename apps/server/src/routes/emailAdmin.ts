@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { withinRateLimit } from '../services/rateLimits.js';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
@@ -112,6 +113,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
   app.post('/api/v1/admin/email-settings/test', gate, async (request, reply) => {
     const to = String((request.body as any)?.to ?? '').trim().toLowerCase();
     if (!isValidEmail(to)) return reply.status(400).send({ error: 'INVALID_PARAMS', message: 'to must be an email address', details: [{ param: 'to', reason: 'must be an email address' }] });
+    if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'emails')) return reply;
     const settings = await loadEmailSettings(db);
     const where = settings.smtp_host ? `via ${settings.smtp_host}` : 'with no SMTP server configured, so it was only captured, not sent';
     const sent = await sendEmail(db, {

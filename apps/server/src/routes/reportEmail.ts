@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { withinRateLimit } from '../services/rateLimits.js';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database, ReportScheduleInput } from '@testify/db';
@@ -85,6 +86,8 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
       const r = recipientsOrError(body.recipients);
       if ('field' in r) return badRequest(reply, r.field, r.reason);
       recipients = r.recipients;
+      // Previews don't count; sending does.
+      if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'report emails')) return reply;
     }
 
     let email;
@@ -196,6 +199,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     const { projectId, id } = request.params as { projectId: string; id: string };
     const schedule = await scheduleInProject(projectId, id);
     if (!schedule) return reply.status(404).send({ error: 'Schedule not found in this project' });
+    if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'report emails')) return reply;
     const result = await emails.sendSchedule(schedule, 'manual', requestOrigin(request));
     return {
       status: result.status,

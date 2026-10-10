@@ -8,10 +8,18 @@ In the web app, **📊 Reports** in the header opens the same reports as a full 
 
 Send `Authorization: Bearer <token>` with either:
 
-- **A login JWT.** `POST /api/v1/auth/login` returns one; it expires after 15 minutes.
+- **A login JWT.** `POST /api/v1/auth/login` returns one; it expires after an hour.
 - **A machine API token** (`tf_ci_…`), created in Admin Panel → API Tokens. This is the right credential for scripts and agents: it doesn't expire unless you set an expiry, and it's bound to one project. It needs the `SPEC_VIEW` capability.
 
 A token used against any project other than its own gets `403 TOKEN_PROJECT_MISMATCH`.
+
+**Rate limits** (generous, so automation and agents aren't held back):
+
+- Every request made with an API token, including MCP calls: 1,200 per minute per token. A burst of up to 1,200 at once is fine; the allowance refills evenly.
+- Exports: 120 per hour per user or token.
+- Sending report emails: 60 per hour per user or token. Previews and scheduled sends don't count.
+
+Over a limit, the reply is `429` with a `Retry-After` header (seconds) and `code: "RATE_LIMITED"`. Wait that long, then retry. The limits are kept per server process.
 
 ## Endpoints
 

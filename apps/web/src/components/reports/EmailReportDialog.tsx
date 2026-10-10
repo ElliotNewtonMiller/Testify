@@ -44,7 +44,7 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
   const post = async (body: Record<string, unknown>) => {
     const res = await fetch(`/api/v1/projects/${projectId}/report-emails`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || data.error || `Request failed (${res.status})`);
+    if (!res.ok) throw new Error(data.message || data.detail || data.error || `Request failed (${res.status})`);
     return data;
   };
 

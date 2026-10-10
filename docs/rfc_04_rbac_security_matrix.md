@@ -357,7 +357,7 @@ graph TD
 - **Risk:** Malicious insider uses `EXPORT_DATA` endpoints to scrape entire proprietary test case repositories and vulnerability suites.
 - **Architectural Mitigation:**
   - `EXPORT_DATA` permission required.
-  - Export requests hit dedicated rate limiters (e.g., maximum 5 exports per user per hour).
+  - Export requests are rate limited: 120 exports per hour per user or API token (`apps/server/src/services/rateLimits.ts`). Generous on purpose, for automation; it stops runaway scripts and bulk scraping, not normal use.
   - High-volume export events trigger an immutable `data.exported` audit log record containing record counts and IP addresses.
 
 #### 4. Privilege Escalation via Project Override Manipulation
@@ -375,9 +375,9 @@ graph TD
 #### 6. Authentication Brute-Force & Denial of Service
 - **Risk:** Automated botnets flood `/api/v1/auth/login` or token ingestion endpoints with brute-force credential guesses.
 - **Architectural Mitigation:**
-  - Rate Limiting Middleware (Leaky Bucket / Redis sliding window):
-    - Public Login endpoint: Max 5 failed attempts per IP per 15 minutes before account lockout / CAPTCHA enforcement.
-    - Batch Execution Ingest (`/executions/batch`): Max 100 requests per minute per Machine API Token.
+  - Sign-in (`apps/server/src/services/loginThrottle.ts`): an account locks for 15 minutes after 20 wrong passwords in a row, and an address is blocked after 50 failed sign-ins in 15 minutes.
+  - Every request made with a machine API token (REST, CI batches, MCP): 1,200 per minute per token, as a token bucket (`apps/server/src/services/rateLimits.ts`). A batch request can carry up to 5,000 results.
+  - Over a limit the API answers `429 RATE_LIMITED` with `Retry-After`. The counts are kept in memory per server process.
 
 #### 7. Aggregate Data Exposure via Reports & the MCP Endpoint
 - **Risk:** The reports API (`/api/v1/projects/:projectId/reports/...`) and the MCP endpoint (`POST /mcp`) are read surfaces built for scripts and AI agents. They expose failure messages, stack traces, CI runner metadata (commit SHAs, CI URLs), environment tags and tester identities across a whole project in a few calls. A leaked agent credential, or an agent tricked by prompt injection in test content (case titles, notes and failure messages are user/CI-controlled text), could read more than intended.
@@ -387,7 +387,7 @@ graph TD
   - Every report and MCP tool is read-only; MCP tools carry `readOnlyHint`. There are no write tools yet, so injected instructions can't change data through MCP.
   - Agents should use a dedicated token with only `SPEC_VIEW`, revocable on its own.
 - **Gaps:**
-  - No rate limiting on report or MCP calls yet (same deferred gap as exports).
+  - Report and MCP calls made with an API token count against that token's 1,200 requests per minute; report reads by signed-in users aren't rate limited.
   - Report reads aren't audit-logged; only exports are.
 
 **Report emails (added 2026-10-06)** send report data to arbitrary addresses outside Testify, which makes them a direct exfiltration channel.
@@ -398,10 +398,8 @@ Mitigations:
 - At most 50 recipients per email.
 - Every user- and CI-supplied string is HTML-escaped, so case titles or failure messages can't inject markup into recipients' mail.
 - Scheduled sends re-check, on every send, that the schedule's creator is still active and still allowed to email that project.
-
-Gaps:
-- No per-user send rate limit.
-- The SMTP password is stored unencrypted in `system_settings` (never returned by the API).
+- Sending is rate limited to 60 emails per hour per user or token (manual sends, a schedule's Send now, and the admin's test email; previews and scheduled sends aren't counted).
+- The SMTP password is encrypted at rest with `SECRETS_KEY` and never returned by the API.
 
 ---
 

@@ -1645,6 +1645,32 @@ Audit item 33 (`docs/audit_2026-10-07.md`). From the very first schema, `test_pl
 
 `npm test`: 572/572. `tsc --noEmit` clean on all four workspaces.
 
+## Added: generous rate limits on API tokens, exports and report emails (2026-10-09)
+
+Audit item 32 (`docs/audit_2026-10-07.md`). Nothing limited how often an API token could be used, how often anyone could export a project, or how many report emails they could send. Elliot asked for generous limits, since CI and MCP agents make many more calls than people.
+
+- **New `apps/server/src/services/rateLimits.ts`**:
+  - `RateLimiter` is a token bucket per caller: the whole allowance can be used at once, and it refills evenly over the window. Memory is bounded by pruning callers whose allowance has fully refilled.
+  - `createServer` decorates each server with its own set (`app.rateLimits`), so counts are per server process, like the per-address sign-in limit.
+  - `withinRateLimit(request, reply, limiter, what)` counts one call for `token:<id>` or `user:<id>` and answers `429 RATE_LIMITED` (problem details) with `Retry-After` and a message such as "Too many exports: the limit is 120 per hour. Try again in 30 seconds."
+- **The limits:**
+  - `API_TOKEN_REQUESTS_PER_MINUTE` = 1,200 per token, for every request made with a token, MCP included. It's checked in `authenticateApiToken` after the token is found valid, once per request (a `WeakSet`), since imports authenticate twice.
+  - `EXPORTS_PER_HOUR` = 120 per caller, shared by both export routes.
+  - `REPORT_EMAILS_PER_HOUR` = 60 per caller: "Email this report" sends (previews don't count), a schedule's Send now, and the admin's test email. Scheduled sends aren't counted (at most daily each), and the 50-recipient cap per email still applies.
+- **Not limited**: requests by signed-in users other than exports and emails. That includes their report reads and MCP calls made with a sign-in rather than a token.
+- **Web**: the email dialog, the Scheduled Emails tab and the admin's test email now show a problem-details `detail`, so the 429 message appears instead of "Request failed (429)". The Export dialog already did.
+- **Docs**:
+  - `docs/reports_api_and_mcp.md` gained a "Rate limits" note for API and MCP users, and its "expires after 15 minutes" is now an hour.
+  - `docs/rfc_03_api_and_xml_contracts.md` §7.2 and `docs/rfc_04_rbac_security_matrix.md` (threat vectors 3, 6, 7 and report emails) describe what's built instead of the planned 5-exports-an-hour, Redis and `X-RateLimit-*` designs. The latter also no longer calls the SMTP password unencrypted.
+
+New tests: `apps/server/tests/rate_limits.test.ts` (4):
+- the limiter's burst, refill and per-caller separation, and that the defaults stay generous;
+- a token at its limit gets 429 on REST and MCP, an import counts once, and another token and a signed-in user are unaffected;
+- exports share one allowance, and a token is its own caller;
+- previews are never counted, while sends, Send now and the test email share the email limit.
+
+Each test sets a small limiter on its server. `npm test`: 576/576.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -1658,12 +1684,12 @@ Audit item 33 (`docs/audit_2026-10-07.md`). From the very first schema, `test_pl
 
 - **Fixed (2026-09-18): `ingestion.ts` and `batchExecution.ts` no longer bypass auth.** Both now call `authenticateRequest` and require `IMPORT_DATA`/`EXECUTE_RUN` (or `SYSTEM_ADMIN`) respectively, and both accept either a JWT or a machine API token. See "Added: machine API tokens..." above. (The inline `POST /api/v1/executions` route in `server.ts` was fixed separately, 2026-09-14 -- see "Fixed: execution-submission route had no auth" below.)
 - **Fixed (2026-10-06): a project-scoped API token could use any project's `/projects/:projectId/...` routes.** Now refused centrally in `authenticateApiToken` -- see "Reports overhaul, phase 1" above.
-- **No rate limiting on machine API tokens.** A minted `tf_ci_...` token can be used at unlimited request volume -- deliberately deferred out of the 2026-09-18 API tokens feature (see "Added: machine API tokens..." above) rather than built without a clear req/window policy from Elliot. Worth revisiting once there's real CI traffic to size limits against.
+- **Fixed (2026-10-09): rate limits on machine API tokens** -- see "Added: generous rate limits on API tokens, exports and report emails" above.
 - **`PUT /api/v1/test-case-versions/:versionId` also has no auth check at all** (`server.ts`, ~line 276) -- doesn't call `authenticateRequest`, let alone gate on a permission like `SPEC_EDIT`. Anyone can edit a draft test case version's summary/preconditions with no token. Noticed while building the global custom-fields feature (2026-09-18); not fixed there since it was unrelated to that change's scope.
 - **Fixed (2026-09-19): `routes/ingestion.ts`'s custom-field auto-creation now has real type inference and validation**, routed through `CustomFieldRepository`/`parseCustomFieldValue()` instead of a hardcoded `field_type: 'STRING'`/string-only raw insert. See "Added: flexible multi-format import wizard..." above.
 - **No import mapping-profile persistence.** Every import re-resolves field mappings from scratch; there's no "remember column X → field Y for next time" feature (deliberately deferred, see "Added: flexible multi-format import wizard..." above). No UI for per-case duplicate-resolution overrides either (only a global default action) -- the backend supports per-case overrides, but the wizard doesn't expose them since today's dry-run response has no per-case-identity list to build that UI from.
 - **TestRail CSV only supports the combined-column export shape.** The indexed-column variant (`Steps (Step 1)`, `Steps (Expected Result 1)`, ...) isn't parsed -- flagged with an `UNSUPPORTED_TESTRAIL_COLUMN_FORMAT` warning rather than silently mis-parsed. No live TestRail export sample was available to verify against; revisit if a real one surfaces a gap.
-- **No rate limiting on data export routes.** `POST /api/v1/projects/:projectId/exports/{definitions,execution-results}` can be called at unlimited volume by anyone holding `EXPORT_DATA` -- deliberately deferred out of the 2026-09-21 export feature (see "Added: flexible export..." above), same treatment as the machine-API-tokens gap above. The RBAC threat-model doc (`docs/rfc_04_rbac_security_matrix.md`) explicitly calls this out as a mass-data-exfiltration risk and suggests ~5/user/hour; worth building once there's a real policy to size it against.
+- **Fixed (2026-10-09): rate limits on data export routes** -- see "Added: generous rate limits on API tokens, exports and report emails" above.
 - **CSV export/import lossiness is real, not hypothetical.** A definitions export's `Importance` column folds anything other than exactly `HIGH`/`MEDIUM`/`LOW` to `MEDIUM` on reimport (a `CRITICAL`-priority case silently becomes `MEDIUM`), and a custom field whose name collides with a reserved importer substring (`title`/`suite`/`action`/`result`/etc.) will be miscategorized as that built-in column rather than preserved as a custom field, on both the import and the export-then-reimport path. Both are pre-existing `CsvParser.ts` behaviors surfaced (not introduced) while building the export feature -- see "Added: flexible export..." above. Fixing either would mean changing the already-shipped importer's column-matching logic, out of scope for both features so far.
 - **Fixed (2026-09-21, 2026-09-24, 2026-10-05): Test Plan, Test Run and Project create/edit/delete all really persist now.** All three were client-side mock state -- see "Added: real Test Plan create/edit/delete...", "Added: real Test Run (Build) CRUD..." and "Changed: no sample projects on startup; real Project create/edit/delete" above.
 - **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)

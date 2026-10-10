@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { withinRateLimit } from '../services/rateLimits.js';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database, TestSuiteNode } from '@testify/db';
@@ -67,6 +68,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
     '/api/v1/projects/:projectId/exports/definitions',
     { preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
     async (request, reply) => {
+      if (!withinRateLimit(request, reply, app.rateLimits.exports, 'exports')) return reply;
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
       const { format, scope, status_filter: statusFilterRaw } = (request.body as any) || {};
@@ -270,6 +272,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
     '/api/v1/projects/:projectId/exports/execution-results',
     { preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
     async (request, reply) => {
+      if (!withinRateLimit(request, reply, app.rateLimits.exports, 'exports')) return reply;
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
       const { format, plan_id: planId, build_id: buildId } = (request.body as any) || {};

@@ -765,15 +765,12 @@ All API requests must present a valid Bearer token in the `Authorization` header
 ---
 
 ### 7.2 Rate Limiting Policies & Response Headers
-To protect API stability, requests are governed by a **Token Bucket Rate Limiter**.
+Limits are generous on purpose -- CI runners, scripts and MCP agents make many more calls than people -- and exist to stop runaway loops and abuse. Each is a **token bucket** per caller: the whole allowance can be used at once, and it refills evenly over the window. The counts are kept in memory per server process (`apps/server/src/services/rateLimits.ts`).
 
 - **Rate Limits:**
-  - Standard User & UI Requests: **1,000 requests per minute**.
-  - High-Throughput CI/CD Ingestion (`/executions/batch`): **10,000 executions per minute**.
-- **Standard Rate Limit Response Headers:**
-  - `X-RateLimit-Limit`: Maximum requests permitted per window (e.g. `1000`).
-  - `X-RateLimit-Remaining`: Remaining request tokens in current window.
-  - `X-RateLimit-Reset`: UTC epoch seconds when the quota resets.
+  - Every request made with a machine API token (REST, `/executions/batch`, `/mcp`): **1,200 requests per minute per token**. A batch request can carry up to 5,000 results.
+  - Exports (`.../exports/definitions`, `.../exports/execution-results`): **120 per hour per user or token**.
+  - Sending report emails (`.../report-emails` without `preview`, `.../report-schedules/:id/send-now`, `/admin/email-settings/test`): **60 per hour per user or token**.
 - **HTTP 429 Too Many Requests Payload:**
 ```http
 HTTP/1.1 429 Too Many Requests
@@ -781,12 +778,12 @@ Retry-After: 30
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.testify.dev/errors/RATE_LIMIT_EXCEEDED",
+  "type": "https://api.testify.dev/errors/RATE_LIMITED",
   "title": "Too Many Requests",
   "status": 429,
-  "code": "RATE_LIMIT_EXCEEDED",
-  "detail": "Rate limit exceeded for token. Retry after 30 seconds.",
-  "retry_after_seconds": 30
+  "code": "RATE_LIMITED",
+  "detail": "Too many requests with this API token: the limit is 1200 per minute. Try again in 1 second.",
+  "instance": "/api/v1/projects/.../plans"
 }
 ```
 

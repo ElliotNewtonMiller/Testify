@@ -11,6 +11,7 @@ import {
   sendTokenProjectMismatchError,
   sendTokenIssuerInactiveError,
 } from '../errors.js';
+import { sendRateLimitedError } from '../services/rateLimits.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -139,6 +140,9 @@ export async function apiTokenIssuerAccess(
  * time in routes/apiTokens.ts), so requirePermission's SYSTEM_ADMIN bypass simply never
  * fires for a token, which is exactly the desired behavior.
  */
+/** Requests already counted against their API token's rate limit. */
+const rateCountedRequests = new WeakSet<FastifyRequest>();
+
 async function authenticateApiToken(
   rawToken: string,
   request: FastifyRequest,
@@ -161,6 +165,18 @@ async function authenticateApiToken(
   if (token.expires_at && new Date(token.expires_at).getTime() <= Date.now()) {
     sendTokenExpiredError(reply, request.url);
     return null;
+  }
+
+  // Every request made with a token counts against that token's allowance
+  // (services/rateLimits.ts) -- once, even when a route authenticates twice (imports do).
+  const limiter = request.server.rateLimits?.apiToken;
+  if (limiter && !rateCountedRequests.has(request)) {
+    rateCountedRequests.add(request);
+    const limited = limiter.take(`token:${token.id}`);
+    if (!limited.allowed) {
+      sendRateLimitedError(reply, 'requests with this API token', limiter, limited.retryAfterSeconds, request.url);
+      return null;
+    }
   }
 
   // A token belongs to one project. Refuse a token aimed at any other project here, once,
