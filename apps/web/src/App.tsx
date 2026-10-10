@@ -12,7 +12,7 @@ import {
   SpecCaseListGrid,
   SpecCaseGridItem,
 } from "./components/SpecCaseListGrid";
-import { AuthModal, UserProfile } from "./components/AuthModal";
+import { AuthModal } from "./components/AuthModal";
 import { AdminPanelModal } from "./components/AdminPanelModal";
 import { ImportWizardModal } from "./components/ImportWizardModal";
 import { ExportModal } from "./components/ExportModal";
@@ -34,7 +34,7 @@ import {
   EntityType,
   ActionType,
 } from "./components/EntityManagementModal";
-import { authHeaders, jsonHeaders, watchForEndedSession } from "./utils/session";
+import { authHeaders, jsonHeaders } from "./utils/session";
 import type {
   CustomFieldValueEntry,
   ExecWorkspaceStatus,
@@ -50,7 +50,6 @@ import {
   REMOVED_CASE_MESSAGE,
   RUN_CLOSED_MESSAGE,
   RUN_DENIED_MESSAGE,
-  SESSION_ENDED_NOTICE,
 } from "./app/messages";
 import { autoGrowTextarea } from "./utils/autoGrowTextarea";
 import { permissionFlags } from "./utils/permissions";
@@ -65,6 +64,9 @@ import {
   visibleSuiteOrder as listVisibleSuiteOrder,
 } from "./utils/suiteTree";
 import { useStepsScrollPreserved } from "./hooks/useStepsScrollPreserved";
+import { usePaneLayout } from "./hooks/usePaneLayout";
+import { useSession } from "./hooks/useSession";
+import { useToast } from "./hooks/useToast";
 
 /** Value of the Plan dropdown's "Show/Hide archived plans" entry -- never a real plan id. */
 const TOGGLE_ARCHIVED_PLANS_VALUE = "__toggle_archived_plans__";
@@ -126,100 +128,9 @@ export default function App() {
   const [dragPayload, setDragPayload] = useState<{ kind: "SUITES" | "CASES"; ids: string[] } | null>(null);
   const caseFilterFieldsRequestSeq = useRef(0);
   const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const { toastMessage, showToast } = useToast();
 
-  // Resizable 3-pane layout widths (Pane 1: Suite Tree, Pane 2: Spec/Queue Grid). Not
-  // persisted to localStorage -- resets to defaults every session/reload, per direct request.
-  const [suiteTreeWidth, setSuiteTreeWidth] = useState<number>(280);
-  const [queueGridWidth, setQueueGridWidth] = useState<number>(420);
-  const [hoveredDivider, setHoveredDivider] = useState<"tree" | "queue" | null>(null);
-  const [draggingPane, setDraggingPane] = useState<"tree" | "queue" | null>(null);
-
-  const suiteTreeWidthRef = useRef(suiteTreeWidth);
-  useEffect(() => {
-    suiteTreeWidthRef.current = suiteTreeWidth;
-  }, [suiteTreeWidth]);
-  const queueGridWidthRef = useRef(queueGridWidth);
-  useEffect(() => {
-    queueGridWidthRef.current = queueGridWidth;
-  }, [queueGridWidth]);
-
-  const dragStateRef = useRef<{ pane: "tree" | "queue"; startX: number; startWidth: number } | null>(null);
-
-  // Loosened per request (was 200-480 / 260-600 with Pane 3 >= 360): the two left panes can
-  // now grow as far as the window allows, at the detail pane's expense. No fixed maximum --
-  // the only cap is that Pane 3 keeps PANE3_MIN_WIDTH, recomputed on every drag tick.
-  const SUITE_TREE_MIN = 140;
-  const SUITE_TREE_MAX = Number.POSITIVE_INFINITY;
-  const QUEUE_GRID_MIN = 180;
-  const QUEUE_GRID_MAX = Number.POSITIVE_INFINITY;
-  const PANE3_MIN_WIDTH = 160; // Pane 3 must always keep at least this much room
-
-  // window-level listeners (added on mousedown, removed on mouseup) rather than an
-  // onMouseMove handler on the divider itself -- a fast drag routinely outruns a 4px-wide
-  // element, so only page-level tracking keeps up with the cursor for the whole drag.
-  const handleDividerMouseMove = useCallback((e: MouseEvent) => {
-    const drag = dragStateRef.current;
-    if (!drag) return;
-    const deltaX = e.clientX - drag.startX;
-    if (drag.pane === "tree") {
-      const max = Math.max(
-        SUITE_TREE_MIN,
-        Math.min(SUITE_TREE_MAX, window.innerWidth - PANE3_MIN_WIDTH - queueGridWidthRef.current),
-      );
-      setSuiteTreeWidth(Math.min(Math.max(drag.startWidth + deltaX, SUITE_TREE_MIN), max));
-    } else {
-      const max = Math.max(
-        QUEUE_GRID_MIN,
-        Math.min(QUEUE_GRID_MAX, window.innerWidth - PANE3_MIN_WIDTH - suiteTreeWidthRef.current),
-      );
-      setQueueGridWidth(Math.min(Math.max(drag.startWidth + deltaX, QUEUE_GRID_MIN), max));
-    }
-  }, []);
-
-  const handleDividerMouseUp = useCallback(() => {
-    dragStateRef.current = null;
-    setDraggingPane(null);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    window.removeEventListener("mousemove", handleDividerMouseMove);
-    window.removeEventListener("mouseup", handleDividerMouseUp);
-  }, [handleDividerMouseMove]);
-
-  const handleDividerMouseDown = useCallback(
-    (pane: "tree" | "queue") => (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragStateRef.current = {
-        pane,
-        startX: e.clientX,
-        startWidth: pane === "tree" ? suiteTreeWidthRef.current : queueGridWidthRef.current,
-      };
-      setDraggingPane(pane);
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      window.addEventListener("mousemove", handleDividerMouseMove);
-      window.addEventListener("mouseup", handleDividerMouseUp);
-    },
-    [handleDividerMouseMove, handleDividerMouseUp],
-  );
-
-  // Unmount safety net -- removeEventListener on an unregistered listener is a harmless
-  // no-op, so this is safe to run even when no drag is in progress.
-  useEffect(() => {
-    return () => {
-      window.removeEventListener("mousemove", handleDividerMouseMove);
-      window.removeEventListener("mouseup", handleDividerMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-  }, [handleDividerMouseMove, handleDividerMouseUp]);
-
-  const dividerStyle = (pane: "tree" | "queue"): React.CSSProperties => ({
-    width: "4px",
-    flexShrink: 0,
-    cursor: "col-resize",
-    backgroundColor: draggingPane === pane || hoveredDivider === pane ? "#3b82f6" : "#1f2937",
-  });
+  const { suiteTreeWidth, queueGridWidth, setHoveredDivider, handleDividerMouseDown, dividerStyle } = usePaneLayout();
 
   // Specification / Execution mode toggle (Pane 1 header) & Specification-mode state
   const [workspaceMode, setWorkspaceMode] = useState<"EXECUTION" | "SPECIFICATION">(
@@ -335,10 +246,18 @@ export default function App() {
   const [specEditError, setSpecEditError] = useState<string | null>(null);
 
   // Authentication & RBAC User State
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  // Shown on the login screen after a sign-in ends on its own (see handleAuthExpiry).
-  const [sessionEndedNotice, setSessionEndedNotice] = useState<string | null>(null);
-  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const {
+    currentUser,
+    setCurrentUser,
+    userPermissions,
+    setUserPermissions,
+    sessionEndedNotice,
+    setSessionEndedNotice,
+    authChecking,
+    fetchCurrentUser,
+    handleLogout,
+    handleAuthExpiry,
+  } = useSession(showToast);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(false);
   const [importWizardOpen, setImportWizardOpen] = useState<boolean>(false);
@@ -352,7 +271,6 @@ export default function App() {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }
   }, [appView]);
-  const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Entity Selection State (Project, Plan, Run)
   // Start empty -- the real lists load once authenticated. (These used to start from fake
@@ -427,14 +345,6 @@ export default function App() {
   // specTreeRequestSeq are already scoped to the state they guard.
   const runsListRequestSeq = useRef(0);
   const plansRequestSeq = useRef(0);
-
-  // Display Toast Notification (moved above the entity/spec handlers below, which reference it)
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 3000);
-  }, []);
 
   // Spec-mode multi-select resets on mode/project change; Escape clears it (outside inputs).
   useEffect(() => {
@@ -573,29 +483,6 @@ export default function App() {
     filterDataTick,
   ]);
 
-  // Shared 401 handling for the Spec-mode save handlers below (create/approve/edit-content/
-  // save-steps). Login tokens are still finite-lived (1 hour JWTs, no refresh mechanism -- see
-  // packages/core/src/security/jwt.ts), and unlike verdict submission (a single fast POST),
-  // Spec-mode editing is often a long, network-idle drafting session (typing into steps,
-  // reordering, etc. is pure client-side state with zero requests) before the user finally
-  // clicks Save/Approve -- so that click is often the first request issued after the token
-  // has silently expired. Without this, the handler's generic catch surfaces the raw
-  // "Unauthorized: Token expired" server string and leaves the user signed in on screen,
-  // so every retry just fails the same way. Mirrors submitVerdict's existing 401 branch
-  // (drop back to a logged-out state, toast a clear message) so every
-  // Spec-mode save handler behaves the same way execution recording already does.
-  const handleAuthExpiry = useCallback(() => {
-    setSessionEndedNotice(SESSION_ENDED_NOTICE);
-    setCurrentUser(null);
-    setUserPermissions([]);
-  }, []);
-
-  // Any API request that finds the sign-in ended (from any screen or dialog) returns to the
-  // login screen with a note, rather than leaving that screen showing the raw 401 error.
-  useEffect(() => {
-    if (!currentUser) return;
-    return watchForEndedSession(handleAuthExpiry);
-  }, [currentUser?.id, handleAuthExpiry]);
 
   const openEntityModal = (entityType: EntityType, actionType: ActionType) => {
     let targetItem: EntityItem | null = null;
@@ -1352,59 +1239,6 @@ export default function App() {
     isExecutionCompleted: Boolean(isCompleted),
   });
 
-  // Fetch current user profile (/api/v1/auth/me) using the session cookie. No client-side
-  // fallback session: if the server doesn't confirm it, the user is logged out. (This used to
-  // fabricate a fake Admin session in the UI when a magic value was present or the request failed --
-  // that never granted real API access once the server started requiring signed tokens, but it
-  // could show a misleading "logged in as admin" state. Removed 2026-09-11.)
-  const fetchCurrentUser = useCallback(async () => {
-    try {
-      // Sign-ins from before the cookie existed left a token in localStorage; it's no longer used.
-      try {
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("user_id");
-      } catch {
-        // Storage unavailable -- nothing to clean up.
-      }
-
-      const res = await fetch("/api/v1/auth/me", { headers: authHeaders() });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.user) {
-          setCurrentUser(data.user);
-          setUserPermissions(data.user.permissions || []);
-        } else {
-          setCurrentUser(null);
-        }
-      } else {
-        // No sign-in, or it expired/was ended -- show the login screen.
-        setCurrentUser(null);
-      }
-    } catch {
-      // Network error reaching the server -- treat as logged out rather than assuming a session.
-      setCurrentUser(null);
-    } finally {
-      setAuthChecking(false);
-    }
-  }, []);
-
-  // Logout handler
-  const handleLogout = useCallback(async () => {
-    try {
-      // The server ends this session and clears the cookie.
-      await fetch("/api/v1/auth/logout", { method: "POST", headers: authHeaders() });
-    } catch {
-      // Ignore network error on logout
-    }
-    setCurrentUser(null);
-    setUserPermissions([]);
-    showToast("Signed out successfully.");
-  }, [showToast]);
-
-  useEffect(() => {
-    fetchCurrentUser();
-  }, [fetchCurrentUser]);
 
   // Real project list only resolves once authenticated (the endpoint requires a Bearer
   // token) -- (re)load it whenever a session is established, whether from a restored
