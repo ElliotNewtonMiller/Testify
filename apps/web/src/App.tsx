@@ -28,12 +28,7 @@ import {
   isFieldAvailable,
   toApiFilters,
 } from "./components/CaseFilterPanel";
-import {
-  EntityManagementModal,
-  EntityItem,
-  EntityType,
-  ActionType,
-} from "./components/EntityManagementModal";
+import { EntityManagementModal, EntityItem } from "./components/EntityManagementModal";
 import { authHeaders, jsonHeaders } from "./utils/session";
 import type {
   CustomFieldValueEntry,
@@ -67,9 +62,10 @@ import { useStepsScrollPreserved } from "./hooks/useStepsScrollPreserved";
 import { usePaneLayout } from "./hooks/usePaneLayout";
 import { useSession } from "./hooks/useSession";
 import { useToast } from "./hooks/useToast";
-
-/** Value of the Plan dropdown's "Show/Hide archived plans" entry -- never a real plan id. */
-const TOGGLE_ARCHIVED_PLANS_VALUE = "__toggle_archived_plans__";
+import { useScope } from "./hooks/useScope";
+import { AppProvider, type AppContextValue } from "./app/AppContext";
+import { AppHeader } from "./components/layout/AppHeader";
+import { StatusBanners } from "./components/layout/StatusBanners";
 
 // Execute mode before (or without) a loaded plan: nothing to show. (This used to be two
 // made-up cases, TFY-101/102, which appeared whenever no plan was selected or a load failed.)
@@ -208,18 +204,9 @@ export default function App() {
   // Two-step delete confirmation for suites -- mirrors AdminPanelModal's deleteFieldPrompt.
   const [deleteSuitePrompt, setDeleteSuitePrompt] = useState<{ id: string; detail: string } | null>(null);
 
-  // Two-step delete confirmation for test plans, same shape as deleteSuitePrompt -- shown by
-  // handleDeletePlanClick after a non-force delete comes back 409 (bypasses
-  // EntityManagementModal entirely, so this is the only confirmation dialog ever shown).
-  const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
-  // Same shape one level down, for test runs (builds) -- see handleDeleteRunClick.
-  const [deleteRunPrompt, setDeleteRunPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
   // Removing a case (or a suite's cases) that already has results asks first: the server
   // explains how many results it has; confirming retires it from the plan, keeping them.
   const [removeFromPlanPrompt, setRemoveFromPlanPrompt] = useState<{ kind: "case" | "suite"; id: string; detail: string } | null>(null);
-  // Shown in the same banner slot as deletePlanPrompt/deleteRunPrompt when the "+ Create New
-  // Test Run" button is clicked with no plan selected -- a Run can never exist without one.
-  const [noPlanSetWarning, setNoPlanSetWarning] = useState(false);
   // Shown as a yellow banner when the server refuses to record a result (403): easy to miss as
   // a status-bar message, especially when recording with the keyboard.
   // The yellow "Not permitted" banner's message, or null when it's hidden.
@@ -272,36 +259,43 @@ export default function App() {
     }
   }, [appView]);
 
-  // Entity Selection State (Project, Plan, Run)
-  // Start empty -- the real lists load once authenticated. (These used to start from fake
-  // placeholder projects/plans that never existed in the database.)
-  const [projectsList, setProjectsList] = useState<EntityItem[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(INITIAL_REPORTS_LINK?.project ?? "");
-
-  const [plansList, setPlansList] = useState<EntityItem[]>([]);
-  // Archived plans are hidden from the Plan dropdown unless revealed by its own last entry.
-  const [showArchivedPlans, setShowArchivedPlans] = useState(false);
-  const [selectedPlanId, setSelectedPlanId] = useState<string>(INITIAL_REPORTS_LINK?.plan ?? "");
+  // The Project / Plan / Run being worked in (hooks/useScope.ts).
+  const scope = useScope({
+    currentUser,
+    showToast,
+    handleAuthExpiry,
+    initial: { projectId: INITIAL_REPORTS_LINK?.project, planId: INITIAL_REPORTS_LINK?.plan, runId: INITIAL_REPORTS_LINK?.run },
+    onProjectSwitched: () => {
+      setSelectedSuiteId(null);
+      setExecSuiteFilterId(null);
+      setSpecSelectedCaseId(null);
+    },
+  });
+  const {
+    projectsList,
+    selectedProjectId,
+    plansList,
+    selectedPlanId,
+    setSelectedPlanId,
+    runsList,
+    setRunsList,
+    isTogglingRun,
+    selectedRunId,
+    setSelectedRunId,
+    selectedRun,
+    entityModalOpen,
+    setEntityModalOpen,
+    modalEntityType,
+    modalActionType,
+    modalSelectedItem,
+    runsListRequestSeq,
+    handleSaveEntity,
+    refreshRunsList,
+    handleToggleRunClosed,
+  } = scope;
   // The remove-from-plan confirmation acts on the selected plan -- drop it if that changes.
   useEffect(() => setRemoveFromPlanPrompt(null), [selectedPlanId]);
-  const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
-  // Starts empty, like the project and plan lists -- a Run can never exist
-  // without a real Test Plan (builds.test_plan_id is NOT NULL), so starting empty and
-  // relying on refreshExecutionWorkspace's real per-plan fetch (or the clearing effect
-  // below, when there's no plan at all) means the dropdown never shows a run that isn't
-  // genuinely tied to the currently selected plan.
-  const [runsList, setRunsList] = useState<EntityItem[]>([]);
-  const [isTogglingRun, setIsTogglingRun] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState<string>(INITIAL_REPORTS_LINK?.run ?? "");
-
-  // Entity Modal State
-  const [entityModalOpen, setEntityModalOpen] = useState<boolean>(false);
-  const [modalEntityType, setModalEntityType] = useState<EntityType>("PROJECT");
-  const [modalActionType, setModalActionType] = useState<ActionType>("CREATE");
-  const [modalSelectedItem, setModalSelectedItem] = useState<EntityItem | null>(
-    null,
-  );
 
   const notesInputRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -333,18 +327,6 @@ export default function App() {
   // load picking them) can fire several requests in quick succession. Without this, a
   // slower, now-stale response can resolve after a newer one and silently overwrite fresh data.
   const specTreeRequestSeq = useRef(0);
-  // Shared by BOTH refreshExecutionWorkspace and refreshRunsList -- they're two different
-  // ways of populating the same runsList/selectedRunId state (the heavier one, used in
-  // Execution mode, gets builds "for free" alongside the case queue it also fetches; the
-  // lighter one, used in Specification mode, fetches just the builds), and a stale in-flight
-  // call from EITHER one must be able to invalidate the other's write, not just its own --
-  // e.g. switching Spec (plan A) -> Execute (still A) -> a different plan B while still in
-  // Execute mode must not let plan A's now-abandoned Spec-mode fetch resolve later and
-  // silently overwrite plan B's freshly-loaded runs. One seq per logical resource being
-  // protected (runsList/selectedRunId), not one per function, matches how plansRequestSeq/
-  // specTreeRequestSeq are already scoped to the state they guard.
-  const runsListRequestSeq = useRef(0);
-  const plansRequestSeq = useRef(0);
 
   // Spec-mode multi-select resets on mode/project change; Escape clears it (outside inputs).
   useEffect(() => {
@@ -484,475 +466,6 @@ export default function App() {
   ]);
 
 
-  const openEntityModal = (entityType: EntityType, actionType: ActionType) => {
-    let targetItem: EntityItem | null = null;
-    if (entityType === "PROJECT") {
-      targetItem =
-        projectsList.find((p) => p.id === selectedProjectId) ||
-        projectsList[0] ||
-        null;
-    } else if (entityType === "PLAN") {
-      targetItem =
-        plansList.find((p) => p.id === selectedPlanId) || plansList[0] || null;
-    } else if (entityType === "RUN") {
-      targetItem =
-        runsList.find((r) => r.id === selectedRunId) || runsList[0] || null;
-    }
-
-    setModalEntityType(entityType);
-    setModalActionType(actionType);
-    setModalSelectedItem(targetItem);
-    setEntityModalOpen(true);
-  };
-
-  const handleSaveEntity = (
-    entityType: EntityType,
-    actionType: ActionType,
-    item: EntityItem,
-  ) => {
-    if (entityType === "PROJECT") {
-      // Real backend calls (POST/PUT /api/v1/projects[/:id], apps/server/src/routes/projects.ts).
-      // DELETE bypasses this modal -- see handleDeleteProjectClick below.
-      if (actionType === "CREATE") {
-        (async () => {
-          try {
-            const res = await fetch("/api/v1/projects", {
-              method: "POST",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, prefix: item.prefix }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create project");
-            const created = data.project;
-            setProjectsList((prev) => [...prev, { id: created.id, name: created.name, prefix: created.prefix }]);
-            handleSelectProject(created.id);
-            showToast(`Created New Project: ${created.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to create project");
-          }
-        })();
-      } else if (actionType === "EDIT") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${item.id}`, {
-              method: "PUT",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, prefix: item.prefix }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update project");
-            const updated = data.project;
-            setProjectsList((prev) =>
-              prev.map((p) => (p.id === updated.id ? { id: updated.id, name: updated.name, prefix: updated.prefix } : p)),
-            );
-            showToast(`Updated Project: ${updated.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to update project");
-          }
-        })();
-      }
-    } else if (entityType === "PLAN") {
-      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT/DELETE
-      // .../plans routes. Like PROJECT above and RUN below, Test Plan create/edit/delete
-      // actually persists.
-      // DELETE is handled by handleDeletePlanClick below instead of here -- it bypasses this
-      // modal entirely (see that function's comment for why).
-      if (!selectedProjectId) return;
-      if (actionType === "CREATE") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans`, {
-              method: "POST",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, status: item.status || "ACTIVE" }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test plan");
-            const created = data.plan;
-            setPlansList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
-            setSelectedPlanId(created.id);
-            setWorkspace((prev) =>
-              prev ? { ...prev, plan: { id: created.id, name: created.name, status: created.status } } : prev,
-            );
-            showToast(`Created New Test Plan: ${created.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to create test plan");
-          }
-        })();
-      } else if (actionType === "EDIT") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
-              method: "PUT",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, status: item.status }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test plan");
-            const updatedPlan = data.plan;
-            setPlansList((prev) =>
-              prev.map((p) => (p.id === updatedPlan.id ? { id: updatedPlan.id, name: updatedPlan.name, status: updatedPlan.status } : p)),
-            );
-            setWorkspace((prev) =>
-              prev && prev.plan.id === updatedPlan.id
-                ? { ...prev, plan: { ...prev.plan, name: updatedPlan.name, status: updatedPlan.status } }
-                : prev,
-            );
-            showToast(`Updated Test Plan: ${updatedPlan.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to update test plan");
-          }
-        })();
-      }
-    } else if (entityType === "RUN") {
-      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT
-      // .../plans/:planId/builds routes. A run always belongs to whichever plan is currently
-      // selected (there's no plan-picker in the modal -- matches how creating a Suite
-      // implicitly uses the selected project, not a picker). DELETE is handled by
-      // handleDeleteRunClick below instead of here, same reasoning as Plan delete above.
-      if (!selectedProjectId || !selectedPlanId) return;
-      if (actionType === "CREATE") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`, {
-              method: "POST",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, status: item.status || "OPEN" }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test run");
-            const created = data.build;
-            setRunsList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
-            setSelectedRunId(created.id);
-            setWorkspace((prev) =>
-              prev ? { ...prev, build: { id: created.id, name: created.name, status: created.status } } : prev,
-            );
-            showToast(`Created New Test Run: ${created.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to create test run");
-          }
-        })();
-      } else if (actionType === "EDIT") {
-        (async () => {
-          try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${item.id}`, {
-              method: "PUT",
-              headers: jsonHeaders(),
-              body: JSON.stringify({ name: item.name, status: item.status }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test run");
-            const updatedRun = data.build;
-            setRunsList((prev) =>
-              prev.map((r) => (r.id === updatedRun.id ? { id: updatedRun.id, name: updatedRun.name, status: updatedRun.status } : r)),
-            );
-            setWorkspace((prev) =>
-              prev && prev.build.id === updatedRun.id
-                ? { ...prev, build: { ...prev.build, name: updatedRun.name, status: updatedRun.status } }
-                : prev,
-            );
-            showToast(`Updated Test Run: ${updatedRun.name}`);
-          } catch (err: any) {
-            showToast(err.message || "Failed to update test run");
-          }
-        })();
-      }
-    }
-  };
-
-  // Shared local-state update after a plan is genuinely gone server-side (either path: a
-  // clean non-force delete, or the confirmed force delete below). Computed from the current
-  // plansList directly (not via setPlansList's functional-updater form) so the remaining-list
-  // length is available to decide selectedPlanId's next value without nesting one setState
-  // call inside another's updater callback.
-  const applyPlanDeletedLocally = (deletedId: string) => {
-    const updated = plansList.filter((p) => p.id !== deletedId);
-    setPlansList(updated);
-    if (selectedPlanId === deletedId) {
-      if (updated.length > 0) {
-        setSelectedPlanId(updated[0].id);
-        setWorkspace((prev) =>
-          prev ? { ...prev, plan: { id: updated[0].id, name: updated[0].name, status: updated[0].status || "ACTIVE" } } : prev,
-        );
-      } else {
-        // The last plan for this project is gone -- clear selectedPlanId (rather than
-        // leaving it dangling on the deleted id) so refreshSpecTree's selectedPlanId-keyed
-        // effect re-fires and refetches without a plan_id, immediately showing every case
-        // as not-in-plan instead of stale "In Plan" badges from the deleted plan.
-        setSelectedPlanId("");
-        // The deleted plan's builds are genuinely gone too (deleteWithForce cascades them
-        // server-side) -- without this, runsList/selectedRunId are never touched again, since
-        // refreshExecutionWorkspace itself no-ops once selectedPlanId is empty, leaving a
-        // stale, now-nonexistent Run showing in the dropdown forever.
-        setRunsList([]);
-        setSelectedRunId("");
-      }
-    }
-  };
-
-  // Plan delete (two-step confirmation), matching handleDeleteSuiteClick's exact pattern --
-  // attempts the real delete immediately with no separate "are you sure?" dialog first. That
-  // used to be EntityManagementModal's job (open a generic confirm modal, then on Confirm
-  // Click, this same attempt would run and could STILL come back 409 and show a second,
-  // content-bearing warning banner below it -- two stacked dialogs for one delete). Bypassing
-  // the modal for PLAN/DELETE specifically means the blocked-with-counts banner (below) is
-  // the only confirmation shown, ever -- same one-dialog shape Suite/Case delete already has.
-  // Project delete: try a plain delete first; a project with content comes back 409 with
-  // its counts, shown in the same yellow confirm banner the plan/run deletes use.
-  const applyProjectDeletedLocally = (deletedId: string) => {
-    const remaining = projectsList.filter((p) => p.id !== deletedId);
-    setProjectsList(remaining);
-    if (selectedProjectId === deletedId) handleSelectProject(remaining[0]?.id ?? "", { silent: true });
-  };
-
-  const handleDeleteProjectClick = useCallback(async () => {
-    const project = projectsList.find((p) => p.id === selectedProjectId);
-    if (!project) return;
-    try {
-      const res = await fetch(`/api/v1/projects/${project.id}`, { method: "DELETE", headers: authHeaders() });
-      if (res.status === 409) {
-        const data = await res.json();
-        setDeleteProjectPrompt({ id: project.id, name: project.name, detail: data.detail || "This project still contains content." });
-        return;
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete project");
-      }
-      applyProjectDeletedLocally(project.id);
-      showToast(`Deleted Project: ${project.name}`);
-    } catch (err: any) {
-      showToast(err.message || "Failed to delete project");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectsList, selectedProjectId, showToast]);
-
-  const handleConfirmDeleteProject = useCallback(async () => {
-    if (!deleteProjectPrompt) return;
-    try {
-      const res = await fetch(`/api/v1/projects/${deleteProjectPrompt.id}?force=true`, {
-        method: "DELETE",
-        headers: authHeaders(),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete project");
-      }
-      applyProjectDeletedLocally(deleteProjectPrompt.id);
-      showToast(`Deleted Project: ${deleteProjectPrompt.name}`);
-      setDeleteProjectPrompt(null);
-    } catch (err: any) {
-      showToast(err.message || "Failed to delete project");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deleteProjectPrompt, projectsList, selectedProjectId, showToast]);
-
-  const handleDeletePlanClick = useCallback(
-    async (planId: string) => {
-      if (!selectedProjectId) return;
-      const planName = plansList.find((p) => p.id === planId)?.name || "";
-      try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${planId}`, {
-          method: "DELETE",
-          headers: authHeaders(),
-        });
-        if (res.status === 409) {
-          const data = await res.json();
-          setDeletePlanPrompt({ id: planId, name: planName, detail: data.detail || "This test plan still contains content." });
-          return;
-        }
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}) as any);
-          throw new Error(data.error || "Failed to delete test plan");
-        }
-        applyPlanDeletedLocally(planId);
-        showToast(`Deleted Test Plan: ${planName}`);
-      } catch (err: any) {
-        showToast(err.message || "Failed to delete test plan");
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    },
-    [selectedProjectId, plansList, showToast],
-  );
-
-  const handleConfirmDeletePlan = useCallback(async () => {
-    if (!deletePlanPrompt || !selectedProjectId) return;
-    try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${deletePlanPrompt.id}?force=true`, {
-        method: "DELETE",
-        headers: authHeaders(),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete test plan");
-      }
-      applyPlanDeletedLocally(deletePlanPrompt.id);
-      const deletedName = deletePlanPrompt.name;
-      setDeletePlanPrompt(null);
-      showToast(`Deleted Test Plan: ${deletedName}`);
-    } catch (err: any) {
-      showToast(err.message || "Failed to delete test plan");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deletePlanPrompt, selectedProjectId, plansList, selectedPlanId, showToast]);
-
-  // Same shape as applyPlanDeletedLocally/handleDeletePlanClick/handleConfirmDeletePlan above,
-  // one level down (a run belongs to the selected plan, not the project).
-  const applyRunDeletedLocally = (deletedId: string) => {
-    const updated = runsList.filter((r) => r.id !== deletedId);
-    setRunsList(updated);
-    if (selectedRunId === deletedId) {
-      if (updated.length > 0) {
-        setSelectedRunId(updated[0].id);
-        setWorkspace((prev) =>
-          prev ? { ...prev, build: { id: updated[0].id, name: updated[0].name, status: updated[0].status || "OPEN" } } : prev,
-        );
-      } else {
-        setSelectedRunId("");
-      }
-    }
-  };
-
-  const handleDeleteRunClick = useCallback(
-    async (runId: string) => {
-      if (!selectedProjectId || !selectedPlanId) return;
-      const runName = runsList.find((r) => r.id === runId)?.name || "";
-      try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${runId}`, {
-          method: "DELETE",
-          headers: authHeaders(),
-        });
-        if (res.status === 409) {
-          const data = await res.json();
-          setDeleteRunPrompt({ id: runId, name: runName, detail: data.detail || "This test run still contains content." });
-          return;
-        }
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}) as any);
-          throw new Error(data.error || "Failed to delete test run");
-        }
-        applyRunDeletedLocally(runId);
-        showToast(`Deleted Test Run: ${runName}`);
-      } catch (err: any) {
-        showToast(err.message || "Failed to delete test run");
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    },
-    [selectedProjectId, selectedPlanId, runsList, showToast],
-  );
-
-  const handleConfirmDeleteRun = useCallback(async () => {
-    if (!deleteRunPrompt || !selectedProjectId || !selectedPlanId) return;
-    try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${deleteRunPrompt.id}?force=true`,
-        { method: "DELETE", headers: authHeaders() },
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete test run");
-      }
-      applyRunDeletedLocally(deleteRunPrompt.id);
-      const deletedName = deleteRunPrompt.name;
-      setDeleteRunPrompt(null);
-      showToast(`Deleted Test Run: ${deletedName}`);
-    } catch (err: any) {
-      showToast(err.message || "Failed to delete test run");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deleteRunPrompt, selectedProjectId, selectedPlanId, runsList, selectedRunId, showToast]);
-
-  const handleSelectProject = (projectId: string, opts: { silent?: boolean } = {}) => {
-    setSelectedProjectId(projectId);
-    setSelectedSuiteId(null);
-    setExecSuiteFilterId(null);
-    setShowArchivedPlans(false);
-    setSpecSelectedCaseId(null);
-    if (opts.silent) return;
-    const target = projectsList.find((p) => p.id === projectId);
-    if (target) showToast(`Switched to Project: ${target.name}`);
-  };
-
-  const handleSelectPlan = (planId: string) => {
-    setSelectedPlanId(planId);
-    const target = plansList.find((p) => p.id === planId);
-    if (target) showToast(`Switched to Test Plan: ${target.name}`);
-  };
-
-  const handleSelectRun = (runId: string) => {
-    setSelectedRunId(runId);
-    const target = runsList.find((r) => r.id === runId);
-    if (target) showToast(`Switched to Test Run: ${target.name}`);
-  };
-
-  // Real project/plan listings (replaces the hardcoded fake dropdown data that used to live
-  // here -- prj_01/02/03, pln_01/02/03 -- none of which exist in the DB).
-  const loadProjects = useCallback(async () => {
-    try {
-      const res = await fetch("/api/v1/projects", { headers: authHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        // Always apply the real list, even when it's empty (a fresh install has no projects).
-        const mapped: EntityItem[] = (data.projects || []).map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          prefix: p.prefix,
-        }));
-        setProjectsList(mapped);
-        setSelectedProjectId((prev) =>
-          mapped.some((p) => p.id === prev) ? prev : mapped[0]?.id ?? "",
-        );
-      }
-    } catch {
-      // Network error -- keep the existing (fallback) list
-    }
-  }, []);
-
-  const loadPlans = useCallback(async (projectId: string) => {
-    // Switching projects quickly can fire loadPlans several times with no guarantee the
-    // responses arrive in order -- without a sequence guard, a slower stale call (for a
-    // project no longer selected) can overwrite the current project's plansList.
-    const seq = ++plansRequestSeq.current;
-    try {
-      const res = await fetch(`/api/v1/projects/${projectId}/plans`, {
-        headers: authHeaders(),
-      });
-      if (plansRequestSeq.current !== seq) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (plansRequestSeq.current !== seq) return;
-        const mapped: EntityItem[] = (data.plans || []).map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          status: p.status,
-        }));
-        setPlansList(mapped);
-        // A project can genuinely have zero plans (e.g. its last one was just deleted) --
-        // without this branch, selectedPlanId/plansList were left stale on whatever the
-        // previous project had, so Spec mode kept showing a since-gone plan's "In Plan"
-        // state indefinitely.
-        // Default to the first plan that isn't archived (archived plans are hidden from the
-        // dropdown unless asked for), falling back to any plan.
-        setSelectedPlanId((prev) =>
-          mapped.length === 0
-            ? ""
-            : mapped.some((p) => p.id === prev)
-              ? prev
-              : (mapped.find((p) => p.status !== "ARCHIVED") ?? mapped[0]).id,
-        );
-      } else {
-        // A failed plans fetch clears the plan (and, through it, the run) rather than leaving
-        // the previous project's plan/run on screen under this project.
-        setPlansList([]);
-        setSelectedPlanId("");
-      }
-    } catch {
-      if (plansRequestSeq.current !== seq) return;
-      setPlansList([]);
-      setSelectedPlanId("");
-    }
-  }, []);
-
   // Execution-mode workspace: the selected plan's cases, with results from the selected run.
   const refreshExecutionWorkspace = useCallback(async () => {
     // Bump the sequence guard BEFORE the early-return, not after -- the effect below fires
@@ -1064,48 +577,6 @@ export default function App() {
   // just without the expensive case/step join. Shares runsListRequestSeq with
   // refreshExecutionWorkspace (see that ref's own comment) rather than using its own counter,
   // so a stale in-flight call from either function can never win over a newer one from either.
-  const refreshRunsList = useCallback(async () => {
-    // Bump before the early-return, for the exact same reason refreshExecutionWorkspace does
-    // (see its own comment) -- a project/plan switch can call this once with a still-current
-    // but about-to-be-abandoned selectedPlanId before it clears asynchronously.
-    const seq = ++runsListRequestSeq.current;
-    if (!selectedPlanId) {
-      if (runsListRequestSeq.current === seq) {
-        setRunsList([]);
-        setSelectedRunId("");
-      }
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`,
-        { headers: authHeaders() },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
-        const builds = data.builds || [];
-        // Same shape/behavior as refreshExecutionWorkspace's own runItems mapping -- an empty
-        // builds array must still positively clear the list, not leave stale data showing.
-        const runItems: EntityItem[] = builds.map((b: any) => ({
-          id: b.id,
-          name: (b.name || "").replace(/^Build\s+/i, "Run "),
-          status: b.status,
-        }));
-        setRunsList(runItems);
-        setSelectedRunId((prev) =>
-          runItems.length === 0 ? "" : runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
-        );
-        return;
-      }
-    } catch {
-      // API offline fallback
-    }
-    if (runsListRequestSeq.current === seq) {
-      setRunsList([]);
-      setSelectedRunId("");
-    }
-  }, [selectedPlanId, selectedProjectId]);
 
   // Specification-mode data: the whole project's suite/case spec, annotated with the
   // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
@@ -1240,32 +711,12 @@ export default function App() {
   });
 
 
-  // Real project list only resolves once authenticated (the endpoint requires a Bearer
-  // token) -- (re)load it whenever a session is established, whether from a restored
-  // token on mount or a fresh login.
-  useEffect(() => {
-    // Not until a forced password change is done: the server refuses everything else until then.
-    if (currentUser && !currentUser.must_change_password) {
-      loadProjects();
-    }
-  }, [currentUser, loadProjects]);
 
   // A refusal in one project says nothing about the next one.
   useEffect(() => {
     setExecutionDenied(null);
   }, [selectedProjectId]);
 
-  // Real plan list for whichever project is currently selected.
-  useEffect(() => {
-    if (currentUser && selectedProjectId) {
-      loadPlans(selectedProjectId);
-    } else if (currentUser) {
-      // No project (none exist yet, or the selected one was deleted): no plans either.
-      plansRequestSeq.current++;
-      setPlansList([]);
-      setSelectedPlanId("");
-    }
-  }, [currentUser, selectedProjectId, loadPlans]);
 
   // The actual workspace data fetch: Specification mode always needs the spec tree (it also
   // drives Pane 1's suite tree in BOTH modes -- see suiteNodes below). The Run dropdown's
@@ -1295,18 +746,6 @@ export default function App() {
     refreshRunsList,
   ]);
 
-  // A Run can never exist without a real Test Plan (builds.test_plan_id is NOT NULL), so
-  // runsList/selectedRunId must never show anything once there's no plan selected -- e.g.
-  // switching to a project with zero plans, not just the plan-delete path (which already
-  // clears these explicitly in applyPlanDeletedLocally). This reactive effect is the single
-  // catch-all for every such path, current and future, rather than relying on each caller to
-  // remember to clear it.
-  useEffect(() => {
-    if (!selectedPlanId) {
-      setRunsList([]);
-      setSelectedRunId("");
-    }
-  }, [selectedPlanId]);
 
   // Lazy per-case detail (steps/preconditions) for whichever case is selected in
   // Specification mode -- kept out of the bulk spec-tree payload to stay light for large
@@ -2029,7 +1468,6 @@ export default function App() {
   // A CLOSED run is read-only: no verdicts, no notes (the server also refuses them with
   // 422 BUILD_CLOSED). A run closes manually via the Close Run button, or automatically once
   // every case in the plan has a result.
-  const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
   const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
   const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
   // Why results can't be recorded right now (null = they can). Drives the verdict buttons,
@@ -2153,35 +1591,6 @@ export default function App() {
 
   // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
   // every other run edit (PUT .../plans/:planId/builds/:buildId).
-  const handleToggleRunClosed = useCallback(async () => {
-    if (!selectedProjectId || !selectedPlanId || !selectedRunId || !selectedRun) return;
-    const nextStatus = selectedRun.status === "CLOSED" ? "OPEN" : "CLOSED";
-    setIsTogglingRun(true);
-    try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${selectedRunId}`,
-        {
-          method: "PUT",
-          headers: jsonHeaders(),
-          body: JSON.stringify({ status: nextStatus }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 401) {
-          handleAuthExpiry();
-          return;
-        }
-        throw new Error(data.detail || data.error || "Failed to update the run");
-      }
-      setRunsList((prev) => prev.map((r) => (r.id === selectedRunId ? { ...r, status: nextStatus } : r)));
-      showToast(nextStatus === "CLOSED" ? "Run closed." : "Run opened.");
-    } catch (err: any) {
-      showToast(err.message || "Failed to update the run");
-    } finally {
-      setIsTogglingRun(false);
-    }
-  }, [selectedProjectId, selectedPlanId, selectedRunId, selectedRun, showToast, handleAuthExpiry]);
 
   // Cases visible in Pane 2 for Specification mode: the whole project, or just the
   // currently selected suite's direct cases if one is selected in the tree.
@@ -2310,22 +1719,18 @@ export default function App() {
         : "FAILED";
   }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
 
+  const can = permissionFlags(userPermissions);
   const {
     hasExecuteRunPermission,
     hasRunManagePermission,
-    hasAdminPanelAccess,
-    hasProjectCreatePermission,
-    hasProjectDeletePermission,
     hasPlanManagePermission,
     hasSpecCreatePermission,
     hasSpecEditPermission,
     hasSpecApprovePermission,
     hasSpecDeletePermission,
-    hasImportDataPermission,
-    hasExportDataPermission,
     hasSpecViewPermission,
     hasReportEmailPermission,
-  } = permissionFlags(userPermissions);
+  } = can;
   // Someone who can run tests but not view the spec works in Execute mode only.
   const canViewSpec = hasSpecViewPermission;
   useEffect(() => {
@@ -2603,1677 +2008,1039 @@ export default function App() {
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
 
+  const appContextValue: AppContextValue = {
+    currentUser,
+    handleLogout,
+    handleAuthExpiry,
+    showToast,
+    can,
+    scope,
+  };
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        width: "100vw",
-        overflow: "hidden",
-        backgroundColor: "#090d16",
-      }}
-    >
-      {/* AUTH, ADMIN, & ENTITY MODALS */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        currentUser={currentUser}
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
-          setUserPermissions(user.permissions || []);
-          showToast(
-            `Welcome back, ${user.username}! Signed in as ${user.global_role}.`,
-          );
-        }}
-        onUpdateCredentialsSuccess={(updatedUser) => {
-          setCurrentUser(updatedUser);
-        }}
-      />
-
-      <AdminPanelModal
-        isOpen={adminPanelOpen}
-        onClose={() => setAdminPanelOpen(false)}
-        currentUser={currentUser}
-        projects={projectsList}
-        onSelfPermissionsChanged={fetchCurrentUser}
-        onCustomFieldsChanged={() => setCustomFieldDefsVersion((v) => v + 1)}
-      />
-
-      <ImportWizardModal
-        isOpen={importWizardOpen}
-        onClose={() => setImportWizardOpen(false)}
-        projects={projectsList}
-        defaultProjectId={selectedProjectId}
-        onImportComplete={refreshSpecTree}
-      />
-
-      <ExportModal
-        isOpen={exportModalOpen}
-        onClose={() => setExportModalOpen(false)}
-        projects={projectsList}
-        defaultProjectId={selectedProjectId}
-      />
-
-      <EntityManagementModal
-        isOpen={entityModalOpen}
-        onClose={() => setEntityModalOpen(false)}
-        entityType={modalEntityType}
-        actionType={modalActionType}
-        selectedItem={modalSelectedItem}
-        onSave={handleSaveEntity}
-      />
-
-      {/* TOAST NOTIFICATION OVERLAY */}
-      {toastMessage && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "20px",
-            right: "20px",
-            zIndex: 9999,
-            backgroundColor: "#1e293b",
-            color: "#f87171",
-            border: "1px solid #ef4444",
-            padding: "8px 16px",
-            borderRadius: "6px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
-            fontSize: "12px",
-            fontWeight: 600,
-          }}
-        >
-          {toastMessage}
-        </div>
-      )}
-
-      {/* TOP HEADER */}
-      <header
+    <AppProvider value={appContextValue}>
+      <div
         style={{
-          minHeight: "48px",
-          backgroundColor: "#0d111c",
-          borderBottom: "1px solid #1f2937",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 16px",
-          fontSize: "12px",
-          gap: "12px",
-          flexWrap: "wrap",
+          flexDirection: "column",
+          height: "100vh",
+          width: "100vw",
+          overflow: "hidden",
+          backgroundColor: "#090d16",
         }}
       >
-        {/* ENTITY DROPDOWNS & ACTIONS (PROJECT, PLAN, RUN) */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            flexWrap: "wrap",
+        {/* AUTH, ADMIN, & ENTITY MODALS */}
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          currentUser={currentUser}
+          onLoginSuccess={(user) => {
+            setCurrentUser(user);
+            setUserPermissions(user.permissions || []);
+            showToast(
+              `Welcome back, ${user.username}! Signed in as ${user.global_role}.`,
+            );
           }}
-        >
-          <span
-            style={{
-              fontWeight: 800,
-              color: "#3b82f6",
-              letterSpacing: "0.5px",
-              fontSize: "13px",
-            }}
-          >
-            ⚡ TESTIFY
-          </span>
-          <span style={{ color: "#374151" }}>|</span>
-
-          {/* PROJECT SELECT & ACTIONS */}
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <span style={{ color: "#9ca3af", fontWeight: 600 }}>Project:</span>
-            <select
-              value={selectedProjectId}
-              onChange={(e) => handleSelectProject(e.target.value)}
-              style={{
-                backgroundColor: "#1e293b",
-                color: "#f8fafc",
-                border: "1px solid #334155",
-                borderRadius: "4px",
-                padding: "3px 6px",
-                fontSize: "11px",
-                fontWeight: 600,
-                outline: "none",
-                cursor: "pointer",
-              }}
-            >
-              {projectsList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.prefix})
-                </option>
-              ))}
-            </select>
-            {hasProjectCreatePermission && (
-              <button
-                onClick={() => openEntityModal("PROJECT", "CREATE")}
-                title="Create New Project"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ➕
-              </button>
-            )}
-            {hasProjectCreatePermission && (
-              <button
-                onClick={() => openEntityModal("PROJECT", "EDIT")}
-                disabled={!selectedProjectId}
-                title="Edit Selected Project"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ✏️
-              </button>
-            )}
-            {hasProjectDeletePermission && (
-              <button
-                onClick={handleDeleteProjectClick}
-                disabled={!selectedProjectId}
-                title="Delete Selected Project"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                🗑️
-              </button>
-            )}
-          </div>
-
-          <span style={{ color: "#374151" }}>|</span>
-
-          {/* PLAN SELECT & ACTIONS */}
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <span style={{ color: "#9ca3af", fontWeight: 600 }}>Plan:</span>
-            <select
-              value={selectedPlanId}
-              onChange={(e) => {
-                // The last entry toggles archived plans; it never becomes the selection.
-                if (e.target.value === TOGGLE_ARCHIVED_PLANS_VALUE) {
-                  setShowArchivedPlans((v) => !v);
-                  return;
-                }
-                handleSelectPlan(e.target.value);
-              }}
-              style={{
-                backgroundColor: "#1e293b",
-                color: "#f8fafc",
-                border: "1px solid #334155",
-                borderRadius: "4px",
-                padding: "3px 6px",
-                fontSize: "11px",
-                fontWeight: 600,
-                outline: "none",
-                cursor: "pointer",
-              }}
-            >
-              {(() => {
-                const current = plansList.filter((p) => p.status !== "ARCHIVED");
-                const archived = plansList.filter((p) => p.status === "ARCHIVED");
-                // An archived plan that's currently selected always stays visible, so the
-                // select never shows a blank value.
-                const archivedShown = showArchivedPlans
-                  ? archived
-                  : archived.filter((p) => p.id === selectedPlanId);
-                return (
-                  <>
-                    {current.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {/* ACTIVE is the normal state, so only LOCKED gets a suffix here. */}
-                        {p.status && p.status !== "ACTIVE" ? ` [${p.status}]` : ""}
-                      </option>
-                    ))}
-                    {archivedShown.length > 0 && (
-                      <optgroup label="Archived">
-                        {archivedShown.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {archived.length > 0 && (
-                      <option value={TOGGLE_ARCHIVED_PLANS_VALUE} style={{ color: "#94a3b8", fontStyle: "italic" }}>
-                        {showArchivedPlans ? "Hide archived plans" : `Show archived plans (${archived.length})`}
-                      </option>
-                    )}
-                  </>
-                );
-              })()}
-            </select>
-            {hasPlanManagePermission && (
-              <button
-                onClick={() => openEntityModal("PLAN", "CREATE")}
-                title="Create New Test Plan"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ➕
-              </button>
-            )}
-            {hasPlanManagePermission && (
-              <button
-                onClick={() => openEntityModal("PLAN", "EDIT")}
-                title="Edit Selected Test Plan"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ✏️
-              </button>
-            )}
-            {hasPlanManagePermission && (
-              <button
-                onClick={() => selectedPlanId && handleDeletePlanClick(selectedPlanId)}
-                title="Delete Selected Test Plan"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                🗑️
-              </button>
-            )}
-          </div>
-
-          <span style={{ color: "#374151" }}>|</span>
-
-          {/* RUN SELECT & ACTIONS */}
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <span style={{ color: "#9ca3af", fontWeight: 600 }}>Run:</span>
-            <select
-              value={selectedRunId}
-              onChange={(e) => handleSelectRun(e.target.value)}
-              style={{
-                backgroundColor: "#1e293b",
-                color: "#f8fafc",
-                border: "1px solid #334155",
-                borderRadius: "4px",
-                padding: "3px 6px",
-                fontSize: "11px",
-                fontWeight: 600,
-                outline: "none",
-                cursor: "pointer",
-              }}
-            >
-              {runsList.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                  {r.status === "CLOSED" ? " [CLOSED]" : ""}
-                </option>
-              ))}
-            </select>
-            {hasRunManagePermission && (
-              <button
-                onClick={() => (selectedPlanId ? openEntityModal("RUN", "CREATE") : setNoPlanSetWarning(true))}
-                title="Create New Test Run"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ➕
-              </button>
-            )}
-            {hasRunManagePermission && (
-              <button
-                onClick={() => openEntityModal("RUN", "EDIT")}
-                title="Edit Selected Test Run"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                ✏️
-              </button>
-            )}
-            {hasRunManagePermission && (
-              <button
-                onClick={() => selectedRunId && handleDeleteRunClick(selectedRunId)}
-                title="Delete Selected Test Run"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: "2px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                }}
-              >
-                🗑️
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* USER WIDGET & ADMIN PANEL */}
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          {hasImportDataPermission && (
-            <button
-              onClick={() => setImportWizardOpen(true)}
-              style={{
-                backgroundColor: "#0ea5e9",
-                color: "#ffffff",
-                border: "none",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              📥 Import
-            </button>
-          )}
-          {hasExportDataPermission && (
-            <button
-              onClick={() => setExportModalOpen(true)}
-              style={{
-                backgroundColor: "#0ea5e9",
-                color: "#ffffff",
-                border: "none",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              📤 Export
-            </button>
-          )}
-          {hasSpecViewPermission && (
-            <button
-              onClick={() => setAppView((v) => (v === "REPORTS" ? "WORKSPACE" : "REPORTS"))}
-              title={appView === "REPORTS" ? "Back to Execute / Spec" : "Open Reports"}
-              style={{
-                backgroundColor: appView === "REPORTS" ? "transparent" : "#0ea5e9",
-                color: appView === "REPORTS" ? "#7dd3fc" : "#ffffff",
-                border: appView === "REPORTS" ? "1px solid #0ea5e9" : "1px solid transparent",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              {appView === "REPORTS" ? "← Back to workspace" : "📊 Reports"}
-            </button>
-          )}
-          {hasAdminPanelAccess && (
-            <button
-              onClick={() => setAdminPanelOpen(true)}
-              style={{
-                backgroundColor: "#7c3aed",
-                color: "#ffffff",
-                border: "none",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              🛡️ Admin Panel
-            </button>
-          )}
-
-          {/* USER PROFILE WIDGET */}
-          {currentUser ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <button
-                onClick={() => setAuthModalOpen(true)}
-                style={{
-                  backgroundColor: "#1e293b",
-                  border: "1px solid #334155",
-                  borderRadius: "4px",
-                  padding: "3px 8px",
-                  color: "#f8fafc",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <span>
-                  👤 <strong>{currentUser.username}</strong>
-                </span>
-                <span
-                  style={{
-                    backgroundColor:
-                      currentUser.global_role === "Admin"
-                        ? "#6d28d9"
-                        : "#0284c7",
-                    color: "#fff",
-                    padding: "1px 5px",
-                    borderRadius: "3px",
-                    fontSize: "9px",
-                    fontWeight: 700,
-                  }}
-                >
-                  {currentUser.global_role}
-                </span>
-              </button>
-              <button
-                onClick={handleLogout}
-                style={{
-                  backgroundColor: "transparent",
-                  border: "1px solid #475569",
-                  color: "#94a3b8",
-                  padding: "3px 6px",
-                  borderRadius: "4px",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                }}
-              >
-                Sign Out
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setAuthModalOpen(true)}
-              style={{
-                backgroundColor: "#0284c7",
-                color: "#ffffff",
-                border: "none",
-                padding: "4px 12px",
-                borderRadius: "4px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              🔑 Sign In
-            </button>
-          )}
-        </div>
-      </header>
-
-      {deleteProjectPrompt && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
+          onUpdateCredentialsSuccess={(updatedUser) => {
+            setCurrentUser(updatedUser);
           }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ Confirm Deletion
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deleteProjectPrompt.detail}</div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setDeleteProjectPrompt(null)}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#334155",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirmDeleteProject}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#dc2626",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Delete Anyway
-            </button>
-          </div>
-        </div>
-      )}
-
-      {deletePlanPrompt && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ Confirm Deletion
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deletePlanPrompt.detail}</div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setDeletePlanPrompt(null)}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#334155",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirmDeletePlan}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#dc2626",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Delete Anyway
-            </button>
-          </div>
-        </div>
-      )}
-
-      {removeFromPlanPrompt && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>⚠️ Confirm Removal</div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{removeFromPlanPrompt.detail}</div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setRemoveFromPlanPrompt(null)}
-              style={{ padding: "5px 12px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                const prompt = removeFromPlanPrompt;
-                setRemoveFromPlanPrompt(null);
-                if (prompt.kind === "case") handleToggleCaseInclusion(prompt.id, false, true);
-                else handleToggleSuiteInclusion(prompt.id, "REMOVE", true);
-              }}
-              style={{ padding: "5px 12px", backgroundColor: "#dc2626", border: "none", borderRadius: "4px", color: "#fff", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
-            >
-              Remove anyway
-            </button>
-          </div>
-        </div>
-      )}
-
-      {deleteRunPrompt && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ Confirm Deletion
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{deleteRunPrompt.detail}</div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setDeleteRunPrompt(null)}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#334155",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirmDeleteRun}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#dc2626",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Delete Anyway
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Execute mode with no run to record against -- results are blocked until one exists. */}
-      {isRunMissing && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ No test run
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>{NO_RUN_MESSAGE}</div>
-        </div>
-      )}
-
-      {executionDenied && (
-        <div
-          role="alert"
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ Not permitted
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
-            {executionDenied}
-          </div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setExecutionDenied(null)}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#334155",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {noPlanSetWarning && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #92400e",
-            backgroundColor: "#78350f",
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, flexShrink: 0 }}>
-            ⚠️ No test plan set
-          </div>
-          <div style={{ fontSize: "11px", color: "#fde68a", flex: 1 }}>
-            Select or create a test plan before creating a test run
-          </div>
-          <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button
-              onClick={() => setNoPlanSetWarning(false)}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "#334155",
-                border: "none",
-                borderRadius: "4px",
-                color: "#fff",
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {appView === "REPORTS" && hasSpecViewPermission ? (
-        <ReportsView
-          projectId={selectedProjectId}
-          projectName={projectsList.find((p) => p.id === selectedProjectId)?.name ?? ""}
-          planId={selectedPlanId}
-          runId={selectedRunId}
-          runs={runsList}
-          plans={plansList}
-          canEmail={hasReportEmailPermission}
-          onSelectPlan={setSelectedPlanId}
-          onOpenInSpec={(caseId) => {
-            setAppView("WORKSPACE");
-            setWorkspaceMode("SPECIFICATION");
-            setSpecSelectedCaseId(caseId);
-          }}
-          initialLink={INITIAL_REPORTS_LINK}
         />
-      ) : (
-      /* 3-PANE TOPOLOGY WORKSPACE */
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* PANE 1: RECURSIVE TREE NAVIGATION (28px NODE DENSITY) */}
-        <div
-          style={{
-            width: `${suiteTreeWidth}px`,
-            backgroundColor: "#0d111c",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+
+        <AdminPanelModal
+          isOpen={adminPanelOpen}
+          onClose={() => setAdminPanelOpen(false)}
+          currentUser={currentUser}
+          projects={projectsList}
+          onSelfPermissionsChanged={fetchCurrentUser}
+          onCustomFieldsChanged={() => setCustomFieldDefsVersion((v) => v + 1)}
+        />
+
+        <ImportWizardModal
+          isOpen={importWizardOpen}
+          onClose={() => setImportWizardOpen(false)}
+          projects={projectsList}
+          defaultProjectId={selectedProjectId}
+          onImportComplete={refreshSpecTree}
+        />
+
+        <ExportModal
+          isOpen={exportModalOpen}
+          onClose={() => setExportModalOpen(false)}
+          projects={projectsList}
+          defaultProjectId={selectedProjectId}
+        />
+
+        <EntityManagementModal
+          isOpen={entityModalOpen}
+          onClose={() => setEntityModalOpen(false)}
+          entityType={modalEntityType}
+          actionType={modalActionType}
+          selectedItem={modalSelectedItem}
+          onSave={handleSaveEntity}
+        />
+
+        {/* TOAST NOTIFICATION OVERLAY */}
+        {toastMessage && (
           <div
             style={{
-              padding: "10px 12px",
-              borderBottom: "1px solid #1f2937",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              position: "fixed",
+              bottom: "20px",
+              right: "20px",
+              zIndex: 9999,
+              backgroundColor: "#1e293b",
+              color: "#f87171",
+              border: "1px solid #ef4444",
+              padding: "8px 16px",
+              borderRadius: "6px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+              fontSize: "12px",
+              fontWeight: 600,
             }}
           >
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "#6b7280",
-                textTransform: "uppercase",
-              }}
-            >
-              SUITE TREE
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {workspaceMode === "SPECIFICATION" && hasSpecCreatePermission && (
-                <button
-                  onClick={() => openCreateSuiteForm(null)}
-                  title="Create a new top-level suite"
-                  style={{
-                    border: "1px solid #334155",
-                    borderRadius: "4px",
-                    padding: "2px 8px",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    backgroundColor: "transparent",
-                    color: "#60a5fa",
-                  }}
-                >
-                  + Suite
-                </button>
-              )}
-              {/* SPECIFICATION / EXECUTION MODE TOGGLE -- visible to any authenticated user
-                  (per-case/suite plan-inclusion buttons are the part gated by PLAN_MANAGE,
-                  not this toggle itself). */}
-              <div
-                style={{
-                  display: "flex",
-                  border: "1px solid #334155",
-                  borderRadius: "4px",
-                  overflow: "hidden",
-                }}
-              >
-                {(["EXECUTION", "SPECIFICATION"] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setWorkspaceMode(m)}
-                    disabled={m === "SPECIFICATION" && !hasSpecViewPermission}
-                    title={m === "SPECIFICATION" && !hasSpecViewPermission ? "Your role can't view test specifications" : undefined}
-                    style={{
-                      border: "none",
-                      padding: "3px 8px",
-                      fontSize: "10px",
-                      fontWeight: 700,
-                      cursor: m === "SPECIFICATION" && !hasSpecViewPermission ? "not-allowed" : "pointer",
-                      opacity: m === "SPECIFICATION" && !hasSpecViewPermission ? 0.4 : 1,
-                      backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
-                      color: workspaceMode === m ? "#ffffff" : "#9ca3af",
-                    }}
-                  >
-                    {m === "EXECUTION" ? "Execute" : "Spec"}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {toastMessage}
           </div>
+        )}
 
-          <CaseFilterPanel
-            value={caseFilter}
-            onChange={setCaseFilter}
-            fields={caseFilterFields}
-            mode={workspaceMode}
-            hasPlan={Boolean(selectedPlanId)}
-            hasRun={Boolean(selectedRunId)}
-            searchInputRef={searchInputRef}
-            matchCount={
-              filterResult
-                ? workspaceMode === "EXECUTION"
-                  ? visibleCaseIndices.length
-                  : filterResult.caseIds.size
-                : null
-            }
-            totalCount={
-              workspaceMode === "EXECUTION" ? workspace?.cases.length || 0 : specData?.cases.length || 0
-            }
-            onRequestFields={loadCaseFilterFields}
-            showDeprecated={showDeprecated}
-            onToggleShowDeprecated={() => setShowDeprecated((v) => !v)}
-            treeExpandControl={
-              expandableSuiteIds.length > 0
-                ? { allExpanded: allSuitesExpanded, onToggle: toggleAllSuitesExpanded }
-                : undefined
-            }
-            runControl={
-              workspaceMode === "EXECUTION" && selectedRun
-                ? {
-                    closed: selectedRun.status === "CLOSED",
-                    canToggle: hasRunManagePermission,
-                    pending: isTogglingRun,
-                    onToggle: handleToggleRunClosed,
-                  }
-                : undefined
-            }
+        <AppHeader
+          appView={appView}
+          setAppView={setAppView}
+          setImportWizardOpen={setImportWizardOpen}
+          setExportModalOpen={setExportModalOpen}
+          setAdminPanelOpen={setAdminPanelOpen}
+          setAuthModalOpen={setAuthModalOpen}
+        />
+
+        <StatusBanners
+          removeFromPlanPrompt={removeFromPlanPrompt}
+          setRemoveFromPlanPrompt={setRemoveFromPlanPrompt}
+          handleToggleCaseInclusion={handleToggleCaseInclusion}
+          handleToggleSuiteInclusion={handleToggleSuiteInclusion}
+          isRunMissing={isRunMissing}
+          executionDenied={executionDenied}
+          setExecutionDenied={setExecutionDenied}
+        />
+
+        {appView === "REPORTS" && hasSpecViewPermission ? (
+          <ReportsView
+            projectId={selectedProjectId}
+            projectName={projectsList.find((p) => p.id === selectedProjectId)?.name ?? ""}
+            planId={selectedPlanId}
+            runId={selectedRunId}
+            runs={runsList}
+            plans={plansList}
+            canEmail={hasReportEmailPermission}
+            onSelectPlan={setSelectedPlanId}
+            onOpenInSpec={(caseId) => {
+              setAppView("WORKSPACE");
+              setWorkspaceMode("SPECIFICATION");
+              setSpecSelectedCaseId(caseId);
+            }}
+            initialLink={INITIAL_REPORTS_LINK}
           />
-          {filterError && (
-            <div style={{ padding: "4px 12px", fontSize: "10px", color: "#f87171", borderBottom: "1px solid #1f2937" }}>
-              {filterError}
-            </div>
-          )}
-
-          {workspaceMode === "SPECIFICATION" && suiteFormState && (
+        ) : (
+        /* 3-PANE TOPOLOGY WORKSPACE */
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* PANE 1: RECURSIVE TREE NAVIGATION (28px NODE DENSITY) */}
+          <div
+            style={{
+              width: `${suiteTreeWidth}px`,
+              backgroundColor: "#0d111c",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <div
               style={{
                 padding: "10px 12px",
                 borderBottom: "1px solid #1f2937",
-                backgroundColor: "#111827",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
               }}
             >
-              <div style={{ fontSize: "11px", fontWeight: 600, color: "#e5e7eb", marginBottom: "6px" }}>
-                {suiteFormState.mode === "CREATE" ? "New Suite" : "Rename / Move Suite"}
-              </div>
-              <input
-                type="text"
-                placeholder="Suite name"
-                value={suiteFormState.name}
-                onChange={(e) => setSuiteFormState((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && suiteFormState.name.trim() && !isSavingSuiteForm) handleSaveSuiteForm();
-                }}
-                autoFocus
+              <span
                 style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: "5px 8px",
-                  marginBottom: "6px",
-                  backgroundColor: "#0d111c",
-                  border: "1px solid #1f2937",
-                  borderRadius: "4px",
-                  color: "#f8fafc",
-                  fontSize: "12px",
-                }}
-              />
-              <select
-                value={suiteFormState.parentSuiteId ?? ""}
-                onChange={(e) =>
-                  setSuiteFormState((prev) => (prev ? { ...prev, parentSuiteId: e.target.value || null } : prev))
-                }
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: "5px 8px",
-                  marginBottom: "6px",
-                  backgroundColor: "#0d111c",
-                  border: "1px solid #1f2937",
-                  borderRadius: "4px",
-                  color: "#f8fafc",
-                  fontSize: "12px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#6b7280",
+                  textTransform: "uppercase",
                 }}
               >
-                <option value="">(Top-level, no parent)</option>
-                {flattenSuiteOptions(suiteNodes).map((o) => (
-                  <option key={o.id} value={o.id} disabled={o.id === suiteFormState.targetId}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <button
-                  onClick={() => setSuiteFormState(null)}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: "#334155",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveSuiteForm}
-                  disabled={isSavingSuiteForm || !suiteFormState.name.trim()}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: isSavingSuiteForm ? "#166534" : "#16a34a",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: isSavingSuiteForm ? "default" : "pointer",
-                  }}
-                >
-                  {isSavingSuiteForm ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {workspaceMode === "SPECIFICATION" && deleteSuitePrompt && (
-            <div
-              style={{
-                padding: "10px 12px",
-                borderBottom: "1px solid #92400e",
-                backgroundColor: "#78350f",
-              }}
-            >
-              <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
-                ⚠️ Confirm Deletion
-              </div>
-              <div style={{ fontSize: "11px", color: "#fde68a", marginBottom: "8px", lineHeight: 1.4 }}>
-                {deleteSuitePrompt.detail}
-              </div>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <button
-                  onClick={() => setDeleteSuitePrompt(null)}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: "#334155",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmDeleteSuite}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: "#dc2626",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Delete Anyway
-                </button>
-              </div>
-            </div>
-          )}
-
-          <VirtualizedSuiteTree
-            suites={suiteNodes}
-            expandedMap={suiteExpandedMap}
-            onExpandedMapChange={setSuiteExpandedMap}
-            selectedSuiteId={
-              workspaceMode === "EXECUTION"
-                ? execSuiteFilterId
-                : specSelectedSuiteIds.size > 0
-                  ? null
-                  : selectedSuiteId
-            }
-            selectedSuiteIds={workspaceMode === "SPECIFICATION" ? specSelectedSuiteIds : undefined}
-            canDrag={workspaceMode === "SPECIFICATION" && hasSpecEditPermission}
-            onDragStartSuite={(id, e) => handleSpecDragStart("SUITES", id, e)}
-            onDragEndItems={() => setDragPayload(null)}
-            draggingKind={workspaceMode === "SPECIFICATION" ? dragPayload?.kind ?? null : null}
-            canDropOn={canDropSpecItemsOn}
-            onDropOn={handleSpecDrop}
-            activeSuiteId={
-              workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
-            }
-            onSelectSuite={(suiteId, mods) => {
-              if (workspaceMode === "EXECUTION") {
-                // Execute mode: narrows the queue to this suite's cases; clicking the selected
-                // suite again shows everything again. If the active case isn't in the suite,
-                // jump to the suite's first case so the active case is always listed.
-                if (execSuiteFilterId === suiteId) {
-                  setExecSuiteFilterId(null);
-                  return;
-                }
-                setExecSuiteFilterId(suiteId);
-                const inSuite = visibleCaseIndices.filter(
-                  (i) => workspace?.cases[i]?.test_suite_id === suiteId,
-                );
-                if (inSuite.length > 0 && !inSuite.includes(selectedIndex)) setSelectedIndex(inSuite[0]);
-                return;
-              }
-              // Spec mode: a plain click is deliberately not a toggle -- clicking the already-
-              // selected suite again must not deselect it (per direct request); it switches
-              // Pane 3 back to that suite's details. Shift/Ctrl-Cmd build a multi-selection.
-              handleSpecSuiteClick(suiteId, mods);
-            }}
-            mode={workspaceMode}
-            canManagePlan={hasPlanManagePermission}
-            onToggleSuiteInclusion={handleToggleSuiteInclusion}
-            canCreateSuites={hasSpecCreatePermission}
-            canEditSuites={hasSpecEditPermission}
-            canDeleteSuites={hasSpecDeletePermission}
-            onCreateChildSuite={(parentId) => openCreateSuiteForm(parentId)}
-            onRenameSuite={(suiteId, name, parentId) => openRenameSuiteForm(suiteId, name, parentId)}
-            onDeleteSuite={(suiteId) => handleDeleteSuiteClick(suiteId)}
-          />
-        </div>
-
-        {/* DIVIDER: PANE 1 / PANE 2 */}
-        <div
-          onMouseDown={handleDividerMouseDown("tree")}
-          onMouseEnter={() => setHoveredDivider("tree")}
-          onMouseLeave={() => setHoveredDivider(null)}
-          style={dividerStyle("tree")}
-        />
-
-        {/* PANE 2: TEST CASE QUEUE GRID (32px ROW DENSITY) */}
-        <div
-          style={{
-            width: `${queueGridWidth}px`,
-            backgroundColor: "#111827",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              padding: "10px 12px",
-              borderBottom: "1px solid #1f2937",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "#6b7280",
-                textTransform: "uppercase",
-              }}
-            >
-              {workspaceMode === "SPECIFICATION" ? "SPECIFICATION" : "QUEUE GRID"}
-            </span>
-            {workspaceMode === "SPECIFICATION" ? (
-              <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontSize: "11px", color: "#9ca3af" }}>
-                  {specCasesForSuite.filter((c) => c.in_plan).length}/{specCasesForSuite.length} in plan
-                </span>
-                {hasSpecCreatePermission && (
+                SUITE TREE
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {workspaceMode === "SPECIFICATION" && hasSpecCreatePermission && (
                   <button
-                    onClick={() => setIsCaseCreateFormOpen((prev) => !prev)}
-                    disabled={!selectedSuiteId}
-                    title={selectedSuiteId ? "Create a new case in the selected suite" : "Select a suite first"}
+                    onClick={() => openCreateSuiteForm(null)}
+                    title="Create a new top-level suite"
                     style={{
                       border: "1px solid #334155",
                       borderRadius: "4px",
                       padding: "2px 8px",
                       fontSize: "11px",
                       fontWeight: 700,
-                      cursor: selectedSuiteId ? "pointer" : "not-allowed",
+                      cursor: "pointer",
                       backgroundColor: "transparent",
-                      color: selectedSuiteId ? "#60a5fa" : "#4b5563",
+                      color: "#60a5fa",
                     }}
                   >
-                    + Case
+                    + Suite
                   </button>
                 )}
-              </span>
-            ) : (
-              <span style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-              {execSuiteFilterId && (
-                <button
-                  onClick={() => setExecSuiteFilterId(null)}
-                  title="Showing one suite's cases -- click to show all cases again"
+                {/* SPECIFICATION / EXECUTION MODE TOGGLE -- visible to any authenticated user
+                    (per-case/suite plan-inclusion buttons are the part gated by PLAN_MANAGE,
+                    not this toggle itself). */}
+                <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                    maxWidth: "160px",
-                    border: "1px solid #1e3a8a",
+                    border: "1px solid #334155",
                     borderRadius: "4px",
-                    padding: "1px 6px",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    backgroundColor: "rgba(59, 130, 246, 0.12)",
-                    color: "#93c5fd",
-                    cursor: "pointer",
+                    overflow: "hidden",
                   }}
                 >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    📁 {specData ? findSuiteNode(specData.suites, execSuiteFilterId)?.name ?? "Suite" : "Suite"}
+                  {(["EXECUTION", "SPECIFICATION"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setWorkspaceMode(m)}
+                      disabled={m === "SPECIFICATION" && !hasSpecViewPermission}
+                      title={m === "SPECIFICATION" && !hasSpecViewPermission ? "Your role can't view test specifications" : undefined}
+                      style={{
+                        border: "none",
+                        padding: "3px 8px",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        cursor: m === "SPECIFICATION" && !hasSpecViewPermission ? "not-allowed" : "pointer",
+                        opacity: m === "SPECIFICATION" && !hasSpecViewPermission ? 0.4 : 1,
+                        backgroundColor: workspaceMode === m ? "#3b82f6" : "#1e293b",
+                        color: workspaceMode === m ? "#ffffff" : "#9ca3af",
+                      }}
+                    >
+                      {m === "EXECUTION" ? "Execute" : "Spec"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <CaseFilterPanel
+              value={caseFilter}
+              onChange={setCaseFilter}
+              fields={caseFilterFields}
+              mode={workspaceMode}
+              hasPlan={Boolean(selectedPlanId)}
+              hasRun={Boolean(selectedRunId)}
+              searchInputRef={searchInputRef}
+              matchCount={
+                filterResult
+                  ? workspaceMode === "EXECUTION"
+                    ? visibleCaseIndices.length
+                    : filterResult.caseIds.size
+                  : null
+              }
+              totalCount={
+                workspaceMode === "EXECUTION" ? workspace?.cases.length || 0 : specData?.cases.length || 0
+              }
+              onRequestFields={loadCaseFilterFields}
+              showDeprecated={showDeprecated}
+              onToggleShowDeprecated={() => setShowDeprecated((v) => !v)}
+              treeExpandControl={
+                expandableSuiteIds.length > 0
+                  ? { allExpanded: allSuitesExpanded, onToggle: toggleAllSuitesExpanded }
+                  : undefined
+              }
+              runControl={
+                workspaceMode === "EXECUTION" && selectedRun
+                  ? {
+                      closed: selectedRun.status === "CLOSED",
+                      canToggle: hasRunManagePermission,
+                      pending: isTogglingRun,
+                      onToggle: handleToggleRunClosed,
+                    }
+                  : undefined
+              }
+            />
+            {filterError && (
+              <div style={{ padding: "4px 12px", fontSize: "10px", color: "#f87171", borderBottom: "1px solid #1f2937" }}>
+                {filterError}
+              </div>
+            )}
+
+            {workspaceMode === "SPECIFICATION" && suiteFormState && (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderBottom: "1px solid #1f2937",
+                  backgroundColor: "#111827",
+                }}
+              >
+                <div style={{ fontSize: "11px", fontWeight: 600, color: "#e5e7eb", marginBottom: "6px" }}>
+                  {suiteFormState.mode === "CREATE" ? "New Suite" : "Rename / Move Suite"}
+                </div>
+                <input
+                  type="text"
+                  placeholder="Suite name"
+                  value={suiteFormState.name}
+                  onChange={(e) => setSuiteFormState((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && suiteFormState.name.trim() && !isSavingSuiteForm) handleSaveSuiteForm();
+                  }}
+                  autoFocus
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "5px 8px",
+                    marginBottom: "6px",
+                    backgroundColor: "#0d111c",
+                    border: "1px solid #1f2937",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                  }}
+                />
+                <select
+                  value={suiteFormState.parentSuiteId ?? ""}
+                  onChange={(e) =>
+                    setSuiteFormState((prev) => (prev ? { ...prev, parentSuiteId: e.target.value || null } : prev))
+                  }
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "5px 8px",
+                    marginBottom: "6px",
+                    backgroundColor: "#0d111c",
+                    border: "1px solid #1f2937",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                  }}
+                >
+                  <option value="">(Top-level, no parent)</option>
+                  {flattenSuiteOptions(suiteNodes).map((o) => (
+                    <option key={o.id} value={o.id} disabled={o.id === suiteFormState.targetId}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    onClick={() => setSuiteFormState(null)}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: "#334155",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveSuiteForm}
+                    disabled={isSavingSuiteForm || !suiteFormState.name.trim()}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: isSavingSuiteForm ? "#166534" : "#16a34a",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: isSavingSuiteForm ? "default" : "pointer",
+                    }}
+                  >
+                    {isSavingSuiteForm ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {workspaceMode === "SPECIFICATION" && deleteSuitePrompt && (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderBottom: "1px solid #92400e",
+                  backgroundColor: "#78350f",
+                }}
+              >
+                <div style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
+                  ⚠️ Confirm Deletion
+                </div>
+                <div style={{ fontSize: "11px", color: "#fde68a", marginBottom: "8px", lineHeight: 1.4 }}>
+                  {deleteSuitePrompt.detail}
+                </div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    onClick={() => setDeleteSuitePrompt(null)}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: "#334155",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmDeleteSuite}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: "#dc2626",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Delete Anyway
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <VirtualizedSuiteTree
+              suites={suiteNodes}
+              expandedMap={suiteExpandedMap}
+              onExpandedMapChange={setSuiteExpandedMap}
+              selectedSuiteId={
+                workspaceMode === "EXECUTION"
+                  ? execSuiteFilterId
+                  : specSelectedSuiteIds.size > 0
+                    ? null
+                    : selectedSuiteId
+              }
+              selectedSuiteIds={workspaceMode === "SPECIFICATION" ? specSelectedSuiteIds : undefined}
+              canDrag={workspaceMode === "SPECIFICATION" && hasSpecEditPermission}
+              onDragStartSuite={(id, e) => handleSpecDragStart("SUITES", id, e)}
+              onDragEndItems={() => setDragPayload(null)}
+              draggingKind={workspaceMode === "SPECIFICATION" ? dragPayload?.kind ?? null : null}
+              canDropOn={canDropSpecItemsOn}
+              onDropOn={handleSpecDrop}
+              activeSuiteId={
+                workspaceMode === "EXECUTION" ? activeCase?.test_suite_id || null : null
+              }
+              onSelectSuite={(suiteId, mods) => {
+                if (workspaceMode === "EXECUTION") {
+                  // Execute mode: narrows the queue to this suite's cases; clicking the selected
+                  // suite again shows everything again. If the active case isn't in the suite,
+                  // jump to the suite's first case so the active case is always listed.
+                  if (execSuiteFilterId === suiteId) {
+                    setExecSuiteFilterId(null);
+                    return;
+                  }
+                  setExecSuiteFilterId(suiteId);
+                  const inSuite = visibleCaseIndices.filter(
+                    (i) => workspace?.cases[i]?.test_suite_id === suiteId,
+                  );
+                  if (inSuite.length > 0 && !inSuite.includes(selectedIndex)) setSelectedIndex(inSuite[0]);
+                  return;
+                }
+                // Spec mode: a plain click is deliberately not a toggle -- clicking the already-
+                // selected suite again must not deselect it (per direct request); it switches
+                // Pane 3 back to that suite's details. Shift/Ctrl-Cmd build a multi-selection.
+                handleSpecSuiteClick(suiteId, mods);
+              }}
+              mode={workspaceMode}
+              canManagePlan={hasPlanManagePermission}
+              onToggleSuiteInclusion={handleToggleSuiteInclusion}
+              canCreateSuites={hasSpecCreatePermission}
+              canEditSuites={hasSpecEditPermission}
+              canDeleteSuites={hasSpecDeletePermission}
+              onCreateChildSuite={(parentId) => openCreateSuiteForm(parentId)}
+              onRenameSuite={(suiteId, name, parentId) => openRenameSuiteForm(suiteId, name, parentId)}
+              onDeleteSuite={(suiteId) => handleDeleteSuiteClick(suiteId)}
+            />
+          </div>
+
+          {/* DIVIDER: PANE 1 / PANE 2 */}
+          <div
+            onMouseDown={handleDividerMouseDown("tree")}
+            onMouseEnter={() => setHoveredDivider("tree")}
+            onMouseLeave={() => setHoveredDivider(null)}
+            style={dividerStyle("tree")}
+          />
+
+          {/* PANE 2: TEST CASE QUEUE GRID (32px ROW DENSITY) */}
+          <div
+            style={{
+              width: `${queueGridWidth}px`,
+              backgroundColor: "#111827",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                padding: "10px 12px",
+                borderBottom: "1px solid #1f2937",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#6b7280",
+                  textTransform: "uppercase",
+                }}
+              >
+                {workspaceMode === "SPECIFICATION" ? "SPECIFICATION" : "QUEUE GRID"}
+              </span>
+              {workspaceMode === "SPECIFICATION" ? (
+                <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                    {specCasesForSuite.filter((c) => c.in_plan).length}/{specCasesForSuite.length} in plan
                   </span>
-                  <span>✕</span>
-                </button>
+                  {hasSpecCreatePermission && (
+                    <button
+                      onClick={() => setIsCaseCreateFormOpen((prev) => !prev)}
+                      disabled={!selectedSuiteId}
+                      title={selectedSuiteId ? "Create a new case in the selected suite" : "Select a suite first"}
+                      style={{
+                        border: "1px solid #334155",
+                        borderRadius: "4px",
+                        padding: "2px 8px",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        cursor: selectedSuiteId ? "pointer" : "not-allowed",
+                        backgroundColor: "transparent",
+                        color: selectedSuiteId ? "#60a5fa" : "#4b5563",
+                      }}
+                    >
+                      + Case
+                    </button>
+                  )}
+                </span>
+              ) : (
+                <span style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                {execSuiteFilterId && (
+                  <button
+                    onClick={() => setExecSuiteFilterId(null)}
+                    title="Showing one suite's cases -- click to show all cases again"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      maxWidth: "160px",
+                      border: "1px solid #1e3a8a",
+                      borderRadius: "4px",
+                      padding: "1px 6px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      backgroundColor: "rgba(59, 130, 246, 0.12)",
+                      color: "#93c5fd",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      📁 {specData ? findSuiteNode(specData.suites, execSuiteFilterId)?.name ?? "Suite" : "Suite"}
+                    </span>
+                    <span>✕</span>
+                  </button>
+                )}
+                <span style={{ fontSize: "11px", color: "#9ca3af", whiteSpace: "nowrap" }}>
+                  <span style={{ color: "#10b981" }}>{passedCount} Pass</span> |{" "}
+                  <span style={{ color: "#ef4444" }}>{failedCount} Fail</span>
+                </span>
+                </span>
               )}
-              <span style={{ fontSize: "11px", color: "#9ca3af", whiteSpace: "nowrap" }}>
-                <span style={{ color: "#10b981" }}>{passedCount} Pass</span> |{" "}
-                <span style={{ color: "#ef4444" }}>{failedCount} Fail</span>
-              </span>
-              </span>
+            </div>
+
+            {workspaceMode === "SPECIFICATION" && isCaseCreateFormOpen && selectedSuiteId && (
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid #1f2937", backgroundColor: "#0d111c" }}>
+                <input
+                  type="text"
+                  placeholder="New case title"
+                  value={newCaseTitle}
+                  onChange={(e) => setNewCaseTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newCaseTitle.trim() && !isCreatingCase) handleCreateCase();
+                  }}
+                  autoFocus
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "5px 8px",
+                    marginBottom: "6px",
+                    backgroundColor: "#111827",
+                    border: "1px solid #1f2937",
+                    borderRadius: "4px",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                  }}
+                />
+                <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+                  <select
+                    value={newCasePriority}
+                    onChange={(e) => setNewCasePriority(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: "5px 8px",
+                      backgroundColor: "#111827",
+                      border: "1px solid #1f2937",
+                      borderRadius: "4px",
+                      color: "#f8fafc",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={newCaseExecutionType}
+                    onChange={(e) => setNewCaseExecutionType(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: "5px 8px",
+                      backgroundColor: "#111827",
+                      border: "1px solid #1f2937",
+                      borderRadius: "4px",
+                      color: "#f8fafc",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {["MANUAL", "AUTOMATED"].map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    onClick={() => setIsCaseCreateFormOpen(false)}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: "#334155",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateCase}
+                    disabled={isCreatingCase || !newCaseTitle.trim()}
+                    style={{
+                      flex: 1,
+                      padding: "5px",
+                      backgroundColor: isCreatingCase ? "#166534" : "#16a34a",
+                      border: "none",
+                      borderRadius: "4px",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      cursor: isCreatingCase ? "default" : "pointer",
+                    }}
+                  >
+                    {isCreatingCase ? "Creating..." : "Create Case"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(workspaceMode === "SPECIFICATION"
+              ? filterResult && specCasesForSuite.length === 0
+              : (filterResult || execSuiteFilterId) && queueCaseIndices.length === 0) && (
+                <div style={{ padding: "16px 12px", fontSize: "11px", color: "#6b7280", textAlign: "center" }}>
+                  {workspaceMode === "SPECIFICATION"
+                    ? selectedSuiteId
+                      ? "No cases in this suite match the current search/filters."
+                      : "No cases match the current search/filters."
+                    : execSuiteFilterId
+                      ? filterResult
+                        ? "No cases in this suite match the current search/filters."
+                        : "None of this suite's cases are in this test plan."
+                      : "No cases match the current search/filters."}
+                </div>
+              )}
+            {workspaceMode === "SPECIFICATION" ? (
+              <SpecCaseListGrid
+                cases={specCasesForSuite}
+                selectedCaseId={specSelectedCaseIds.size > 0 ? null : specSelectedCaseId}
+                selectedCaseIds={specSelectedCaseIds}
+                onSelectCase={handleSpecCaseClick}
+                canDrag={hasSpecEditPermission}
+                onDragStartCase={(id, e) => handleSpecDragStart("CASES", id, e)}
+                onDragEndItems={() => setDragPayload(null)}
+                canManagePlan={hasPlanManagePermission}
+                onToggleInclusion={handleToggleCaseInclusion}
+                pendingCaseId={pendingToggleId}
+              />
+            ) : (
+              <TestCaseQueueGrid
+                cases={
+                  filterResult || execSuiteFilterId
+                    ? queueCaseIndices.map((i) => workspace.cases[i])
+                    : workspace.cases
+                }
+                selectedIndex={selectedVisiblePos}
+                onSelectCase={(pos) => {
+                  const target = queueCaseIndices[pos];
+                  if (target !== undefined) setSelectedIndex(target);
+                }}
+              />
             )}
           </div>
 
-          {workspaceMode === "SPECIFICATION" && isCaseCreateFormOpen && selectedSuiteId && (
-            <div style={{ padding: "10px 12px", borderBottom: "1px solid #1f2937", backgroundColor: "#0d111c" }}>
-              <input
-                type="text"
-                placeholder="New case title"
-                value={newCaseTitle}
-                onChange={(e) => setNewCaseTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newCaseTitle.trim() && !isCreatingCase) handleCreateCase();
-                }}
-                autoFocus
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: "5px 8px",
-                  marginBottom: "6px",
-                  backgroundColor: "#111827",
-                  border: "1px solid #1f2937",
-                  borderRadius: "4px",
-                  color: "#f8fafc",
-                  fontSize: "12px",
-                }}
-              />
-              <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
-                <select
-                  value={newCasePriority}
-                  onChange={(e) => setNewCasePriority(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "5px 8px",
-                    backgroundColor: "#111827",
-                    border: "1px solid #1f2937",
-                    borderRadius: "4px",
-                    color: "#f8fafc",
-                    fontSize: "12px",
-                  }}
-                >
-                  {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={newCaseExecutionType}
-                  onChange={(e) => setNewCaseExecutionType(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "5px 8px",
-                    backgroundColor: "#111827",
-                    border: "1px solid #1f2937",
-                    borderRadius: "4px",
-                    color: "#f8fafc",
-                    fontSize: "12px",
-                  }}
-                >
-                  {["MANUAL", "AUTOMATED"].map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <button
-                  onClick={() => setIsCaseCreateFormOpen(false)}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: "#334155",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateCase}
-                  disabled={isCreatingCase || !newCaseTitle.trim()}
-                  style={{
-                    flex: 1,
-                    padding: "5px",
-                    backgroundColor: isCreatingCase ? "#166534" : "#16a34a",
-                    border: "none",
-                    borderRadius: "4px",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: isCreatingCase ? "default" : "pointer",
-                  }}
-                >
-                  {isCreatingCase ? "Creating..." : "Create Case"}
-                </button>
-              </div>
-            </div>
-          )}
+          {/* DIVIDER: PANE 2 / PANE 3 */}
+          <div
+            onMouseDown={handleDividerMouseDown("queue")}
+            onMouseEnter={() => setHoveredDivider("queue")}
+            onMouseLeave={() => setHoveredDivider(null)}
+            style={dividerStyle("queue")}
+          />
 
-          {(workspaceMode === "SPECIFICATION"
-            ? filterResult && specCasesForSuite.length === 0
-            : (filterResult || execSuiteFilterId) && queueCaseIndices.length === 0) && (
-              <div style={{ padding: "16px 12px", fontSize: "11px", color: "#6b7280", textAlign: "center" }}>
-                {workspaceMode === "SPECIFICATION"
-                  ? selectedSuiteId
-                    ? "No cases in this suite match the current search/filters."
-                    : "No cases match the current search/filters."
-                  : execSuiteFilterId
-                    ? filterResult
-                      ? "No cases in this suite match the current search/filters."
-                      : "None of this suite's cases are in this test plan."
-                    : "No cases match the current search/filters."}
-              </div>
-            )}
-          {workspaceMode === "SPECIFICATION" ? (
-            <SpecCaseListGrid
-              cases={specCasesForSuite}
-              selectedCaseId={specSelectedCaseIds.size > 0 ? null : specSelectedCaseId}
-              selectedCaseIds={specSelectedCaseIds}
-              onSelectCase={handleSpecCaseClick}
-              canDrag={hasSpecEditPermission}
-              onDragStartCase={(id, e) => handleSpecDragStart("CASES", id, e)}
-              onDragEndItems={() => setDragPayload(null)}
-              canManagePlan={hasPlanManagePermission}
-              onToggleInclusion={handleToggleCaseInclusion}
-              pendingCaseId={pendingToggleId}
-            />
-          ) : (
-            <TestCaseQueueGrid
-              cases={
-                filterResult || execSuiteFilterId
-                  ? queueCaseIndices.map((i) => workspace.cases[i])
-                  : workspace.cases
-              }
-              selectedIndex={selectedVisiblePos}
-              onSelectCase={(pos) => {
-                const target = queueCaseIndices[pos];
-                if (target !== undefined) setSelectedIndex(target);
-              }}
-            />
-          )}
-        </div>
-
-        {/* DIVIDER: PANE 2 / PANE 3 */}
-        <div
-          onMouseDown={handleDividerMouseDown("queue")}
-          onMouseEnter={() => setHoveredDivider("queue")}
-          onMouseLeave={() => setHoveredDivider(null)}
-          style={dividerStyle("queue")}
-        />
-
-        {/* PANE 3: EXECUTION & DETAIL WORKSPACE (FLUID) */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: "#0d111c",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {workspaceMode === "SPECIFICATION" ? (
-            specActiveCase ? (
-              <>
-                {/* SPEC CASE HEADER + PLAN-INCLUSION TOGGLE */}
-                <div
-                  style={{
-                    padding: "16px 20px",
-                    borderBottom: "1px solid #1f2937",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  {/* Row 1: id + title, the title stretching all the way to the action
-                      buttons. Row 2 (always its own line): priority, execution type, version
-                      badge, Approve. */}
+          {/* PANE 3: EXECUTION & DETAIL WORKSPACE (FLUID) */}
+          <div
+            style={{
+              flex: 1,
+              backgroundColor: "#0d111c",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {workspaceMode === "SPECIFICATION" ? (
+              specActiveCase ? (
+                <>
+                  {/* SPEC CASE HEADER + PLAN-INCLUSION TOGGLE */}
                   <div
                     style={{
-                      flex: 1,
-                      minWidth: 0,
-                      marginRight: "12px",
+                      padding: "16px 20px",
+                      borderBottom: "1px solid #1f2937",
                       display: "flex",
-                      flexDirection: "column",
-                      gap: "8px",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
                     }}
                   >
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb", flexShrink: 0 }}>
-                      {specActiveCase.external_id}
-                    </span>
-                    <input
-                      key={specActiveCase.id}
-                      type="text"
-                      defaultValue={specActiveCase.title}
-                      onBlur={(e) => {
-                        const input = e.target;
-                        if (input.value !== specActiveCase.title) {
-                          // A refused save (e.g. a blank title) puts the saved title back, so
-                          // the box never shows a title the case doesn't have.
-                          const saved = specActiveCase.title;
-                          handleUpdateCaseField("title", input.value).then((ok) => {
-                            if (!ok) input.value = saved;
-                          });
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                      }}
-                      disabled={!hasSpecEditPermission}
-                      title={hasSpecEditPermission ? "Case title" : "Requires SPEC_EDIT permission"}
+                    {/* Row 1: id + title, the title stretching all the way to the action
+                        buttons. Row 2 (always its own line): priority, execution type, version
+                        badge, Approve. */}
+                    <div
                       style={{
-                        fontSize: "14px",
-                        color: "#f8fafc",
-                        backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
-                        border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
-                        borderRadius: "4px",
-                        padding: hasSpecEditPermission ? "3px 8px" : "0",
                         flex: 1,
                         minWidth: 0,
-                        opacity: hasSpecEditPermission ? 1 : 0.85,
-                      }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                    <select
-                      value={specActiveCase.priority}
-                      onChange={(e) => handleUpdateCaseField("priority", e.target.value)}
-                      disabled={!hasSpecEditPermission}
-                      style={{
-                        fontSize: "11px",
-                        backgroundColor: "#111827",
-                        border: "1px solid #1f2937",
-                        borderRadius: "4px",
-                        color: "#f8fafc",
-                        padding: "3px 6px",
-                        opacity: hasSpecEditPermission ? 1 : 0.6,
+                        marginRight: "12px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
                       }}
                     >
-                      {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={specActiveCase.execution_type ?? "MANUAL"}
-                      onChange={(e) => handleUpdateCaseField("execution_type", e.target.value)}
-                      disabled={!hasSpecEditPermission}
-                      style={{
-                        fontSize: "11px",
-                        backgroundColor: "#111827",
-                        border: "1px solid #1f2937",
-                        borderRadius: "4px",
-                        color: "#f8fafc",
-                        padding: "3px 6px",
-                        opacity: hasSpecEditPermission ? 1 : 0.6,
-                      }}
-                    >
-                      {["MANUAL", "AUTOMATED"].map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                    {specActiveCase.latest_version && (
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          padding: "2px 8px",
-                          borderRadius: "4px",
-                          backgroundColor:
-                            specActiveCase.latest_version.status === "APPROVED"
-                              ? "#064e3b"
-                              : "#1f2937",
-                          color:
-                            specActiveCase.latest_version.status === "APPROVED"
-                              ? "#34d399"
-                              : "#9ca3af",
-                          fontWeight: 600,
-                        }}
-                      >
-                        v{specActiveCase.latest_version.version_number}{" "}
-                        {specActiveCase.latest_version.status}
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <span style={{ fontSize: "16px", fontWeight: 700, color: "#f9fafb", flexShrink: 0 }}>
+                        {specActiveCase.external_id}
                       </span>
-                    )}
-                    {specActiveCase.latest_version?.status === "DRAFT" && hasSpecApprovePermission && (
-                      <button
-                        onClick={handleApproveVersion}
-                        disabled={isApprovingVersion}
+                      <input
+                        key={specActiveCase.id}
+                        type="text"
+                        defaultValue={specActiveCase.title}
+                        onBlur={(e) => {
+                          const input = e.target;
+                          if (input.value !== specActiveCase.title) {
+                            // A refused save (e.g. a blank title) puts the saved title back, so
+                            // the box never shows a title the case doesn't have.
+                            const saved = specActiveCase.title;
+                            handleUpdateCaseField("title", input.value).then((ok) => {
+                              if (!ok) input.value = saved;
+                            });
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        disabled={!hasSpecEditPermission}
+                        title={hasSpecEditPermission ? "Case title" : "Requires SPEC_EDIT permission"}
+                        style={{
+                          fontSize: "14px",
+                          color: "#f8fafc",
+                          backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
+                          border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
+                          borderRadius: "4px",
+                          padding: hasSpecEditPermission ? "3px 8px" : "0",
+                          flex: 1,
+                          minWidth: 0,
+                          opacity: hasSpecEditPermission ? 1 : 0.85,
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                      <select
+                        value={specActiveCase.priority}
+                        onChange={(e) => handleUpdateCaseField("priority", e.target.value)}
+                        disabled={!hasSpecEditPermission}
                         style={{
                           fontSize: "11px",
-                          padding: "3px 8px",
+                          backgroundColor: "#111827",
+                          border: "1px solid #1f2937",
                           borderRadius: "4px",
-                          border: "1px solid #22c55e",
-                          backgroundColor: "rgba(34, 197, 94, 0.12)",
-                          color: "#4ade80",
-                          fontWeight: 700,
-                          cursor: isApprovingVersion ? "default" : "pointer",
+                          color: "#f8fafc",
+                          padding: "3px 6px",
+                          opacity: hasSpecEditPermission ? 1 : 0.6,
                         }}
                       >
-                        {isApprovingVersion ? "Approving…" : "✓ Approve"}
-                      </button>
-                    )}
-                    {/* The rest of the lifecycle button: Approved -> Deprecate (muted red
-                        outline, so it doesn't read as a primary action), Deprecated -> Restore. */}
-                    {(specActiveCase.latest_version?.status === "APPROVED" ||
-                      specActiveCase.latest_version?.status === "DEPRECATED") &&
-                      hasSpecApprovePermission &&
-                      (() => {
-                        const isDeprecated = specActiveCase.latest_version?.status === "DEPRECATED";
-                        return (
-                          <button
-                            onClick={() => handleVersionTransition(isDeprecated ? "restore" : "deprecate")}
-                            disabled={isTransitioningVersion}
-                            title={
-                              isDeprecated
-                                ? "Restore this test case to Approved"
-                                : "Retire this test case: it's hidden from the Spec list and can't be added to plans"
-                            }
-                            style={{
-                              fontSize: "11px",
-                              padding: "3px 8px",
-                              borderRadius: "4px",
-                              border: isDeprecated ? "1px solid #6b7280" : "1px solid #7f1d1d",
-                              backgroundColor: "transparent",
-                              color: isDeprecated ? "#d1d5db" : "#f87171",
-                              fontWeight: 700,
-                              cursor: isTransitioningVersion ? "default" : "pointer",
-                            }}
-                          >
-                            {isTransitioningVersion ? "…" : isDeprecated ? "↺ Restore" : "Deprecate"}
-                          </button>
-                        );
-                      })()}
-                  </div>
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                    {/* The plan-inclusion toggle used to live here ("+ Add to Plan"/"✓ In Plan"),
-                        but every case already has the identical toggle on its own row in the
-                        case list (SpecCaseListGrid's onToggleInclusion/pendingCaseId -- same
-                        handleToggleCaseInclusion/pendingToggleId state) -- removed as a
-                        duplicate, per direct request, and replaced with the Edit action moved
-                        here from up by the version badge, so it sits next to Delete instead. */}
-                    {specActiveCase.latest_version?.status === "APPROVED" && hasSpecEditPermission && (
-                      <button
-                        onClick={handleCreateDraft}
-                        disabled={isCreatingDraft}
-                        title="Create a new draft to edit this case"
+                        {["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={specActiveCase.execution_type ?? "MANUAL"}
+                        onChange={(e) => handleUpdateCaseField("execution_type", e.target.value)}
+                        disabled={!hasSpecEditPermission}
                         style={{
-                          flexShrink: 0,
-                          padding: "6px 14px",
+                          fontSize: "11px",
+                          backgroundColor: "#111827",
+                          border: "1px solid #1f2937",
                           borderRadius: "4px",
-                          fontSize: "12px",
-                          fontWeight: 700,
-                          border: "1px solid #f59e0b",
-                          backgroundColor: "rgba(245, 158, 11, 0.12)",
-                          color: "#fbbf24",
-                          cursor: isCreatingDraft ? "default" : "pointer",
+                          color: "#f8fafc",
+                          padding: "3px 6px",
+                          opacity: hasSpecEditPermission ? 1 : 0.6,
                         }}
                       >
-                        {isCreatingDraft ? "Creating…" : "Edit"}
-                      </button>
-                    )}
-                    {hasSpecDeletePermission && (
-                      <button
-                        onClick={() => handleDeleteCaseClick(specActiveCase.id)}
-                        title="Delete case"
-                        style={{
-                          flexShrink: 0,
-                          padding: "6px 10px",
-                          borderRadius: "4px",
-                          fontSize: "12px",
-                          border: "1px solid #4b5563",
-                          backgroundColor: "transparent",
-                          color: "#f87171",
-                          cursor: "pointer",
-                        }}
-                      >
-                        🗑️
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {deleteCasePrompt && deleteCasePrompt.id === specActiveCase.id && (
-                  <div style={{ padding: "12px 20px", borderBottom: "1px solid #92400e", backgroundColor: "#78350f" }}>
-                    <div style={{ fontSize: "12px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
-                      ⚠️ Confirm Deletion
+                        {["MANUAL", "AUTOMATED"].map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                      {specActiveCase.latest_version && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            padding: "2px 8px",
+                            borderRadius: "4px",
+                            backgroundColor:
+                              specActiveCase.latest_version.status === "APPROVED"
+                                ? "#064e3b"
+                                : "#1f2937",
+                            color:
+                              specActiveCase.latest_version.status === "APPROVED"
+                                ? "#34d399"
+                                : "#9ca3af",
+                            fontWeight: 600,
+                          }}
+                        >
+                          v{specActiveCase.latest_version.version_number}{" "}
+                          {specActiveCase.latest_version.status}
+                        </span>
+                      )}
+                      {specActiveCase.latest_version?.status === "DRAFT" && hasSpecApprovePermission && (
+                        <button
+                          onClick={handleApproveVersion}
+                          disabled={isApprovingVersion}
+                          style={{
+                            fontSize: "11px",
+                            padding: "3px 8px",
+                            borderRadius: "4px",
+                            border: "1px solid #22c55e",
+                            backgroundColor: "rgba(34, 197, 94, 0.12)",
+                            color: "#4ade80",
+                            fontWeight: 700,
+                            cursor: isApprovingVersion ? "default" : "pointer",
+                          }}
+                        >
+                          {isApprovingVersion ? "Approving…" : "✓ Approve"}
+                        </button>
+                      )}
+                      {/* The rest of the lifecycle button: Approved -> Deprecate (muted red
+                          outline, so it doesn't read as a primary action), Deprecated -> Restore. */}
+                      {(specActiveCase.latest_version?.status === "APPROVED" ||
+                        specActiveCase.latest_version?.status === "DEPRECATED") &&
+                        hasSpecApprovePermission &&
+                        (() => {
+                          const isDeprecated = specActiveCase.latest_version?.status === "DEPRECATED";
+                          return (
+                            <button
+                              onClick={() => handleVersionTransition(isDeprecated ? "restore" : "deprecate")}
+                              disabled={isTransitioningVersion}
+                              title={
+                                isDeprecated
+                                  ? "Restore this test case to Approved"
+                                  : "Retire this test case: it's hidden from the Spec list and can't be added to plans"
+                              }
+                              style={{
+                                fontSize: "11px",
+                                padding: "3px 8px",
+                                borderRadius: "4px",
+                                border: isDeprecated ? "1px solid #6b7280" : "1px solid #7f1d1d",
+                                backgroundColor: "transparent",
+                                color: isDeprecated ? "#d1d5db" : "#f87171",
+                                fontWeight: 700,
+                                cursor: isTransitioningVersion ? "default" : "pointer",
+                              }}
+                            >
+                              {isTransitioningVersion ? "…" : isDeprecated ? "↺ Restore" : "Deprecate"}
+                            </button>
+                          );
+                        })()}
                     </div>
-                    <div style={{ fontSize: "12px", color: "#fde68a", marginBottom: "10px", lineHeight: 1.4 }}>
-                      {deleteCasePrompt.detail}
                     </div>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button
-                        onClick={() => setDeleteCasePrompt(null)}
-                        style={{ padding: "6px 14px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleConfirmDeleteCase}
-                        style={{ padding: "6px 14px", backgroundColor: "#dc2626", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
-                      >
-                        Delete Anyway
-                      </button>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                      {/* The plan-inclusion toggle used to live here ("+ Add to Plan"/"✓ In Plan"),
+                          but every case already has the identical toggle on its own row in the
+                          case list (SpecCaseListGrid's onToggleInclusion/pendingCaseId -- same
+                          handleToggleCaseInclusion/pendingToggleId state) -- removed as a
+                          duplicate, per direct request, and replaced with the Edit action moved
+                          here from up by the version badge, so it sits next to Delete instead. */}
+                      {specActiveCase.latest_version?.status === "APPROVED" && hasSpecEditPermission && (
+                        <button
+                          onClick={handleCreateDraft}
+                          disabled={isCreatingDraft}
+                          title="Create a new draft to edit this case"
+                          style={{
+                            flexShrink: 0,
+                            padding: "6px 14px",
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            border: "1px solid #f59e0b",
+                            backgroundColor: "rgba(245, 158, 11, 0.12)",
+                            color: "#fbbf24",
+                            cursor: isCreatingDraft ? "default" : "pointer",
+                          }}
+                        >
+                          {isCreatingDraft ? "Creating…" : "Edit"}
+                        </button>
+                      )}
+                      {hasSpecDeletePermission && (
+                        <button
+                          onClick={() => handleDeleteCaseClick(specActiveCase.id)}
+                          title="Delete case"
+                          style={{
+                            flexShrink: 0,
+                            padding: "6px 10px",
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                            border: "1px solid #4b5563",
+                            backgroundColor: "transparent",
+                            color: "#f87171",
+                            cursor: "pointer",
+                          }}
+                        >
+                          🗑️
+                        </button>
+                      )}
                     </div>
                   </div>
-                )}
 
-                {specEditError && (
-                  <div style={{ padding: "8px 20px", fontSize: "12px", color: "#f87171", backgroundColor: "#111827", borderBottom: "1px solid #1f2937" }}>
-                    ⚠️ {specEditError}
-                  </div>
-                )}
+                  {deleteCasePrompt && deleteCasePrompt.id === specActiveCase.id && (
+                    <div style={{ padding: "12px 20px", borderBottom: "1px solid #92400e", backgroundColor: "#78350f" }}>
+                      <div style={{ fontSize: "12px", color: "#fbbf24", fontWeight: 600, marginBottom: "6px" }}>
+                        ⚠️ Confirm Deletion
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#fde68a", marginBottom: "10px", lineHeight: 1.4 }}>
+                        {deleteCasePrompt.detail}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          onClick={() => setDeleteCasePrompt(null)}
+                          style={{ padding: "6px 14px", backgroundColor: "#334155", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleConfirmDeleteCase}
+                          style={{ padding: "6px 14px", backgroundColor: "#dc2626", border: "none", borderRadius: "4px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                        >
+                          Delete Anyway
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                {/* CASE DETAILS -- title/priority/execution_type (above) are always
-                    editable; preconditions/summary/steps/custom fields below are editable
-                    only while the latest version is DRAFT ("Edit" above unlocks this for
-                    an APPROVED case by creating a new draft). Custom field *values* aren't
-                    version-locked server-side (setValue works against any status, by
-                    design -- see CLAUDE.md), but the UI still only offers editing them in
-                    lockstep with everything else in this pane, matching how a locked case
-                    reads as fully read-only rather than partially editable. */}
-                <div ref={specDetailScrollRef} style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
-                  {(() => {
-                    const isDraft = specVersionDetail?.status === "DRAFT";
-                    return (
-                      <>
-                        {(isDraft || specVersionDetail?.summary) && (
+                  {specEditError && (
+                    <div style={{ padding: "8px 20px", fontSize: "12px", color: "#f87171", backgroundColor: "#111827", borderBottom: "1px solid #1f2937" }}>
+                      ⚠️ {specEditError}
+                    </div>
+                  )}
+
+                  {/* CASE DETAILS -- title/priority/execution_type (above) are always
+                      editable; preconditions/summary/steps/custom fields below are editable
+                      only while the latest version is DRAFT ("Edit" above unlocks this for
+                      an APPROVED case by creating a new draft). Custom field *values* aren't
+                      version-locked server-side (setValue works against any status, by
+                      design -- see CLAUDE.md), but the UI still only offers editing them in
+                      lockstep with everything else in this pane, matching how a locked case
+                      reads as fully read-only rather than partially editable. */}
+                  <div ref={specDetailScrollRef} style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                    {(() => {
+                      const isDraft = specVersionDetail?.status === "DRAFT";
+                      return (
+                        <>
+                          {(isDraft || specVersionDetail?.summary) && (
+                            <div
+                              style={{
+                                marginBottom: "16px",
+                                backgroundColor: "#111827",
+                                padding: "12px",
+                                borderRadius: "6px",
+                                border: "1px solid #1f2937",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  color: "#6b7280",
+                                  textTransform: "uppercase",
+                                  marginBottom: "4px",
+                                }}
+                              >
+                                Summary
+                              </div>
+                              {isDraft && hasSpecEditPermission ? (
+                                <textarea
+                                  key={`sum-${specVersionDetail?.id}`}
+                                  ref={autoGrowTextarea}
+                                  defaultValue={specVersionDetail?.summary ?? ""}
+                                  onInput={(e) => autoGrowTextarea(e.currentTarget)}
+                                  onBlur={(e) => handleSaveVersionContent("summary", e.target.value)}
+                                  rows={2}
+                                  style={{
+                                    width: "100%",
+                                    boxSizing: "border-box",
+                                    fontSize: "12px",
+                                    color: "#f8fafc",
+                                    backgroundColor: "#0d111c",
+                                    border: "1px solid #1f2937",
+                                    borderRadius: "4px",
+                                    padding: "6px 8px",
+                                    resize: "none",
+                                    overflow: "hidden",
+                                  }}
+                                />
+                              ) : (
+                                <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                                  {specVersionDetail?.summary}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div
                             style={{
                               marginBottom: "16px",
@@ -4292,15 +3059,15 @@ export default function App() {
                                 marginBottom: "4px",
                               }}
                             >
-                              Summary
+                              Preconditions
                             </div>
                             {isDraft && hasSpecEditPermission ? (
                               <textarea
-                                key={`sum-${specVersionDetail?.id}`}
+                                key={`pre-${specVersionDetail?.id}`}
                                 ref={autoGrowTextarea}
-                                defaultValue={specVersionDetail?.summary ?? ""}
+                                defaultValue={specVersionDetail?.preconditions ?? ""}
                                 onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                onBlur={(e) => handleSaveVersionContent("summary", e.target.value)}
+                                onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
                                 rows={2}
                                 style={{
                                   width: "100%",
@@ -4317,864 +3084,816 @@ export default function App() {
                               />
                             ) : (
                               <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                                {specVersionDetail?.summary}
+                                {specVersionDetail?.preconditions || "—"}
                               </div>
                             )}
                           </div>
-                        )}
 
-                        <div
-                          style={{
-                            marginBottom: "16px",
-                            backgroundColor: "#111827",
-                            padding: "12px",
-                            borderRadius: "6px",
-                            border: "1px solid #1f2937",
-                          }}
-                        >
                           <div
                             style={{
                               fontSize: "11px",
                               fontWeight: 600,
                               color: "#6b7280",
                               textTransform: "uppercase",
-                              marginBottom: "4px",
+                              marginBottom: "8px",
                             }}
                           >
-                            Preconditions
+                            Ordered Step Specification {isDraft ? "" : "(read-only)"}
                           </div>
+
                           {isDraft && hasSpecEditPermission ? (
-                            <textarea
-                              key={`pre-${specVersionDetail?.id}`}
-                              ref={autoGrowTextarea}
-                              defaultValue={specVersionDetail?.preconditions ?? ""}
-                              onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                              onBlur={(e) => handleSaveVersionContent("preconditions", e.target.value)}
-                              rows={2}
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                fontSize: "12px",
-                                color: "#f8fafc",
-                                backgroundColor: "#0d111c",
-                                border: "1px solid #1f2937",
-                                borderRadius: "4px",
-                                padding: "6px 8px",
-                                resize: "none",
-                                overflow: "hidden",
-                              }}
-                            />
-                          ) : (
-                            <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                              {specVersionDetail?.preconditions || "—"}
-                            </div>
-                          )}
-                        </div>
-
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            color: "#6b7280",
-                            textTransform: "uppercase",
-                            marginBottom: "8px",
-                          }}
-                        >
-                          Ordered Step Specification {isDraft ? "" : "(read-only)"}
-                        </div>
-
-                        {isDraft && hasSpecEditPermission ? (
-                          <div>
-                            {stepsDraft.map((step, i) => (
-                              <div
-                                key={step.id}
-                                style={{
-                                  display: "flex",
-                                  gap: "6px",
-                                  alignItems: "flex-start",
-                                  marginBottom: "6px",
-                                  backgroundColor: "#0d111c",
-                                  border: "1px solid #1f2937",
-                                  borderRadius: "4px",
-                                  padding: "6px",
-                                }}
-                              >
-                                <span style={{ fontSize: "11px", color: "#6b7280", padding: "6px 2px" }}>
-                                  {i + 1}
-                                </span>
-                                <textarea
-                                  ref={(el) => {
-                                    stepActionRefs.current[i] = el;
-                                    // Only auto-size on genuine mount (no inline height set yet), not on
-                                    // every reattach -- this callback closes over `i`, so it's a fresh
-                                    // function identity every render, and React detaches/reattaches it
-                                    // for EVERY row (not just a changed one) on every commit that
-                                    // touches this list. Calling autoGrowTextarea unconditionally here
-                                    // meant every existing row got a synchronous forced-reflow resize on
-                                    // every add/move/remove -- extra layout thrash interleaved with
-                                    // exactly the commits the scroll-jump fixes above care about. Live
-                                    // growth while typing is already covered by onInput below.
-                                    if (el && !el.style.height) autoGrowTextarea(el);
-                                  }}
-                                  placeholder="Action"
-                                  value={step.action}
-                                  onChange={(e) => updateStepField(i, { action: e.target.value })}
-                                  onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
-                                  rows={1}
+                            <div>
+                              {stepsDraft.map((step, i) => (
+                                <div
+                                  key={step.id}
                                   style={{
-                                    flex: 1,
-                                    fontSize: "12px",
-                                    color: "#f8fafc",
-                                    backgroundColor: "#111827",
+                                    display: "flex",
+                                    gap: "6px",
+                                    alignItems: "flex-start",
+                                    marginBottom: "6px",
+                                    backgroundColor: "#0d111c",
                                     border: "1px solid #1f2937",
                                     borderRadius: "4px",
-                                    padding: "5px 8px",
-                                    resize: "none",
-                                    overflow: "hidden",
+                                    padding: "6px",
                                   }}
-                                />
-                                <textarea
-                                  ref={autoGrowTextarea}
-                                  placeholder="Expected Result"
-                                  value={step.expected_result}
-                                  onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
-                                  onInput={(e) => autoGrowTextarea(e.currentTarget)}
-                                  onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
-                                  rows={1}
-                                  style={{
-                                    flex: 1,
-                                    fontSize: "12px",
-                                    color: "#a7f3d0",
-                                    backgroundColor: "#111827",
-                                    border: "1px solid #1f2937",
-                                    borderRadius: "4px",
-                                    padding: "5px 8px",
-                                    resize: "none",
-                                    overflow: "hidden",
-                                  }}
-                                />
-                                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                >
+                                  <span style={{ fontSize: "11px", color: "#6b7280", padding: "6px 2px" }}>
+                                    {i + 1}
+                                  </span>
+                                  <textarea
+                                    ref={(el) => {
+                                      stepActionRefs.current[i] = el;
+                                      // Only auto-size on genuine mount (no inline height set yet), not on
+                                      // every reattach -- this callback closes over `i`, so it's a fresh
+                                      // function identity every render, and React detaches/reattaches it
+                                      // for EVERY row (not just a changed one) on every commit that
+                                      // touches this list. Calling autoGrowTextarea unconditionally here
+                                      // meant every existing row got a synchronous forced-reflow resize on
+                                      // every add/move/remove -- extra layout thrash interleaved with
+                                      // exactly the commits the scroll-jump fixes above care about. Live
+                                      // growth while typing is already covered by onInput below.
+                                      if (el && !el.style.height) autoGrowTextarea(el);
+                                    }}
+                                    placeholder="Action"
+                                    value={step.action}
+                                    onChange={(e) => updateStepField(i, { action: e.target.value })}
+                                    onInput={(e) => autoGrowTextarea(e.currentTarget)}
+                                    onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
+                                    rows={1}
+                                    style={{
+                                      flex: 1,
+                                      fontSize: "12px",
+                                      color: "#f8fafc",
+                                      backgroundColor: "#111827",
+                                      border: "1px solid #1f2937",
+                                      borderRadius: "4px",
+                                      padding: "5px 8px",
+                                      resize: "none",
+                                      overflow: "hidden",
+                                    }}
+                                  />
+                                  <textarea
+                                    ref={autoGrowTextarea}
+                                    placeholder="Expected Result"
+                                    value={step.expected_result}
+                                    onChange={(e) => updateStepField(i, { expected_result: e.target.value })}
+                                    onInput={(e) => autoGrowTextarea(e.currentTarget)}
+                                    onBlur={() => { stepsScroll.captureScroll(); saveSteps(); }}
+                                    rows={1}
+                                    style={{
+                                      flex: 1,
+                                      fontSize: "12px",
+                                      color: "#a7f3d0",
+                                      backgroundColor: "#111827",
+                                      border: "1px solid #1f2937",
+                                      borderRadius: "4px",
+                                      padding: "5px 8px",
+                                      resize: "none",
+                                      overflow: "hidden",
+                                    }}
+                                  />
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                    <button
+                                      onClick={() => moveStep(i, -1)}
+                                      disabled={i === 0}
+                                      title="Move up"
+                                      style={{ background: "none", border: "none", color: i === 0 ? "#4b5563" : "#9ca3af", cursor: i === 0 ? "not-allowed" : "pointer", fontSize: "10px" }}
+                                    >
+                                      ▲
+                                    </button>
+                                    <button
+                                      onClick={() => moveStep(i, 1)}
+                                      disabled={i === stepsDraft.length - 1}
+                                      title="Move down"
+                                      style={{ background: "none", border: "none", color: i === stepsDraft.length - 1 ? "#4b5563" : "#9ca3af", cursor: i === stepsDraft.length - 1 ? "not-allowed" : "pointer", fontSize: "10px" }}
+                                    >
+                                      ▼
+                                    </button>
+                                  </div>
                                   <button
-                                    onClick={() => moveStep(i, -1)}
-                                    disabled={i === 0}
-                                    title="Move up"
-                                    style={{ background: "none", border: "none", color: i === 0 ? "#4b5563" : "#9ca3af", cursor: i === 0 ? "not-allowed" : "pointer", fontSize: "10px" }}
+                                    onClick={() => removeStep(i)}
+                                    title="Remove step"
+                                    style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: "12px", padding: "6px 2px" }}
                                   >
-                                    ▲
-                                  </button>
-                                  <button
-                                    onClick={() => moveStep(i, 1)}
-                                    disabled={i === stepsDraft.length - 1}
-                                    title="Move down"
-                                    style={{ background: "none", border: "none", color: i === stepsDraft.length - 1 ? "#4b5563" : "#9ca3af", cursor: i === stepsDraft.length - 1 ? "not-allowed" : "pointer", fontSize: "10px" }}
-                                  >
-                                    ▼
+                                    🗑️
                                   </button>
                                 </div>
-                                <button
-                                  onClick={() => removeStep(i)}
-                                  title="Remove step"
-                                  style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: "12px", padding: "6px 2px" }}
-                                >
-                                  🗑️
-                                </button>
-                              </div>
-                            ))}
-                            <button
-                              onClick={addStep}
-                              style={{
-                                padding: "4px 10px",
-                                backgroundColor: "transparent",
-                                border: "1px dashed #475569",
-                                borderRadius: "4px",
-                                color: "#94a3b8",
-                                fontSize: "11px",
-                                cursor: "pointer",
-                              }}
-                            >
-                              + Add Step
-                            </button>
-                            <div ref={stepsEndAnchorRef} />
-                            {/* Always mounted (not conditionally rendered) so toggling it never changes
-                                specDetailScrollRef's scrollHeight -- a conditionally-mounted version
-                                growing/shrinking the container on every autosave was the primary cause
-                                of the focus-swap/blur jitter: shrinking scrollHeight when a save
-                                resolves makes the browser synchronously clamp scrollTop down, a visible
-                                jump with no coordination from any of our own scroll-preservation code. */}
-                            <div
-                              aria-hidden={!isSavingSteps}
-                              style={{
-                                marginTop: "10px",
-                                textAlign: "right",
-                                fontSize: "11px",
-                                color: "#6b7280",
-                                opacity: isSavingSteps ? 1 : 0,
-                                visibility: isSavingSteps ? "visible" : "hidden",
-                              }}
-                            >
-                              Saving…
-                            </div>
-                          </div>
-                        ) : (
-                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                            <thead>
-                              <tr
+                              ))}
+                              <button
+                                onClick={addStep}
                                 style={{
-                                  borderBottom: "1px solid #1f2937",
-                                  color: "#9ca3af",
-                                  textAlign: "left",
+                                  padding: "4px 10px",
+                                  backgroundColor: "transparent",
+                                  border: "1px dashed #475569",
+                                  borderRadius: "4px",
+                                  color: "#94a3b8",
+                                  fontSize: "11px",
+                                  cursor: "pointer",
                                 }}
                               >
-                                <th style={{ padding: "6px", width: "50px" }}>#</th>
-                                <th style={{ padding: "6px" }}>Action</th>
-                                <th style={{ padding: "6px" }}>Expected Result</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(specVersionDetail?.steps || []).map((step) => (
+                                + Add Step
+                              </button>
+                              <div ref={stepsEndAnchorRef} />
+                              {/* Always mounted (not conditionally rendered) so toggling it never changes
+                                  specDetailScrollRef's scrollHeight -- a conditionally-mounted version
+                                  growing/shrinking the container on every autosave was the primary cause
+                                  of the focus-swap/blur jitter: shrinking scrollHeight when a save
+                                  resolves makes the browser synchronously clamp scrollTop down, a visible
+                                  jump with no coordination from any of our own scroll-preservation code. */}
+                              <div
+                                aria-hidden={!isSavingSteps}
+                                style={{
+                                  marginTop: "10px",
+                                  textAlign: "right",
+                                  fontSize: "11px",
+                                  color: "#6b7280",
+                                  opacity: isSavingSteps ? 1 : 0,
+                                  visibility: isSavingSteps ? "visible" : "hidden",
+                                }}
+                              >
+                                Saving…
+                              </div>
+                            </div>
+                          ) : (
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                              <thead>
                                 <tr
-                                  key={step.id}
-                                  style={{ borderBottom: "1px solid #1f2937", color: "#d1d5db" }}
+                                  style={{
+                                    borderBottom: "1px solid #1f2937",
+                                    color: "#9ca3af",
+                                    textAlign: "left",
+                                  }}
                                 >
-                                  <td style={{ padding: "8px 6px", fontWeight: 600 }}>
-                                    {step.step_number}
-                                  </td>
-                                  <td style={{ padding: "8px 6px" }}>{step.action}</td>
-                                  <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
-                                    {step.expected_result}
-                                  </td>
+                                  <th style={{ padding: "6px", width: "50px" }}>#</th>
+                                  <th style={{ padding: "6px" }}>Action</th>
+                                  <th style={{ padding: "6px" }}>Expected Result</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                        {!specVersionDetail && (
-                          <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
-                            Loading step detail…
-                          </div>
-                        )}
+                              </thead>
+                              <tbody>
+                                {(specVersionDetail?.steps || []).map((step) => (
+                                  <tr
+                                    key={step.id}
+                                    style={{ borderBottom: "1px solid #1f2937", color: "#d1d5db" }}
+                                  >
+                                    <td style={{ padding: "8px 6px", fontWeight: 600 }}>
+                                      {step.step_number}
+                                    </td>
+                                    <td style={{ padding: "8px 6px" }}>{step.action}</td>
+                                    <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
+                                      {step.expected_result}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                          {!specVersionDetail && (
+                            <div style={{ marginTop: "12px", color: "#6b7280", fontSize: "12px" }}>
+                              Loading step detail…
+                            </div>
+                          )}
 
-                        {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
-                          <div style={{ marginTop: "16px" }}>
-                            {specCaseCustomFieldValues.map((entry) => (
-                              <CustomFieldEditor
-                                key={`${specSelectedCaseId}-${entry.definition.id}-${customFieldResetKeyById[entry.definition.id] ?? 0}`}
-                                entry={entry}
-                                onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
-                                disabled={!(isDraft && hasPlanManagePermission)}
-                                disabledTitle={
-                                  !isDraft
-                                    ? specVersionDetail?.status === "DEPRECATED"
-                                      ? "This test case is deprecated -- restore it to edit"
-                                      : "Editable only while in Draft -- click Edit to create a new draft"
-                                    : "Requires plan management permission"
-                                }
-                                errorMessage={customFieldErrorById[entry.definition.id] ?? null}
-                                isSaving={savingCustomFieldId === entry.definition.id}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
+                          {specCaseCustomFieldValues && specCaseCustomFieldValues.length > 0 && (
+                            <div style={{ marginTop: "16px" }}>
+                              {specCaseCustomFieldValues.map((entry) => (
+                                <CustomFieldEditor
+                                  key={`${specSelectedCaseId}-${entry.definition.id}-${customFieldResetKeyById[entry.definition.id] ?? 0}`}
+                                  entry={entry}
+                                  onChange={(value) => handleCustomFieldValueChange(entry.definition.id, value)}
+                                  disabled={!(isDraft && hasPlanManagePermission)}
+                                  disabledTitle={
+                                    !isDraft
+                                      ? specVersionDetail?.status === "DEPRECATED"
+                                        ? "This test case is deprecated -- restore it to edit"
+                                        : "Editable only while in Draft -- click Edit to create a new draft"
+                                      : "Requires plan management permission"
+                                  }
+                                  errorMessage={customFieldErrorById[entry.definition.id] ?? null}
+                                  isSaving={savingCustomFieldId === entry.definition.id}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </>
+              ) : specActiveSuite ? (
+                <>
+                  {/* SUITE DETAILS -- name + custom fields. Replaces the case detail view
+                      whenever a suite (not a case) is the current selection; clicking a case
+                      in the list takes priority again (specActiveCase above), matching how
+                      onSelectSuite/onSelectCase never clear each other's underlying id, only
+                      which one this view prefers to show. This is now the only place a
+                      suite's custom field values are shown/edited -- the tree's old "✎ Fields"
+                      button (which opened a separate floating panel) was removed as redundant. */}
+                  <div
+                    style={{
+                      padding: "16px 20px",
+                      borderBottom: "1px solid #1f2937",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                      <span style={{ fontSize: "16px" }}>📁</span>
+                      <input
+                        key={specActiveSuite.id}
+                        type="text"
+                        defaultValue={specActiveSuite.name}
+                        onBlur={(e) => {
+                          const input = e.target;
+                          const saved = specActiveSuite.name;
+                          if (!input.value.trim()) {
+                            input.value = saved; // a suite always has a name
+                          } else if (input.value.trim() !== saved) {
+                            handleUpdateSuiteName(specActiveSuite.id, input.value.trim()).then((ok) => {
+                              if (!ok) input.value = saved;
+                            });
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        disabled={!hasSpecEditPermission}
+                        title={hasSpecEditPermission ? "Suite name" : "Requires SPEC_EDIT permission"}
+                        style={{
+                          fontSize: "16px",
+                          fontWeight: 700,
+                          color: "#f9fafb",
+                          backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
+                          border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
+                          borderRadius: "4px",
+                          padding: hasSpecEditPermission ? "3px 8px" : "0",
+                          flex: 1,
+                          minWidth: 0,
+                          opacity: hasSpecEditPermission ? 1 : 0.85,
+                        }}
+                      />
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#6b7280" }}>
+                      {specActiveSuite.total_case_count} case{specActiveSuite.total_case_count === 1 ? "" : "s"}
+                      {" · "}
+                      {specActiveSuite.in_plan_count} in plan
+                    </div>
+                  </div>
+
+                  <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                    {suiteCustomFieldValues && suiteCustomFieldValues.length > 0 ? (
+                      suiteCustomFieldValues.map((entry) => (
+                        <CustomFieldEditor
+                          key={`${specActiveSuite.id}-${entry.definition.id}-${suiteCustomFieldResetKeyById[entry.definition.id] ?? 0}`}
+                          entry={entry}
+                          onChange={(value) => handleSuiteCustomFieldValueChange(entry.definition.id, value)}
+                          disabled={!hasPlanManagePermission}
+                          disabledTitle="Requires plan management permission"
+                          errorMessage={suiteCustomFieldErrorById[entry.definition.id] ?? null}
+                          isSaving={savingSuiteCustomFieldId === entry.definition.id}
+                        />
+                      ))
+                    ) : suiteCustomFieldValues ? (
+                      <div style={{ fontSize: "12px", color: "#6b7280" }}>
+                        No custom fields defined for Test Suites yet.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: "12px", color: "#6b7280" }}>Loading…</div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#6b7280",
+                    fontSize: "13px",
+                  }}
+                >
+                  Select a test case or suite to view its details.
                 </div>
-              </>
-            ) : specActiveSuite ? (
+              )
+            ) : activeCase ? (
               <>
-                {/* SUITE DETAILS -- name + custom fields. Replaces the case detail view
-                    whenever a suite (not a case) is the current selection; clicking a case
-                    in the list takes priority again (specActiveCase above), matching how
-                    onSelectSuite/onSelectCase never clear each other's underlying id, only
-                    which one this view prefers to show. This is now the only place a
-                    suite's custom field values are shown/edited -- the tree's old "✎ Fields"
-                    button (which opened a separate floating panel) was removed as redundant. */}
+                {/* CASE HEADER WITH VISUAL HOTKEY STATUS BADGE */}
                 <div
                   style={{
                     padding: "16px 20px",
                     borderBottom: "1px solid #1f2937",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-                    <span style={{ fontSize: "16px" }}>📁</span>
-                    <input
-                      key={specActiveSuite.id}
-                      type="text"
-                      defaultValue={specActiveSuite.name}
-                      onBlur={(e) => {
-                        const input = e.target;
-                        const saved = specActiveSuite.name;
-                        if (!input.value.trim()) {
-                          input.value = saved; // a suite always has a name
-                        } else if (input.value.trim() !== saved) {
-                          handleUpdateSuiteName(specActiveSuite.id, input.value.trim()).then((ok) => {
-                            if (!ok) input.value = saved;
-                          });
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                      }}
-                      disabled={!hasSpecEditPermission}
-                      title={hasSpecEditPermission ? "Suite name" : "Requires SPEC_EDIT permission"}
+                  <div>
+                    <div
                       style={{
-                        fontSize: "16px",
-                        fontWeight: 700,
-                        color: "#f9fafb",
-                        backgroundColor: hasSpecEditPermission ? "#111827" : "transparent",
-                        border: hasSpecEditPermission ? "1px solid #1f2937" : "none",
-                        borderRadius: "4px",
-                        padding: hasSpecEditPermission ? "3px 8px" : "0",
-                        flex: 1,
-                        minWidth: 0,
-                        opacity: hasSpecEditPermission ? 1 : 0.85,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        marginBottom: "8px",
                       }}
-                    />
-                  </div>
-                  <div style={{ fontSize: "12px", color: "#6b7280" }}>
-                    {specActiveSuite.total_case_count} case{specActiveSuite.total_case_count === 1 ? "" : "s"}
-                    {" · "}
-                    {specActiveSuite.in_plan_count} in plan
+                    >
+                      <span
+                        style={{
+                          fontSize: "16px",
+                          fontWeight: 700,
+                          color: "#f9fafb",
+                        }}
+                      >
+                        {activeCase.external_id}
+                      </span>
+                      <span style={{ fontSize: "14px", color: "#9ca3af" }}>
+                        {activeCase.title}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          backgroundColor: "#064e3b",
+                          color: "#34d399",
+                          fontWeight: 600,
+                        }}
+                      >
+                        v{activeCase.version_number} APPROVED
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                      {activeCase.summary}
+                    </div>
                   </div>
                 </div>
 
+                {/* CASE DETAILS & STEP VERIFICATION */}
                 <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
-                  {suiteCustomFieldValues && suiteCustomFieldValues.length > 0 ? (
-                    suiteCustomFieldValues.map((entry) => (
-                      <CustomFieldEditor
-                        key={`${specActiveSuite.id}-${entry.definition.id}-${suiteCustomFieldResetKeyById[entry.definition.id] ?? 0}`}
-                        entry={entry}
-                        onChange={(value) => handleSuiteCustomFieldValueChange(entry.definition.id, value)}
-                        disabled={!hasPlanManagePermission}
-                        disabledTitle="Requires plan management permission"
-                        errorMessage={suiteCustomFieldErrorById[entry.definition.id] ?? null}
-                        isSaving={savingSuiteCustomFieldId === entry.definition.id}
-                      />
-                    ))
-                  ) : suiteCustomFieldValues ? (
-                    <div style={{ fontSize: "12px", color: "#6b7280" }}>
-                      No custom fields defined for Test Suites yet.
+                  <div
+                    style={{
+                      marginBottom: "16px",
+                      backgroundColor: "#111827",
+                      padding: "12px",
+                      borderRadius: "6px",
+                      border: "1px solid #1f2937",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: "#6b7280",
+                        textTransform: "uppercase",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      Preconditions
                     </div>
-                  ) : (
-                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Loading…</div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#6b7280",
-                  fontSize: "13px",
-                }}
-              >
-                Select a test case or suite to view its details.
-              </div>
-            )
-          ) : activeCase ? (
-            <>
-              {/* CASE HEADER WITH VISUAL HOTKEY STATUS BADGE */}
-              <div
-                style={{
-                  padding: "16px 20px",
-                  borderBottom: "1px solid #1f2937",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div>
+                    <div style={{ fontSize: "12px", color: "#d1d5db" }}>
+                      {activeCase.preconditions}
+                    </div>
+                  </div>
+
                   <div
                     style={{
                       display: "flex",
+                      justifyContent: "space-between",
                       alignItems: "center",
-                      gap: "10px",
                       marginBottom: "8px",
                     }}
                   >
                     <span
                       style={{
-                        fontSize: "16px",
-                        fontWeight: 700,
-                        color: "#f9fafb",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: "#6b7280",
+                        textTransform: "uppercase",
                       }}
                     >
-                      {activeCase.external_id}
+                      Ordered Step Verification Table (Hotkey 'e' toggles drawer)
                     </span>
-                    <span style={{ fontSize: "14px", color: "#9ca3af" }}>
-                      {activeCase.title}
-                    </span>
-                    <span
+                    <button
+                      onClick={() => setShowStepDrawer((prev) => !prev)}
                       style={{
-                        fontSize: "11px",
+                        backgroundColor: "#1f2937",
+                        color: "#9ca3af",
+                        border: "none",
                         padding: "2px 8px",
                         borderRadius: "4px",
-                        backgroundColor: "#064e3b",
-                        color: "#34d399",
-                        fontWeight: 600,
+                        fontSize: "11px",
+                        cursor: "pointer",
                       }}
                     >
-                      v{activeCase.version_number} APPROVED
-                    </span>
+                      {showStepDrawer ? "Hide Drawer" : "Show Drawer (e)"}
+                    </button>
                   </div>
-                  <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                    {activeCase.summary}
-                  </div>
-                </div>
-              </div>
 
-              {/* CASE DETAILS & STEP VERIFICATION */}
-              <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
-                <div
-                  style={{
-                    marginBottom: "16px",
-                    backgroundColor: "#111827",
-                    padding: "12px",
-                    borderRadius: "6px",
-                    border: "1px solid #1f2937",
-                  }}
-                >
-                  <div
+                  <table
                     style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      color: "#6b7280",
-                      textTransform: "uppercase",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    Preconditions
-                  </div>
-                  <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                    {activeCase.preconditions}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      color: "#6b7280",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Ordered Step Verification Table (Hotkey 'e' toggles drawer)
-                  </span>
-                  <button
-                    onClick={() => setShowStepDrawer((prev) => !prev)}
-                    style={{
-                      backgroundColor: "#1f2937",
-                      color: "#9ca3af",
-                      border: "none",
-                      padding: "2px 8px",
-                      borderRadius: "4px",
-                      fontSize: "11px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {showStepDrawer ? "Hide Drawer" : "Show Drawer (e)"}
-                  </button>
-                </div>
-
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: "12px",
-                  }}
-                >
-                  <thead>
-                    <tr
-                      style={{
-                        borderBottom: "1px solid #1f2937",
-                        color: "#9ca3af",
-                        textAlign: "left",
-                      }}
-                    >
-                      <th style={{ padding: "6px", width: "50px" }}>#</th>
-                      <th style={{ padding: "6px" }}>Action</th>
-                      <th style={{ padding: "6px" }}>Expected Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeCase.steps.map((step) => (
-                      <tr
-                        key={step.id}
-                        style={{
-                          borderBottom: "1px solid #1f2937",
-                          color: "#d1d5db",
-                        }}
-                      >
-                        <td style={{ padding: "8px 6px", fontWeight: 600 }}>
-                          {step.step_number}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>{step.action}</td>
-                        <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
-                          {step.expected_result}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {execCaseCustomFieldValues && execCaseCustomFieldValues.length > 0 && (
-                  <div style={{ marginTop: "16px" }}>
-                    {execCaseCustomFieldValues.map((entry) => (
-                      <CustomFieldEditor
-                        key={`${activeExecCaseId}-${entry.definition.id}`}
-                        entry={entry}
-                        onChange={() => {}}
-                        disabled
-                        disabledTitle="Custom fields are read-only during execution -- edit them in Specification mode"
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* DETAILED EXECUTION STEP DRAWER */}
-                {showStepDrawer && (
-                  <div
-                    style={{
-                      marginTop: "16px",
-                      padding: "12px",
-                      backgroundColor: "#1e293b",
-                      borderRadius: "6px",
-                      border: "1px solid #3b82f6",
+                      width: "100%",
+                      borderCollapse: "collapse",
                       fontSize: "12px",
                     }}
                   >
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid #1f2937",
+                          color: "#9ca3af",
+                          textAlign: "left",
+                        }}
+                      >
+                        <th style={{ padding: "6px", width: "50px" }}>#</th>
+                        <th style={{ padding: "6px" }}>Action</th>
+                        <th style={{ padding: "6px" }}>Expected Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeCase.steps.map((step) => (
+                        <tr
+                          key={step.id}
+                          style={{
+                            borderBottom: "1px solid #1f2937",
+                            color: "#d1d5db",
+                          }}
+                        >
+                          <td style={{ padding: "8px 6px", fontWeight: 600 }}>
+                            {step.step_number}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>{step.action}</td>
+                          <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
+                            {step.expected_result}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {execCaseCustomFieldValues && execCaseCustomFieldValues.length > 0 && (
+                    <div style={{ marginTop: "16px" }}>
+                      {execCaseCustomFieldValues.map((entry) => (
+                        <CustomFieldEditor
+                          key={`${activeExecCaseId}-${entry.definition.id}`}
+                          entry={entry}
+                          onChange={() => {}}
+                          disabled
+                          disabledTitle="Custom fields are read-only during execution -- edit them in Specification mode"
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* DETAILED EXECUTION STEP DRAWER */}
+                  {showStepDrawer && (
                     <div
                       style={{
-                        fontWeight: 700,
-                        color: "#60a5fa",
+                        marginTop: "16px",
+                        padding: "12px",
+                        backgroundColor: "#1e293b",
+                        borderRadius: "6px",
+                        border: "1px solid #3b82f6",
+                        fontSize: "12px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          color: "#60a5fa",
+                          marginBottom: "6px",
+                        }}
+                      >
+                        Step Detail Execution Drawer (e)
+                      </div>
+                      <div style={{ color: "#d1d5db" }}>
+                        Inspect individual step-level actual logs, binary
+                        artifacts, and defect attachments here.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* NOTES & FAILURE REASON TEXTAREA (ZONE 4 INPUT) */}
+                  <div style={{ marginTop: "24px" }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: "#6b7280",
+                        textTransform: "uppercase",
                         marginBottom: "6px",
                       }}
                     >
-                      Step Detail Execution Drawer (e)
-                    </div>
-                    <div style={{ color: "#d1d5db" }}>
-                      Inspect individual step-level actual logs, binary
-                      artifacts, and defect attachments here.
-                    </div>
+                      Notes
+                    </label>
+                    <textarea
+                      ref={notesInputRef}
+                      value={failureNotes}
+                      disabled={Boolean(verdictBlockReason)}
+                      title={verdictBlockReason ?? undefined}
+                      onChange={(e) => {
+                        setFailureNotes(e.target.value);
+                        notesDirtyRef.current = true;
+                      }}
+                      onFocus={() => fsm.setZone("TEXT_INPUT")}
+                      onBlur={() => {
+                        fsm.setZone("EXECUTION_CONTAINER");
+                        // Unfocusing (click away, Tab, Esc) saves any unsubmitted notes
+                        // instead of silently discarding them. notesDirtyRef (not the
+                        // failureNotes state, which can be stale here -- see Ctrl+Enter's
+                        // own .blur() call) is what prevents double-submitting. No need to
+                        // clear failureNotes after submitting -- it's now this case's saved
+                        // note, and should keep showing exactly that.
+                        if (notesDirtyRef.current && failureNotes.trim()) {
+                          submitVerdict(pendingVerdictRef.current, failureNotes);
+                          notesDirtyRef.current = false;
+                        }
+                      }}
+                      placeholder="Type execution details or notes here... Single-key hotkeys auto-pause while typing. Press Ctrl+Enter to submit."
+                      style={{
+                        width: "100%",
+                        height: "80px",
+                        backgroundColor: "#111827",
+                        border: fsm.isInputFocused
+                          ? "1px solid #3b82f6"
+                          : "1px solid #1f2937",
+                        borderRadius: "6px",
+                        color: "#f9fafb",
+                        padding: "10px",
+                        fontSize: "12px",
+                        boxSizing: "border-box",
+                        outline: "none",
+                      }}
+                    />
                   </div>
-                )}
+                </div>
 
-                {/* NOTES & FAILURE REASON TEXTAREA (ZONE 4 INPUT) */}
-                <div style={{ marginTop: "24px" }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      color: "#6b7280",
-                      textTransform: "uppercase",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    Notes
-                  </label>
-                  <textarea
-                    ref={notesInputRef}
-                    value={failureNotes}
-                    disabled={Boolean(verdictBlockReason)}
+                {/* DOCKED EXECUTION ACTION BAR */}
+                <div
+                  style={{
+                    height: "56px",
+                    backgroundColor: "#111827",
+                    borderTop: "1px solid #1f2937",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0 20px",
+                  }}
+                >
+                  {activeCase?.removed_from_plan && (
+                    <span
+                      title={REMOVED_CASE_MESSAGE}
+                      style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginRight: "12px", whiteSpace: "nowrap" }}
+                    >
+                      Removed from plan · read-only
+                    </span>
+                  )}
+                  {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
+                  <div
+                    style={{ display: "flex", gap: "10px", opacity: verdictBlockReason ? 0.4 : 1 }}
                     title={verdictBlockReason ?? undefined}
-                    onChange={(e) => {
-                      setFailureNotes(e.target.value);
-                      notesDirtyRef.current = true;
-                    }}
-                    onFocus={() => fsm.setZone("TEXT_INPUT")}
-                    onBlur={() => {
-                      fsm.setZone("EXECUTION_CONTAINER");
-                      // Unfocusing (click away, Tab, Esc) saves any unsubmitted notes
-                      // instead of silently discarding them. notesDirtyRef (not the
-                      // failureNotes state, which can be stale here -- see Ctrl+Enter's
-                      // own .blur() call) is what prevents double-submitting. No need to
-                      // clear failureNotes after submitting -- it's now this case's saved
-                      // note, and should keep showing exactly that.
-                      if (notesDirtyRef.current && failureNotes.trim()) {
-                        submitVerdict(pendingVerdictRef.current, failureNotes);
-                        notesDirtyRef.current = false;
-                      }
-                    }}
-                    placeholder="Type execution details or notes here... Single-key hotkeys auto-pause while typing. Press Ctrl+Enter to submit."
-                    style={{
-                      width: "100%",
-                      height: "80px",
-                      backgroundColor: "#111827",
-                      border: fsm.isInputFocused
-                        ? "1px solid #3b82f6"
-                        : "1px solid #1f2937",
-                      borderRadius: "6px",
-                      color: "#f9fafb",
-                      padding: "10px",
-                      fontSize: "12px",
-                      boxSizing: "border-box",
-                      outline: "none",
-                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        if (verdictBlockReason) return showToast(verdictBlockReason);
+                        if (!fsm.canExecute)
+                          return showToast(
+                            "Permission Denied: EXECUTE_RUN required",
+                          );
+                        // Same rule as the verdict hotkeys: changing an existing result needs
+                        // EXECUTE_OVERWRITE (the server enforces it too).
+                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
+                        submitVerdict("PASSED");
+                        // Covers the case this button doesn't auto-advance from (the last case
+                        // in the list) -- without this, a note-only Ctrl+Enter afterward would
+                        // resubmit whatever stale verdict pendingVerdictRef last held instead of
+                        // PASSED, since staying on the same case means the case-load reset
+                        // effect (keyed on selectedIndex) never re-runs to correct it.
+                        pendingVerdictRef.current = "PASSED";
+                        if (nextVisibleCaseIndex !== undefined)
+                          advanceToCase(nextVisibleCaseIndex);
+                      }}
+                      style={{
+                        backgroundColor: hasExecuteRunPermission
+                          ? "#15803d"
+                          : "#374151",
+                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
+                        border: "none",
+                        padding: "8px 16px",
+                        borderRadius: "4px",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        cursor: hasExecuteRunPermission
+                          ? "pointer"
+                          : "not-allowed",
+                      }}
+                    >
+                      Pass
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (verdictBlockReason) return showToast(verdictBlockReason);
+                        if (!fsm.canExecute)
+                          return showToast(
+                            "Permission Denied: EXECUTE_RUN required",
+                          );
+                        // Same rule as the verdict hotkeys: changing an existing result needs
+                        // EXECUTE_OVERWRITE (the server enforces it too).
+                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
+                        submitVerdict("FAILED");
+                        pendingVerdictRef.current = "FAILED";
+                        if (notesInputRef.current) notesInputRef.current.focus();
+                      }}
+                      style={{
+                        backgroundColor: hasExecuteRunPermission
+                          ? "#b91c1c"
+                          : "#374151",
+                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
+                        border: "none",
+                        padding: "8px 16px",
+                        borderRadius: "4px",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        cursor: hasExecuteRunPermission
+                          ? "pointer"
+                          : "not-allowed",
+                      }}
+                    >
+                      Fail
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (verdictBlockReason) return showToast(verdictBlockReason);
+                        if (!fsm.canExecute)
+                          return showToast(
+                            "Permission Denied: EXECUTE_RUN required",
+                          );
+                        // Same rule as the verdict hotkeys: changing an existing result needs
+                        // EXECUTE_OVERWRITE (the server enforces it too).
+                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
+                        submitVerdict("BLOCKED");
+                        pendingVerdictRef.current = "BLOCKED";
+                        if (notesInputRef.current) notesInputRef.current.focus();
+                      }}
+                      style={{
+                        backgroundColor: hasExecuteRunPermission
+                          ? "#b45309"
+                          : "#374151",
+                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
+                        border: "none",
+                        padding: "8px 16px",
+                        borderRadius: "4px",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        cursor: hasExecuteRunPermission
+                          ? "pointer"
+                          : "not-allowed",
+                      }}
+                    >
+                      Block
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (verdictBlockReason) return showToast(verdictBlockReason);
+                        if (!fsm.canExecute)
+                          return showToast(
+                            "Permission Denied: EXECUTE_RUN required",
+                          );
+                        // Same rule as the verdict hotkeys: changing an existing result needs
+                        // EXECUTE_OVERWRITE (the server enforces it too).
+                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
+                        submitVerdict("SKIPPED");
+                        // Same reasoning as the Pass button above -- keeps a subsequent
+                        // note-only Ctrl+Enter correct when this is the last case (no advance).
+                        pendingVerdictRef.current = "SKIPPED";
+                        if (nextVisibleCaseIndex !== undefined)
+                          advanceToCase(nextVisibleCaseIndex);
+                      }}
+                      style={{
+                        backgroundColor: hasExecuteRunPermission
+                          ? "#4b5563"
+                          : "#374151",
+                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
+                        border: "none",
+                        padding: "8px 16px",
+                        borderRadius: "4px",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        cursor: hasExecuteRunPermission
+                          ? "pointer"
+                          : "not-allowed",
+                      }}
+                    >
+                      Skip
+                    </button>
+                  </div>
+
+                  {/* DOCKED HOTKEY STATUS BADGE */}
+                  <FocusIndicatorBadge
+                    status={fsm.hotkeyStatus}
+                    currentZone={fsm.currentZone}
+                    onToggleHotkeys={fsm.toggleHotkeys}
                   />
                 </div>
-              </div>
-
-              {/* DOCKED EXECUTION ACTION BAR */}
+              </>
+            ) : (
+              // Execute mode with no case to show: say why, instead of a blank pane.
               <div
                 style={{
-                  height: "56px",
-                  backgroundColor: "#111827",
-                  borderTop: "1px solid #1f2937",
+                  flex: 1,
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "0 20px",
+                  justifyContent: "center",
+                  gap: "10px",
+                  color: "#6b7280",
+                  fontSize: "13px",
+                  textAlign: "center",
+                  padding: "24px",
                 }}
               >
-                {activeCase?.removed_from_plan && (
-                  <span
-                    title={REMOVED_CASE_MESSAGE}
-                    style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginRight: "12px", whiteSpace: "nowrap" }}
-                  >
-                    Removed from plan · read-only
-                  </span>
+                {execWorkspaceStatus === "LOADING" ? (
+                  "Loading test cases…"
+                ) : execWorkspaceStatus === "ERROR" ? (
+                  <>
+                    <span style={{ color: "#fca5a5" }}>Couldn't load this test plan's cases.</span>
+                    <button
+                      onClick={() => refreshExecutionWorkspace()}
+                      style={{
+                        padding: "5px 12px",
+                        backgroundColor: "#1f2937",
+                        border: "1px solid #374151",
+                        borderRadius: "4px",
+                        color: "#e5e7eb",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : execWorkspaceStatus === "NO_PLAN" ? (
+                  projectsList.length === 0
+                    ? "There are no projects yet."
+                    : "Select or create a test plan to start executing tests."
+                ) : workspace.cases.length === 0 ? (
+                  hasSpecViewPermission
+                    ? "This test plan has no test cases yet. Add some in Spec mode."
+                    : "This test plan has no test cases yet."
+                ) : (
+                  "No test case selected."
                 )}
-                {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
-                <div
-                  style={{ display: "flex", gap: "10px", opacity: verdictBlockReason ? 0.4 : 1 }}
-                  title={verdictBlockReason ?? undefined}
-                >
-                  <button
-                    onClick={() => {
-                      if (verdictBlockReason) return showToast(verdictBlockReason);
-                      if (!fsm.canExecute)
-                        return showToast(
-                          "Permission Denied: EXECUTE_RUN required",
-                        );
-                      // Same rule as the verdict hotkeys: changing an existing result needs
-                      // EXECUTE_OVERWRITE (the server enforces it too).
-                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                      submitVerdict("PASSED");
-                      // Covers the case this button doesn't auto-advance from (the last case
-                      // in the list) -- without this, a note-only Ctrl+Enter afterward would
-                      // resubmit whatever stale verdict pendingVerdictRef last held instead of
-                      // PASSED, since staying on the same case means the case-load reset
-                      // effect (keyed on selectedIndex) never re-runs to correct it.
-                      pendingVerdictRef.current = "PASSED";
-                      if (nextVisibleCaseIndex !== undefined)
-                        advanceToCase(nextVisibleCaseIndex);
-                    }}
-                    style={{
-                      backgroundColor: hasExecuteRunPermission
-                        ? "#15803d"
-                        : "#374151",
-                      color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                      border: "none",
-                      padding: "8px 16px",
-                      borderRadius: "4px",
-                      fontWeight: 600,
-                      fontSize: "13px",
-                      cursor: hasExecuteRunPermission
-                        ? "pointer"
-                        : "not-allowed",
-                    }}
-                  >
-                    Pass
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (verdictBlockReason) return showToast(verdictBlockReason);
-                      if (!fsm.canExecute)
-                        return showToast(
-                          "Permission Denied: EXECUTE_RUN required",
-                        );
-                      // Same rule as the verdict hotkeys: changing an existing result needs
-                      // EXECUTE_OVERWRITE (the server enforces it too).
-                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                      submitVerdict("FAILED");
-                      pendingVerdictRef.current = "FAILED";
-                      if (notesInputRef.current) notesInputRef.current.focus();
-                    }}
-                    style={{
-                      backgroundColor: hasExecuteRunPermission
-                        ? "#b91c1c"
-                        : "#374151",
-                      color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                      border: "none",
-                      padding: "8px 16px",
-                      borderRadius: "4px",
-                      fontWeight: 600,
-                      fontSize: "13px",
-                      cursor: hasExecuteRunPermission
-                        ? "pointer"
-                        : "not-allowed",
-                    }}
-                  >
-                    Fail
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (verdictBlockReason) return showToast(verdictBlockReason);
-                      if (!fsm.canExecute)
-                        return showToast(
-                          "Permission Denied: EXECUTE_RUN required",
-                        );
-                      // Same rule as the verdict hotkeys: changing an existing result needs
-                      // EXECUTE_OVERWRITE (the server enforces it too).
-                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                      submitVerdict("BLOCKED");
-                      pendingVerdictRef.current = "BLOCKED";
-                      if (notesInputRef.current) notesInputRef.current.focus();
-                    }}
-                    style={{
-                      backgroundColor: hasExecuteRunPermission
-                        ? "#b45309"
-                        : "#374151",
-                      color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                      border: "none",
-                      padding: "8px 16px",
-                      borderRadius: "4px",
-                      fontWeight: 600,
-                      fontSize: "13px",
-                      cursor: hasExecuteRunPermission
-                        ? "pointer"
-                        : "not-allowed",
-                    }}
-                  >
-                    Block
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (verdictBlockReason) return showToast(verdictBlockReason);
-                      if (!fsm.canExecute)
-                        return showToast(
-                          "Permission Denied: EXECUTE_RUN required",
-                        );
-                      // Same rule as the verdict hotkeys: changing an existing result needs
-                      // EXECUTE_OVERWRITE (the server enforces it too).
-                      if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                      submitVerdict("SKIPPED");
-                      // Same reasoning as the Pass button above -- keeps a subsequent
-                      // note-only Ctrl+Enter correct when this is the last case (no advance).
-                      pendingVerdictRef.current = "SKIPPED";
-                      if (nextVisibleCaseIndex !== undefined)
-                        advanceToCase(nextVisibleCaseIndex);
-                    }}
-                    style={{
-                      backgroundColor: hasExecuteRunPermission
-                        ? "#4b5563"
-                        : "#374151",
-                      color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                      border: "none",
-                      padding: "8px 16px",
-                      borderRadius: "4px",
-                      fontWeight: 600,
-                      fontSize: "13px",
-                      cursor: hasExecuteRunPermission
-                        ? "pointer"
-                        : "not-allowed",
-                    }}
-                  >
-                    Skip
-                  </button>
-                </div>
-
-                {/* DOCKED HOTKEY STATUS BADGE */}
-                <FocusIndicatorBadge
-                  status={fsm.hotkeyStatus}
-                  currentZone={fsm.currentZone}
-                  onToggleHotkeys={fsm.toggleHotkeys}
-                />
               </div>
-            </>
-          ) : (
-            // Execute mode with no case to show: say why, instead of a blank pane.
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-                color: "#6b7280",
-                fontSize: "13px",
-                textAlign: "center",
-                padding: "24px",
-              }}
-            >
-              {execWorkspaceStatus === "LOADING" ? (
-                "Loading test cases…"
-              ) : execWorkspaceStatus === "ERROR" ? (
-                <>
-                  <span style={{ color: "#fca5a5" }}>Couldn't load this test plan's cases.</span>
-                  <button
-                    onClick={() => refreshExecutionWorkspace()}
-                    style={{
-                      padding: "5px 12px",
-                      backgroundColor: "#1f2937",
-                      border: "1px solid #374151",
-                      borderRadius: "4px",
-                      color: "#e5e7eb",
-                      fontSize: "12px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Retry
-                  </button>
-                </>
-              ) : execWorkspaceStatus === "NO_PLAN" ? (
-                projectsList.length === 0
-                  ? "There are no projects yet."
-                  : "Select or create a test plan to start executing tests."
-              ) : workspace.cases.length === 0 ? (
-                hasSpecViewPermission
-                  ? "This test plan has no test cases yet. Add some in Spec mode."
-                  : "This test plan has no test cases yet."
-              ) : (
-                "No test case selected."
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-      )}
+        )}
 
-      {/* FOOTER BAR */}
-      <footer
-        style={{
-          height: "24px",
-          backgroundColor: "#090d16",
-          borderTop: "1px solid #1f2937",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 16px",
-          fontSize: "11px",
-          color: "#6b7280",
-        }}
-      >
-        <div>
-          Keyboard Nav: <strong style={{ color: "#9ca3af" }}>j</strong> (down) |{" "}
-          <strong style={{ color: "#9ca3af" }}>k</strong> (up) |{" "}
-          <strong style={{ color: "#9ca3af" }}>p</strong> (pass) |{" "}
-          <strong style={{ color: "#9ca3af" }}>f</strong> (fail) |{" "}
-          <strong style={{ color: "#9ca3af" }}>b</strong> (block) |{" "}
-          <strong style={{ color: "#9ca3af" }}>s</strong> (skip) |{" "}
-          <strong style={{ color: "#9ca3af" }}>Ctrl+Enter</strong> (submit)
-        </div>
-        <div>
-          Status: <strong style={{ color: "#10b981" }}>{syncStatus}</strong>
-        </div>
-      </footer>
-    </div>
+        {/* FOOTER BAR */}
+        <footer
+          style={{
+            height: "24px",
+            backgroundColor: "#090d16",
+            borderTop: "1px solid #1f2937",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 16px",
+            fontSize: "11px",
+            color: "#6b7280",
+          }}
+        >
+          <div>
+            Keyboard Nav: <strong style={{ color: "#9ca3af" }}>j</strong> (down) |{" "}
+            <strong style={{ color: "#9ca3af" }}>k</strong> (up) |{" "}
+            <strong style={{ color: "#9ca3af" }}>p</strong> (pass) |{" "}
+            <strong style={{ color: "#9ca3af" }}>f</strong> (fail) |{" "}
+            <strong style={{ color: "#9ca3af" }}>b</strong> (block) |{" "}
+            <strong style={{ color: "#9ca3af" }}>s</strong> (skip) |{" "}
+            <strong style={{ color: "#9ca3af" }}>Ctrl+Enter</strong> (submit)
+          </div>
+          <div>
+            Status: <strong style={{ color: "#10b981" }}>{syncStatus}</strong>
+          </div>
+        </footer>
+      </div>
+    </AppProvider>
   );
 }
