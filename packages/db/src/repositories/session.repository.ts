@@ -39,6 +39,25 @@ export class SessionRepository {
       .executeTakeFirst();
   }
 
+  /**
+   * Keeps a session that's in use alive: moves its end to `idleSeconds` from now, but never past
+   * `maxSeconds` after it started. The write is skipped unless it moves the end by more than a
+   * minute, so a busy session costs at most one update a minute. Returns the session's end.
+   */
+  async extend(session: Session, idleSeconds: number, maxSeconds: number, now = new Date()): Promise<string> {
+    const cap = new Date(session.created_at).getTime() + maxSeconds * 1000;
+    const next = Math.min(now.getTime() + idleSeconds * 1000, cap);
+    if (next - new Date(session.expires_at).getTime() <= 60_000) return session.expires_at;
+    const expiresAt = new Date(next).toISOString();
+    await this.db
+      .updateTable('sessions')
+      .set({ expires_at: expiresAt })
+      .where('id', '=', session.id)
+      .where('revoked_at', 'is', null)
+      .execute();
+    return expiresAt;
+  }
+
   async revoke(sessionId: string): Promise<void> {
     await this.db
       .updateTable('sessions')

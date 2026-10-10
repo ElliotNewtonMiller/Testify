@@ -8,7 +8,7 @@ In the web app, **📊 Reports** in the header opens the same reports as a full 
 
 Send `Authorization: Bearer <token>` with either:
 
-- **A login JWT.** `POST /api/v1/auth/login` returns one; it expires after an hour.
+- **A login JWT.** `POST /api/v1/auth/login` returns one. It stays valid while it's used: it ends after 8 hours without a request, and 7 days after signing in at most.
 - **A machine API token** (`tf_ci_…`), created in Admin Panel → API Tokens. This is the right credential for scripts and agents: it doesn't expire unless you set an expiry, and it's bound to one project. It needs the `SPEC_VIEW` capability.
 
 A token used against any project other than its own gets `403 TOKEN_PROJECT_MISMATCH`.

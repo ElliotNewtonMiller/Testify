@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS } from '../sessionLifetime.js';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, SessionRepository } from '@testify/db';
@@ -15,7 +16,6 @@ import {
 import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 /** How long a sign-in lasts (the login token and its session expire together). */
-const SESSION_LIFETIME_SECONDS = 60 * 60;
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const userRepo = new UserRepository(db);
@@ -104,10 +104,12 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
 
     // Each sign-in gets a server-side session the token names (`sid`), so it can be ended
     // before the token expires -- see SessionRepository and authenticateRequest.
-    const session = await sessionRepo.create(user.id, SESSION_LIFETIME_SECONDS);
-    const token = signJwt({ sub: user.id, username: user.username, sid: session.id }, jwtSecret, SESSION_LIFETIME_SECONDS);
+    // The token and cookie last the maximum; the session ends sooner if it goes unused for
+    // SESSION_IDLE_SECONDS (each request extends it -- see sessionLifetime.ts).
+    const session = await sessionRepo.create(user.id, SESSION_IDLE_SECONDS);
+    const token = signJwt({ sub: user.id, username: user.username, sid: session.id }, jwtSecret, SESSION_MAX_SECONDS);
 
-    if (useCookie) setSessionCookie(request, reply, token, SESSION_LIFETIME_SECONDS);
+    if (useCookie) setSessionCookie(request, reply, token, SESSION_MAX_SECONDS);
     return reply.status(200).send({
       ...(useCookie ? {} : { token }),
       user: {

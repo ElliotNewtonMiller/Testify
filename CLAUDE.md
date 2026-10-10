@@ -1671,6 +1671,25 @@ New tests: `apps/server/tests/rate_limits.test.ts` (4):
 
 Each test sets a small limiter on its server. `npm test`: 576/576.
 
+## Changed: sign-ins renew while in use -- 8 hours idle, 7 days at most (2026-10-09)
+
+Audit item 31 (`docs/audit_2026-10-07.md`). A sign-in ended exactly 1 hour after signing in, however actively it was being used. The limits were decided with Elliot: 8 hours idle, 7 days at most.
+
+- **New `apps/server/src/sessionLifetime.ts`**: `SESSION_IDLE_SECONDS` (8 h) and `SESSION_MAX_SECONDS` (7 d).
+- **Login** (`routes/auth.ts`): the session row starts with 8 hours. The JWT's `exp` and the web cookie's `Max-Age` are the 7-day maximum, so nothing needs re-issuing: the server-side session decides when the sign-in really ends. `SESSION_LIFETIME_SECONDS` is gone.
+- **Every request** (`authenticateRequest`) extends the session via the new `SessionRepository.extend`: its end moves to 8 hours from now, capped at 7 days after sign-in. The write is skipped unless it moves the end by more than a minute, so a busy session costs at most one update a minute, and a failed write never fails the request. A session older than 7 days is refused even if its stored end is ahead.
+- **Unchanged**: sign-out, a password change, an admin's reset and disabling a user still end sessions at once. An ended sign-in still sends the web app back to the login page with "Your sign-in has ended". Scripts that sign in with a login JWT get the same renewal; API tokens are unaffected.
+- **Docs**: `docs/rfc_04_rbac_security_matrix.md` §4.1 now describes the real design (no refresh tokens, RSA keys or Redis), and `docs/reports_api_and_mcp.md` the new lifetime.
+
+New tests: `apps/server/tests/session_lifetime.test.ts` (5):
+- the limits are 8 h / 7 d;
+- sign-in gives a 7-day token and cookie and an 8-hour session;
+- a request extends a nearly-idle session to 8 hours, and an idle-expired one gets 401 `SESSION_ENDED`;
+- extension stops at the 7-day mark, and a session past 7 days is refused;
+- `extend` skips writes under a minute.
+
+`npm test`: 581/581.
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.

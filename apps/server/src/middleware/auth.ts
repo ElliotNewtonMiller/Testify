@@ -12,6 +12,7 @@ import {
   sendTokenIssuerInactiveError,
 } from '../errors.js';
 import { sendRateLimitedError } from '../services/rateLimits.js';
+import { SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS } from '../sessionLifetime.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -293,11 +294,20 @@ export async function authenticateRequest(
   const userId = result.payload.sub;
 
   // Every login token names its server-side session; signing out or changing your password
-  // ends sessions, so a copied token stops working then rather than when it expires.
+  // ends sessions, so a copied token stops working then rather than when it expires. A session
+  // also ends after SESSION_IDLE_SECONDS unused and SESSION_MAX_SECONDS after sign-in
+  // (sessionLifetime.ts); each request made with it extends it.
+  const sessionRepo = new SessionRepository(db);
   const sessionId = typeof result.payload.sid === 'string' ? result.payload.sid : null;
-  if (!sessionId || !(await new SessionRepository(db).findActive(sessionId, userId))) {
+  const session = sessionId ? await sessionRepo.findActive(sessionId, userId) : undefined;
+  if (!sessionId || !session || new Date(session.created_at).getTime() + SESSION_MAX_SECONDS * 1000 <= Date.now()) {
     reply.status(401).send({ error: 'Unauthorized: your sign-in has ended -- please sign in again', code: 'SESSION_ENDED' });
     return null;
+  }
+  try {
+    await sessionRepo.extend(session, SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS);
+  } catch {
+    // Best-effort -- failing to extend the session must never fail the request itself.
   }
 
   const user = await userRepo.findById(userId);

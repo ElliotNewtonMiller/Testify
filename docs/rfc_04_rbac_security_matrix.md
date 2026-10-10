@@ -138,9 +138,8 @@ flowchart TD
 Testify enforces dual authentication modes: **Interactive User Sessions** for web UI users and **Machine API Tokens** for automated CI/CD pipelines.
 
 ### 4.1 Interactive User Sessions
-- **Access Tokens:** Short-lived JWTs (15-minute TTL) signed with RSA-256 or Ed25519. Payload includes `sub` (User ID), `global_role`, `jti` (JWT ID), and `exp`.
-- **Refresh Tokens:** Long-lived cryptographically secure random tokens (7-day TTL). Stored strictly in `HttpOnly`, `Secure`, `SameSite=Strict` cookies.
-- **Session Revocation:** Refresh tokens are bound to active session records in Redis/Database. Logging out or triggering a password reset instantly revokes the session ID.
+- **Sign-in tokens:** HMAC-SHA256 JWTs carrying `sub` (user id), `username`, `sid` (session id) and `exp`, valid for 7 days. The web app keeps its token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over HTTPS) and sends a CSRF header on every change; scripts send the token as `Authorization: Bearer`.
+- **Server-side sessions:** every token names a session row (`sessions` table), checked on every request. A session ends after **8 hours without a request** (each request extends it), **7 days after sign-in** at most, on sign-out, when the user's password changes (their other sessions), when an admin resets it, or when the user is disabled. There are no separate refresh tokens: the session itself is what's renewed (`apps/server/src/sessionLifetime.ts`).
 
 ---
 
