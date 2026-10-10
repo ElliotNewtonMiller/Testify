@@ -172,3 +172,5 @@ export function useCaseSearch({
     searchInputRef,
   };
 }
+
+export type CaseSearch = ReturnType<typeof useCaseSearch>;

@@ -23,7 +23,10 @@ These docs are design artifacts, not always ground truth for what's built — cr
 ```
 apps/
   server/    Fastify API (TypeScript, ESM). Entry: src/server.ts
-  web/       React + Vite frontend. Entry: src/main.tsx, src/App.tsx (currently one large ~1.6k line component)
+  web/       React + Vite frontend. Entry: src/main.tsx, src/App.tsx (~660 lines: calls the hooks, provides the app context, lays out the panes and modals, wires the hotkeys).
+             src/hooks/ one hook per feature (useSession, useScope, useSpecTree, useSpecSelection, useCaseEditor, useSuiteEditor,
+             useCaseSearch, useExecutionWorkspace, useExecution, ...); src/components/{layout,workspace,spec,execute}/ the header,
+             banners and panes; src/app/ the context (useApp) and shared messages; src/utils/ pure helpers; src/types.ts shared types.
 packages/
   core/      Domain logic: ingestion parsers (XML/CSV/JSON), password policy. (No state-machine/RBAC/custom-field modules yet despite roadmap calling for them here.)
   db/        Kysely-based DB layer targeting Postgres-compatible SQL only: migrations, repositories, seeds. `createDbClient()` with no connection string uses an ephemeral, zero-config `@electric-sql/pglite` (WASM Postgres) instance; pass a `connectionString` to connect to a real Postgres server instead. There is no SQLite driver (see below).
@@ -1575,6 +1578,51 @@ The first stage of splitting `App.tsx` (audit item 36). The web app had no compo
 - **Corrected counts**: there are 31 pure-logic web tests (38 with these). The "web tests 54/54" in several entries above also counted the old worktree's copies (see the worktree entry).
 
 562/562. The tests run in under a second.
+
+## Split `App.tsx` into hooks and components (2026-10-09)
+
+Audit item 36 (`docs/audit_2026-10-07.md`). `App.tsx` was one 5,592-line component: 82 `useState`, 26 effects, 45 `fetch` calls and a 2,600-line render. Planned with Elliot as a pure restructuring in stages, each its own commit and tested by him before the next. No behaviour, style or wording changes; code moved verbatim, comments and dependency lists included.
+
+- **Stage 0**: smoke tests first (the entry above).
+- **Stage 1**: pure pieces out:
+  - `types.ts` (`CustomFieldEditor` imports its types from there now, not from `App`);
+  - `app/messages.ts`;
+  - `utils/permissions.ts` (`permissionFlags`) and `utils/suiteTree.ts`, both with unit tests;
+  - `utils/autoGrowTextarea.ts` and `hooks/useStepsScrollPreserved.ts`.
+- **Stage 2**: `hooks/useToast.ts`, `hooks/usePaneLayout.ts`, `hooks/useSession.ts`.
+- **Stage 3**:
+  - `hooks/useScope.ts`: the Project/Plan/Run lists and selection, their loaders and request guards, the entity modal, the delete prompts, Close/Open Run.
+  - `app/AppContext.tsx`: `useApp()` gives `{ currentUser, handleLogout, handleAuthExpiry, showToast, can, scope }`.
+  - `components/layout/AppHeader.tsx` and `StatusBanners.tsx`.
+- **Stage 4**:
+  - `hooks/useExecutionWorkspace.ts`: the plan's cases for Execute mode.
+  - `hooks/useCaseSearch.ts`: the search, filter rows and field catalog.
+  - `hooks/useExecution.ts`: the active case, notes, recording results with the optimistic revert, block reasons, queue order.
+  - `components/execute/ExecutionPane.tsx`.
+  - Loading the cases is its own hook because the search needs the cases and the queue needs the search results.
+  - The workspace is typed non-null (it never was null), so the unreachable "Loading High-Density Workspace" gate went.
+- **Stage 5**:
+  - `hooks/useSpecTree.ts`: the tree, expand state, Show deprecated, plan membership.
+  - `hooks/useSpecSelection.ts`: selection, multi-select, the selected suite's case list, drag-and-drop.
+  - `hooks/useCaseEditor.ts`: case detail, custom fields, field and step editing, the version lifecycle, case create/delete.
+  - `hooks/useSuiteEditor.ts`.
+  - `components/spec/CaseDetailPane.tsx` and `SuiteDetailsPane.tsx`.
+- **Stage 6**: `components/workspace/SuiteTreePane.tsx` (Pane 1, which took over the Expand-all/Collapse-all values) and `CaseListPane.tsx` (Pane 2).
+
+**How the pieces fit:**
+- **Context holds only app-wide state**: the user, permissions, scope, toast and sign-in-ended handler.
+- **Every feature hook owns its state and returns one object** (`type X = ReturnType<typeof useX>`), and panes take those objects as props.
+- **`App.tsx` keeps** the mode, `execSuiteFilterId`, the suite tree (`suiteNodes`), the main refresh effect, the hotkey wiring (it spans several hooks), the modals and the layout.
+- **No requests are made from `App.tsx` itself** any more.
+- **Hook order is significant**: `useScope` → `useExecutionWorkspace` → `useSpecTree` → `useCaseSearch` → `suiteNodes` → `useExecution` → the refresh effect → `useSpecSelection` → `useCaseEditor` → `useSuiteEditor` → the hotkeys. Each needs values from the ones before it.
+- **One forward reference, on purpose**: `useScope`'s `onProjectSwitched` clears selections owned by `useSpecSelection`, which is called later. That's safe because it only runs from the project picker's change handler, never during render.
+
+**Result:** `App.tsx` 5,592 → 664 lines. `tsc --noEmit --noUnusedLocals --noUnusedParameters` is clean on `apps/web`, the production build works, and `npm test` gives 571/571 (47 in `apps/web`). After every stage the smoke tests passed and the app was checked live in a separate browser origin:
+- sign-in;
+- the header's create/edit/delete and their banners;
+- Close/Open Run;
+- Execute: `j`/`k`, `f` + note + Ctrl+Enter recorded and jumped to the next folder, the suite filter, search;
+- Spec: a case created → Edit → step added and saved on blur → Approve → deleted; Shift-range and Escape; Collapse all; the New Suite form.
 
 ## Implementation status vs. the roadmap
 
