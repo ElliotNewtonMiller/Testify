@@ -516,6 +516,19 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       setSelectedPlanId("");
     }
   }, []);
+  // Specification mode's lighter counterpart to refreshExecutionWorkspace above -- Spec mode
+  // has no use for the full case/step queue that endpoint also fetches (its own suite/case
+  // data comes from refreshSpecTree instead), but the Run dropdown is part of the always-
+  // rendered shared header, not gated by mode, so it still needs runsList/selectedRunId kept
+  // correct while in Spec mode. Without this, switching Project/Plan while in Spec mode left
+  // the Run dropdown frozen on whatever it last showed in Execution mode -- refreshExecutionWorkspace
+  // was the ONLY code path that ever refreshed it, and the shared effect below only calls that
+  // one in Execution mode. Hits the same lightweight GET .../plans/:planId/builds route
+  // ExportModal already uses for its own Build picker (apps/server/src/routes/exports.ts) --
+  // returns the exact same Build shape refreshExecutionWorkspace already maps into runItems,
+  // just without the expensive case/step join. Shares runsListRequestSeq with
+  // refreshExecutionWorkspace (see that ref's own comment) rather than using its own counter,
+  // so a stale in-flight call from either function can never win over a newer one from either.
   const refreshRunsList = useCallback(async () => {
     // Bump before the early-return, for the exact same reason refreshExecutionWorkspace does
     // (see its own comment) -- a project/plan switch can call this once with a still-current
@@ -561,6 +574,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
 
   const selectedRun = runsList.find((r) => r.id === selectedRunId) || null;
 
+  // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
+  // every other run edit (PUT .../plans/:planId/builds/:buildId).
   const handleToggleRunClosed = useCallback(async () => {
     if (!selectedProjectId || !selectedPlanId || !selectedRunId || !selectedRun) return;
     const nextStatus = selectedRun.status === "CLOSED" ? "OPEN" : "CLOSED";

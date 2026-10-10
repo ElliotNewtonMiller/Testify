@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useFocusFSM } from "./hooks/useFocusFSM";
-import { useHotkeyEngine, VerdictType } from "./hooks/useHotkeyEngine";
-import { buildExecutionCaseOrder, nextExecutionCaseIndex } from "./utils/executionCaseOrder";
-import { FocusIndicatorBadge } from "./components/FocusIndicatorBadge";
+import { useHotkeyEngine } from "./hooks/useHotkeyEngine";
+import { nextExecutionCaseIndex } from "./utils/executionCaseOrder";
 import { TestCaseQueueGrid } from "./components/TestCaseQueueGrid";
 import {
   VirtualizedSuiteTree,
@@ -20,32 +18,16 @@ import { ReportsView, parseReportsHash } from "./components/reports/ReportsView"
 import { LoginPage } from "./components/LoginPage";
 import { ForcedPasswordChange } from "./components/ForcedPasswordChange";
 import { CustomFieldEditor } from "./components/CustomFieldEditor";
-import {
-  CaseFilterPanel,
-  CaseFilterField,
-  CaseFilterState,
-  EMPTY_CASE_FILTER,
-  isFieldAvailable,
-  toApiFilters,
-} from "./components/CaseFilterPanel";
-import { EntityManagementModal, EntityItem } from "./components/EntityManagementModal";
+import { CaseFilterPanel } from "./components/CaseFilterPanel";
+import { EntityManagementModal } from "./components/EntityManagementModal";
 import { authHeaders, jsonHeaders } from "./utils/session";
 import type {
   CustomFieldValueEntry,
-  ExecWorkspaceStatus,
   SpecCaseDetail,
   SpecTreeData,
   Step,
-  TestCase,
-  WorkspaceData,
 } from "./types";
-import {
-  NO_RUN_MESSAGE,
-  OVERWRITE_DENIED_MESSAGE,
-  REMOVED_CASE_MESSAGE,
-  RUN_CLOSED_MESSAGE,
-  RUN_DENIED_MESSAGE,
-} from "./app/messages";
+import { OVERWRITE_DENIED_MESSAGE, RUN_DENIED_MESSAGE } from "./app/messages";
 import { autoGrowTextarea } from "./utils/autoGrowTextarea";
 import { permissionFlags } from "./utils/permissions";
 import {
@@ -66,49 +48,19 @@ import { useScope } from "./hooks/useScope";
 import { AppProvider, type AppContextValue } from "./app/AppContext";
 import { AppHeader } from "./components/layout/AppHeader";
 import { StatusBanners } from "./components/layout/StatusBanners";
-
-// Execute mode before (or without) a loaded plan: nothing to show. (This used to be two
-// made-up cases, TFY-101/102, which appeared whenever no plan was selected or a load failed.)
-const EMPTY_WORKSPACE: WorkspaceData = {
-  project: { id: "", name: "", prefix: "" },
-  suites: [],
-  plan: { id: "", name: "", status: "" },
-  build: { id: "", name: "", status: "" },
-  cases: [],
-};
+import { ExecutionPane } from "./components/execute/ExecutionPane";
+import { useExecutionWorkspace } from "./hooks/useExecutionWorkspace";
+import { useCaseSearch } from "./hooks/useCaseSearch";
+import { useExecution } from "./hooks/useExecution";
 
 /** A Reports link (#/reports/...) opened directly: the view, tab and scope to start on. */
 const INITIAL_REPORTS_LINK = typeof window !== "undefined" ? parseReportsHash(window.location.hash) : null;
 
 export default function App() {
-  // Starts empty, not null -- workspaceMode now defaults to
-  // SPECIFICATION, whose own bootstrap effect never calls refreshExecutionWorkspace() (only
-  // Execution mode does), so a null initial value would leave this permanently unset and the
-  // "Loading..." gate below stuck forever for anyone who starts (or stays) in Spec mode. The
-  // real Execution-mode data still loads normally the moment the user actually switches modes.
-  const [workspace, setWorkspace] = useState<WorkspaceData | null>(EMPTY_WORKSPACE);
-  const [execWorkspaceStatus, setExecWorkspaceStatus] = useState<ExecWorkspaceStatus>("NO_PLAN");
-  // Read by refreshExecutionWorkspace (a callback that shouldn't re-create on every load).
-  const workspaceRef = useRef<WorkspaceData | null>(workspace);
-  workspaceRef.current = workspace;
-  const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [failureNotes, setFailureNotes] = useState<string>("");
-  const [syncStatus, setSyncStatus] = useState<string>("Connected");
-  // Search & filter (Pane 1, under the Execute/Spec toggle). Evaluated only on the server
-  // (POST .../case-search); filterResult holds the matching ids, or null when nothing is
-  // active (show everything). Session-only, not persisted.
-  const [caseFilter, setCaseFilter] = useState<CaseFilterState>(EMPTY_CASE_FILTER);
-  const [caseFilterFields, setCaseFilterFields] = useState<CaseFilterField[]>([]);
-  const [filterResult, setFilterResult] = useState<{ caseIds: Set<string>; suiteIds: Set<string> } | null>(null);
-  const [filterError, setFilterError] = useState<string | null>(null);
-  // Bumped after edits that can change whether a case matches but don't replace specData/
-  // workspace (custom field value saves), so the active filter re-evaluates.
-  const [filterDataTick, setFilterDataTick] = useState(0);
   // Bumped when an admin creates, changes or deletes a custom field definition (Admin Panel),
   // so the open case's/suite's values and the filter's field list reload instead of showing
   // what they showed before the change.
   const [customFieldDefsVersion, setCustomFieldDefsVersion] = useState(0);
-  const caseSearchRequestSeq = useRef(0);
   // Spec mode: deprecated cases are hidden from the case list (and tree counts) unless this is
   // on -- passed to GET .../spec-tree as include_deprecated. Session-only.
   const [showDeprecated, setShowDeprecated] = useState(false);
@@ -122,8 +74,6 @@ export default function App() {
   const suiteSelectAnchorRef = useRef<string | null>(null);
   const caseSelectAnchorRef = useRef<string | null>(null);
   const [dragPayload, setDragPayload] = useState<{ kind: "SUITES" | "CASES"; ids: string[] } | null>(null);
-  const caseFilterFieldsRequestSeq = useRef(0);
-  const [showStepDrawer, setShowStepDrawer] = useState<boolean>(false);
   const { toastMessage, showToast } = useToast();
 
   const { suiteTreeWidth, queueGridWidth, setHoveredDivider, handleDividerMouseDown, dividerStyle } = usePaneLayout();
@@ -162,10 +112,6 @@ export default function App() {
   );
   const [pendingToggleId, setPendingToggleId] = useState<string | null>(null);
   const [specCaseCustomFieldValues, setSpecCaseCustomFieldValues] = useState<
-    CustomFieldValueEntry[] | null
-  >(null);
-  // Read-only custom field values for the case currently being executed (Execution mode).
-  const [execCaseCustomFieldValues, setExecCaseCustomFieldValues] = useState<
     CustomFieldValueEntry[] | null
   >(null);
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null);
@@ -207,10 +153,6 @@ export default function App() {
   // Removing a case (or a suite's cases) that already has results asks first: the server
   // explains how many results it has; confirming retires it from the plan, keeping them.
   const [removeFromPlanPrompt, setRemoveFromPlanPrompt] = useState<{ kind: "case" | "suite"; id: string; detail: string } | null>(null);
-  // Shown as a yellow banner when the server refuses to record a result (403): easy to miss as
-  // a status-bar message, especially when recording with the keyboard.
-  // The yellow "Not permitted" banner's message, or null when it's hidden.
-  const [executionDenied, setExecutionDenied] = useState<string | null>(null);
 
   // Case create form (inline in Pane 2's header) and two-step delete confirmation for cases.
   const [isCaseCreateFormOpen, setIsCaseCreateFormOpen] = useState(false);
@@ -278,27 +220,26 @@ export default function App() {
     selectedPlanId,
     setSelectedPlanId,
     runsList,
-    setRunsList,
     isTogglingRun,
     selectedRunId,
-    setSelectedRunId,
     selectedRun,
     entityModalOpen,
     setEntityModalOpen,
     modalEntityType,
     modalActionType,
     modalSelectedItem,
-    runsListRequestSeq,
     handleSaveEntity,
     refreshRunsList,
     handleToggleRunClosed,
   } = scope;
+
+  // The selected plan's cases for Execute mode (hooks/useExecutionWorkspace.ts).
+  const executionWorkspace = useExecutionWorkspace(scope);
+  const { workspace, refreshExecutionWorkspace } = executionWorkspace;
   // The remove-from-plan confirmation acts on the selected plan -- drop it if that changes.
   useEffect(() => setRemoveFromPlanPrompt(null), [selectedPlanId]);
 
 
-  const notesInputRef = useRef<HTMLTextAreaElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   // Per-row refs for the step editor's Action textareas, keyed by index -- lets addStep()
   // focus the newly-added row's Action field once it exists in the DOM (see the
   // pendingStepFocusIndexRef effect below addStep).
@@ -314,14 +255,6 @@ export default function App() {
   const stepsEndAnchorRef = useRef<HTMLDivElement>(null);
   const stepsScroll = useStepsScrollPreserved(specDetailScrollRef, stepsEndAnchorRef);
 
-  // Which verdict the notes textarea is currently "for" -- set whenever Fail/Block is
-  // triggered (hotkey or button) so a later Ctrl+Enter/blur submit uses that verdict
-  // instead of always assuming FAILED.
-  const pendingVerdictRef = useRef<VerdictType>("FAILED");
-  // Whether the textarea has unsubmitted user edits. A plain ref (not state) so the
-  // Ctrl+Enter path can mark it false synchronously before its own .blur() call fires the
-  // textarea's onBlur handler, avoiding a duplicate submission from that same keypress.
-  const notesDirtyRef = useRef(false);
 
   // Guard against out-of-order fetch responses: switching project or plan (and the initial
   // load picking them) can fire several requests in quick succession. Without this, a
@@ -352,231 +285,29 @@ export default function App() {
     };
   }, []);
 
-  // ---- Search & filter ----
-  // Field catalog for the "+ Filter" property picker. Re-fetched on project change and
-  // whenever "+ Filter" is clicked (picks up custom fields added since). Rows naming a field
-  // that no longer exists (deleted, or a different project) are dropped once a catalog for
-  // the current project actually arrives -- never on a failed fetch.
-  const loadCaseFilterFields = useCallback(async () => {
-    const seq = ++caseFilterFieldsRequestSeq.current;
-    if (!selectedProjectId) return;
-    try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search/fields`, { headers: authHeaders() });
-      if (seq !== caseFilterFieldsRequestSeq.current || !res.ok) return;
-      const data = await res.json();
-      if (seq !== caseFilterFieldsRequestSeq.current) return;
-      const fields: CaseFilterField[] = data.fields || [];
-      setCaseFilterFields(fields);
-      const keys = new Set(fields.map((f) => f.key));
-      setCaseFilter((prev) => {
-        const kept = prev.filters.filter((r) => r.field === "" || keys.has(r.field));
-        return kept.length === prev.filters.length ? prev : { ...prev, filters: kept };
-      });
-    } catch {
-      // Leave the previous catalog in place; the panel still works with what it has.
-    }
-  }, [selectedProjectId]);
-
-  useEffect(() => {
-    loadCaseFilterFields();
-  }, [loadCaseFilterFields]);
-  // A custom field changed in the Admin Panel: refresh the field list (a deleted field's filter
-  // row drops out) and re-run the current search, since stored values may have changed too.
-  useEffect(() => {
-    if (customFieldDefsVersion === 0) return;
-    loadCaseFilterFields();
-    setFilterDataTick((t) => t + 1);
-  }, [customFieldDefsVersion, loadCaseFilterFields]);
-
-  const caseFilterFieldsByKey = new Map(caseFilterFields.map((f) => [f.key, f]));
-  const filterContext = {
-    mode: workspaceMode,
-    hasPlan: Boolean(selectedPlanId),
-    hasRun: Boolean(selectedRunId),
-  };
-  const apiCaseFilters = toApiFilters(caseFilter.filters, caseFilterFieldsByKey, (f) =>
-    isFieldAvailable(f, filterContext),
-  );
-  const trimmedCaseQuery = caseFilter.q.trim();
-  const isCaseFilterActive = trimmedCaseQuery !== "" || apiCaseFilters.length > 0;
-  // Stable string key so the effect below only re-runs when the effective request changes,
-  // not on every keystroke that doesn't change it (e.g. trailing spaces, an empty new row).
-  const caseFilterRequestKey = JSON.stringify({ q: trimmedCaseQuery, filters: apiCaseFilters });
-
-  useEffect(() => {
-    // Bumped unconditionally (before any early return) so clearing the filter or switching
-    // context also invalidates any request still in flight -- same discipline as
-    // runsListRequestSeq.
-    const seq = ++caseSearchRequestSeq.current;
-    if (!isCaseFilterActive || !selectedProjectId) {
-      setFilterResult(null);
-      setFilterError(null);
-      return;
-    }
-    const { q, filters } = JSON.parse(caseFilterRequestKey) as {
-      q: string;
-      filters: Array<{ field: string; op: string; value?: unknown }>;
-    };
-    // Only send plan/build when a filter needs them, so a plan/run switch that's still
-    // settling can't 404 an unrelated search.
-    const needsPlan = filters.some((f) => f.field === "in_plan");
-    const needsBuild = filters.some((f) => f.field === "verdict");
-    const handle = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search`, {
-          method: "POST",
-          headers: jsonHeaders(),
-          body: JSON.stringify({
-            q,
-            filters,
-            ...(needsPlan && selectedPlanId ? { plan_id: selectedPlanId } : {}),
-            ...(needsBuild && selectedRunId ? { build_id: selectedRunId } : {}),
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (seq !== caseSearchRequestSeq.current) return;
-        if (!res.ok) {
-          setFilterError(
-            Array.isArray(data.details) ? data.details.join("; ") : data.error || "Search failed",
-          );
-          return;
-        }
-        setFilterError(null);
-        setFilterResult({
-          caseIds: new Set<string>(data.case_ids || []),
-          suiteIds: new Set<string>(data.suite_ids || []),
-        });
-      } catch {
-        if (seq === caseSearchRequestSeq.current) setFilterError("Search failed: network error");
-      }
-    }, 250);
-    return () => clearTimeout(handle);
-    // specData/workspace identity + filterDataTick: re-evaluate after data changes (a
-    // verdict recorded, a case edited, a custom field value saved) so matches stay current.
-  }, [
-    caseFilterRequestKey,
-    isCaseFilterActive,
+  // Search & filter (hooks/useCaseSearch.ts).
+  const {
+    caseFilter,
+    setCaseFilter,
+    caseFilterFields,
+    filterResult,
+    filterError,
+    setFilterDataTick,
+    loadCaseFilterFields,
+    searchInputRef,
+  } = useCaseSearch({
     selectedProjectId,
     selectedPlanId,
     selectedRunId,
     workspaceMode,
     specData,
     workspace,
-    filterDataTick,
-  ]);
+    customFieldDefsVersion,
+  });
 
 
-  // Execution-mode workspace: the selected plan's cases, with results from the selected run.
-  const refreshExecutionWorkspace = useCallback(async () => {
-    // Bump the sequence guard BEFORE the early-return, not after -- the effect below fires
-    // on selectedProjectId changing even when selectedPlanId hasn't caught up yet (loadPlans
-    // clears it asynchronously), so a project switch can call this once with the *previous*
-    // project's still-current selectedPlanId (a real, valid plan id, so its fetch succeeds)
-    // and then again after selectedPlanId clears to "". If the early-return below didn't bump
-    // the sequence, the first call's in-flight fetch could resolve after the second call has
-    // already (correctly) cleared runsList, silently repopulating it with the old project's
-    // run -- exactly the "switching to a project with no plans leaves a stale Run selected"
-    // bug this guards against.
-    const seq = ++runsListRequestSeq.current;
-    if (!selectedPlanId) {
-      if (runsListRequestSeq.current === seq) {
-        setWorkspace(EMPTY_WORKSPACE);
-        setExecWorkspaceStatus("NO_PLAN");
-        setRunsList([]);
-        setSelectedRunId("");
-      }
-      return;
-    }
-    // Only a different plan shows "Loading" -- a refresh of the same plan keeps its cases up.
-    setExecWorkspaceStatus((prev) => (prev === "READY" && workspaceRef.current?.plan.id === selectedPlanId ? prev : "LOADING"));
-    try {
-      const url = selectedRunId
-        ? `/api/v1/test-plans/${selectedPlanId}/cases?build_id=${encodeURIComponent(selectedRunId)}`
-        : `/api/v1/test-plans/${selectedPlanId}/cases`;
-      const res = await fetch(url, { headers: authHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
-        const projectEntity = projectsList.find((p) => p.id === selectedProjectId);
-        const builds = data.builds || [];
 
-        setWorkspace({
-          project: projectEntity
-            ? {
-                id: projectEntity.id,
-                name: projectEntity.name,
-                prefix: projectEntity.prefix || "TFY",
-              }
-            : EMPTY_WORKSPACE.project,
-          suites: [],
-          plan: { id: data.plan.id, name: data.plan.name, status: data.plan.status },
-          build: builds[0]
-            ? { id: builds[0].id, name: builds[0].name, status: builds[0].status }
-            : EMPTY_WORKSPACE.build,
-          cases: data.cases.map((c: any) => ({
-            plan_case_id: c.plan_case_id,
-            case_id: c.case_id,
-            test_suite_id: c.test_suite_id,
-            external_id: c.external_id,
-            title: c.title,
-            priority: c.priority,
-            execution_type: c.execution_type,
-            version_number: c.version_number,
-            summary: c.summary,
-            preconditions: c.preconditions,
-            steps: c.steps,
-            latest_verdict: c.latest_verdict || "UNTESTED",
-            latest_execution_id: c.latest_execution_id || null,
-            latest_notes: c.latest_notes || null,
-            removed_from_plan: Boolean(c.removed_from_plan),
-          })),
-        });
-        setExecWorkspaceStatus("READY");
 
-        // Always update runsList/selectedRunId, even when builds is empty -- a plan that
-        // genuinely has zero runs must clear the dropdown, not leave the *previous* plan's
-        // runs showing (the old `if (builds.length > 0)` guard here skipped both setters
-        // entirely on an empty result, which is the same staleness bug already fixed for
-        // loadPlans/the selectedPlanId-empty case, just triggered here by switching to a
-        // *real* plan that has no runs rather than having no plan at all).
-        const runItems: EntityItem[] = builds.map((b: any) => ({
-          id: b.id,
-          name: (b.name || "").replace(/^Build\s+/i, "Run "),
-          status: b.status,
-        }));
-        setRunsList(runItems);
-        setSelectedRunId((prev) =>
-          runItems.length === 0 ? "" : runItems.some((r) => r.id === prev) ? prev : runItems[0].id,
-        );
-        return;
-      }
-    } catch {
-      // API offline fallback
-    }
-    if (runsListRequestSeq.current === seq) {
-      // Show the failure (with Retry) rather than cases that aren't this plan's.
-      setWorkspace(EMPTY_WORKSPACE);
-      setExecWorkspaceStatus("ERROR");
-      // Same staleness concern as above -- a failed fetch shouldn't leave a previous plan's
-      // runs showing under the (now unconfirmed) currently-selected plan.
-      setRunsList([]);
-      setSelectedRunId("");
-    }
-  }, [selectedPlanId, selectedProjectId, selectedRunId, projectsList]);
-
-  // Specification mode's lighter counterpart to refreshExecutionWorkspace above -- Spec mode
-  // has no use for the full case/step queue that endpoint also fetches (its own suite/case
-  // data comes from refreshSpecTree instead), but the Run dropdown is part of the always-
-  // rendered shared header, not gated by mode, so it still needs runsList/selectedRunId kept
-  // correct while in Spec mode. Without this, switching Project/Plan while in Spec mode left
-  // the Run dropdown frozen on whatever it last showed in Execution mode -- refreshExecutionWorkspace
-  // was the ONLY code path that ever refreshed it, and the shared effect below only calls that
-  // one in Execution mode. Hits the same lightweight GET .../plans/:planId/builds route
-  // ExportModal already uses for its own Build picker (apps/server/src/routes/exports.ts) --
-  // returns the exact same Build shape refreshExecutionWorkspace already maps into runItems,
-  // just without the expensive case/step join. Shares runsListRequestSeq with
-  // refreshExecutionWorkspace (see that ref's own comment) rather than using its own counter,
-  // so a stale in-flight call from either function can never win over a newer one from either.
 
   // Specification-mode data: the whole project's suite/case spec, annotated with the
   // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
@@ -699,23 +430,71 @@ export default function App() {
     [selectedPlanId, showToast, refreshSpecTree],
   );
 
-  const activeCase = workspace?.cases[selectedIndex] || null;
-  const isCompleted =
-    activeCase?.latest_verdict && activeCase.latest_verdict !== "UNTESTED";
+  // Build the real, nested SuiteTreeNode hierarchy from the Specification-mode spec-tree
+  // fetch, which drives Pane 1 in BOTH modes (fixes the tree's pre-existing flat/fake-count
+  // display). Execution mode's pass/fail counts are computed per-suite from the current
+  // plan's cases (workspace.cases); Specification mode's in-plan/total counts come straight
+  // from the server (spec-tree already sums them recursively over each subtree).
+  const execCountsBySuite = new Map<string, { passed: number; total: number }>();
+  if (workspaceMode === "EXECUTION") {
+    for (const c of workspace.cases) {
+      if (!c.test_suite_id) continue;
+      const entry = execCountsBySuite.get(c.test_suite_id) || { passed: 0, total: 0 };
+      entry.total += 1;
+      if (c.latest_verdict === "PASSED") entry.passed += 1;
+      execCountsBySuite.set(c.test_suite_id, entry);
+    }
+  }
 
-  // Keyboard Focus FSM
-  const fsm = useFocusFSM({
-    initialZone: "EXECUTION_CONTAINER",
-    permissions: userPermissions,
-    isExecutionCompleted: Boolean(isCompleted),
+  // With a search/filter active the tree only shows suites containing a match (plus their
+  // ancestors, which suite_ids already includes) -- counts stay the suite's real totals.
+  const suiteNodes: SuiteTreeNode[] = specData
+    ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites, execCountsBySuite)
+    : [];
+
+  // Execute mode: the active case, notes, recording results and queue order (hooks/useExecution.ts).
+  const execution = useExecution({
+    executionWorkspace,
+    workspaceMode,
+    userPermissions,
+    scope,
+    filterResult,
+    suiteNodes,
+    execSuiteFilterId,
+    setExecSuiteFilterId,
+    showToast,
+    setCurrentUser,
+    setUserPermissions,
+    customFieldDefsVersion,
   });
+  const {
+    selectedIndex,
+    setSelectedIndex,
+    syncStatus,
+    setShowStepDrawer,
+    executionDenied,
+    setExecutionDenied,
+    notesInputRef,
+    pendingVerdictRef,
+    notesDirtyRef,
+    activeCase,
+    fsm,
+    isRunMissing,
+    verdictBlockReason,
+    submitVerdict,
+    visibleCaseIndices,
+    queueCaseIndices,
+    selectedVisiblePos,
+    executionCaseOrderByCaseIndex,
+    advanceToCase,
+    crossSuiteNextCaseIndex,
+    passedCount,
+    failedCount,
+  } = execution;
 
 
 
-  // A refusal in one project says nothing about the next one.
-  useEffect(() => {
-    setExecutionDenied(null);
-  }, [selectedProjectId]);
+
 
 
   // The actual workspace data fetch: Specification mode always needs the spec tree (it also
@@ -819,31 +598,6 @@ export default function App() {
     };
   }, [workspaceMode, specSelectedCaseId, customFieldDefsVersion]);
 
-  // Custom field values for whichever case is active in Execution mode -- shown read-only
-  // under the steps. Same clear-before-fetch discipline as the Spec-mode fetch above (the
-  // editors are uncontrolled, so nothing stale may be mounted while the fetch is in flight).
-  const activeExecCaseId = activeCase?.case_id ?? null;
-  useEffect(() => {
-    if (workspaceMode !== "EXECUTION" || !activeExecCaseId) {
-      setExecCaseCustomFieldValues(null);
-      return;
-    }
-    setExecCaseCustomFieldValues(null);
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/v1/test-cases/${activeExecCaseId}/custom-field-values`, {
-          headers: authHeaders(),
-        });
-        if (!cancelled) setExecCaseCustomFieldValues(res.ok ? (await res.json()).values : null);
-      } catch {
-        if (!cancelled) setExecCaseCustomFieldValues(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceMode, activeExecCaseId, customFieldDefsVersion]);
 
   // Commits one custom field value edit via PUT, then optimistically patches local state
   // so the field reflects the save without waiting on a full spec-tree/detail refetch.
@@ -1464,133 +1218,7 @@ export default function App() {
     }
   }, [deleteCasePrompt, selectedProjectId, specSelectedCaseId, refreshSpecTree, showToast]);
 
-  // Execute verdict submission (Optimistic UI + Background API)
-  // A CLOSED run is read-only: no verdicts, no notes (the server also refuses them with
-  // 422 BUILD_CLOSED). A run closes manually via the Close Run button, or automatically once
-  // every case in the plan has a result.
-  const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
-  const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
-  // Why results can't be recorded right now (null = they can). Drives the verdict buttons,
-  // Notes, the hotkey block, and submitVerdict's own guard.
-  const verdictBlockReason: string | null = isRunMissing
-    ? NO_RUN_MESSAGE
-    : isRunClosed
-      ? RUN_CLOSED_MESSAGE
-      : workspaceMode === "EXECUTION" && activeCase?.removed_from_plan
-        ? REMOVED_CASE_MESSAGE
-        : null;
 
-  const submitVerdict = useCallback(
-    async (
-      verdict: VerdictType,
-      notes?: string,
-      targetCaseOverride?: TestCase,
-    ) => {
-      const targetCase = targetCaseOverride || activeCase;
-      if (!targetCase || !workspace) return;
-      if (verdictBlockReason) {
-        showToast(verdictBlockReason);
-        return;
-      }
-
-      // Whatever's in the Notes field gets saved regardless of verdict -- it's a general
-      // "execution details or notes" field (see its placeholder), not failure-only, so a
-      // note typed before hitting Pass/Skip shouldn't be silently discarded just because the
-      // verdict isn't FAILED/BLOCKED.
-      const resolvedNotes = notes || (failureNotes.trim() ? failureNotes : null);
-
-      // 1. OPTIMISTIC UI UPDATE (<10ms) -- also updates latest_notes, not just
-      // latest_verdict, so returning to this case (without a full refetch) shows the note
-      // that was just submitted instead of whatever was cached from before.
-      setWorkspace((prev) => {
-        if (!prev) return prev;
-        const updatedCases = prev.cases.map((c) =>
-          c.plan_case_id === targetCase.plan_case_id
-            ? { ...c, latest_verdict: verdict, latest_notes: resolvedNotes }
-            : c,
-        );
-        return { ...prev, cases: updatedCases };
-      });
-
-      // If the server doesn't save it, put the case back as it was -- otherwise the grid would
-      // keep showing a result that was never recorded.
-      const revertOptimisticUpdate = () =>
-        setWorkspace((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            cases: prev.cases.map((c) =>
-              c.plan_case_id === targetCase.plan_case_id
-                ? { ...c, latest_verdict: targetCase.latest_verdict, latest_notes: targetCase.latest_notes }
-                : c,
-            ),
-          };
-        });
-
-      setSyncStatus(`Syncing verdict for ${targetCase.external_id}...`);
-
-      // 2. DISPATCH BACKGROUND API CALL
-      try {
-        const response = await fetch("/api/v1/executions", {
-          method: "POST",
-          headers: jsonHeaders(),
-          body: JSON.stringify({
-            // The run selected in the dropdown -- workspace.build is always the plan's newest
-            // run, so using it recorded results against the wrong run whenever an older
-            // run was selected.
-            build_id: selectedRunId,
-            test_plan_case_id: targetCase.plan_case_id,
-            verdict,
-            status: "COMPLETED",
-            notes: resolvedNotes,
-            // No duration: manual execution isn't timed (this used to send a random
-            // 200-1000ms, which made Reports' "Slowest" table meaningless).
-          }),
-        });
-
-        if (response.ok) {
-          setExecutionDenied(null);
-          setSyncStatus(
-            `Connected (Recorded ${targetCase.external_id} -> ${verdict})`,
-          );
-          const data = await response.json().catch(() => ({}));
-          const recordedRunId = selectedRunId;
-          if (data.build_status === "CLOSED") {
-            setRunsList((prev) =>
-              prev.map((r) => (r.id === recordedRunId ? { ...r, status: "CLOSED" } : r)),
-            );
-          }
-        } else if (response.status === 401) {
-          // Session expired or token invalid -- the server now requires a real, current
-          // sign-in for this route (EXECUTE_RUN permission). Drop back to the login screen
-          // rather than silently failing every subsequent keystroke.
-          setCurrentUser(null);
-          setUserPermissions([]);
-          setSyncStatus("Session expired -- please log in again");
-        } else if (response.status === 403) {
-          revertOptimisticUpdate();
-          const denial = await response.json().catch(() => ({}));
-          if (denial.code === "RESULT_OVERWRITE_NOT_PERMITTED") {
-            setSyncStatus("Not permitted: your role can't change an existing result");
-            setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-          } else {
-            setSyncStatus("Not permitted: your role can't record executions");
-            setExecutionDenied(RUN_DENIED_MESSAGE);
-          }
-        } else {
-          revertOptimisticUpdate();
-          setSyncStatus("API Error recording verdict");
-        }
-      } catch (err) {
-        revertOptimisticUpdate();
-        setSyncStatus("Network Error");
-      }
-    },
-    [activeCase, workspace, failureNotes, verdictBlockReason, selectedRunId, showToast],
-  );
-
-  // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
-  // every other run edit (PUT .../plans/:planId/builds/:buildId).
 
   // Cases visible in Pane 2 for Specification mode: the whole project, or just the
   // currently selected suite's direct cases if one is selected in the tree.
@@ -1602,24 +1230,6 @@ export default function App() {
       )
     : [];
 
-  // Execution mode: indices into workspace.cases that pass the active search/filter (all of
-  // them when none is active). selectedIndex always stays an index into workspace.cases --
-  // the queue grid and hotkeys work in "visible position" space and map back through this,
-  // so a filtered list can never select the wrong case. The active case may itself be
-  // hidden by a filter (selection is left alone while typing); then no row is highlighted.
-  const visibleCaseIndices: number[] = (workspace?.cases || []).reduce<number[]>((acc, c, i) => {
-    if (!filterResult || filterResult.caseIds.has((c as any).case_id ?? "")) acc.push(i);
-    return acc;
-  }, []);
-  const visibleCaseIndexSet = new Set(visibleCaseIndices);
-  // What the queue grid actually lists: the search/filter result, further narrowed to the
-  // selected suite's own cases when one is selected in Execute mode. j/k and the grid work in
-  // this list's positions; advancing after a verdict can step past its end into the next
-  // suite (see advanceToCase / crossSuiteNextCaseIndex below).
-  const queueCaseIndices: number[] = execSuiteFilterId
-    ? visibleCaseIndices.filter((i) => workspace?.cases[i]?.test_suite_id === execSuiteFilterId)
-    : visibleCaseIndices;
-  const selectedVisiblePos = queueCaseIndices.indexOf(selectedIndex);
 
   // Global Hotkey Engine Hook wiring. j/k/[/]//  stay valid in both modes; p/f/b/s
   // (verdict recording) are disabled in Specification mode -- see useHotkeyEngine's
@@ -1698,30 +1308,9 @@ export default function App() {
     notesInputRef,
   });
 
-  // Moving to a different case should show THAT case's own saved notes (if it already has
-  // any from a prior execution), not the previous case's leftover draft text -- any
-  // unsubmitted draft was already saved by the textarea's onBlur handler above (which fires
-  // as focus leaves it, before selectedIndex actually changes). Loading an existing note
-  // here is not a user edit, so notesDirtyRef stays false (nothing to resubmit on blur
-  // unless the user actually changes it).
-  useEffect(() => {
-    setFailureNotes(activeCase?.latest_notes || "");
-    notesDirtyRef.current = false;
-    // A note-only Ctrl+Enter (no verdict hotkey pressed since arriving on this case) should
-    // resubmit whatever verdict the case already has, not silently reassign it -- e.g.
-    // navigating to an already-SKIPPED case and just adding a note must not flip it to
-    // FAILED. Only default to FAILED for a genuinely UNTESTED case, matching the existing
-    // convention that an explain-why note with no verdict chosen yet implies a failure.
-    const existingVerdict = activeCase?.latest_verdict;
-    pendingVerdictRef.current =
-      existingVerdict && existingVerdict !== "UNTESTED"
-        ? (existingVerdict as VerdictType)
-        : "FAILED";
-  }, [selectedIndex, activeCase?.latest_notes, activeCase?.latest_verdict]);
 
   const can = permissionFlags(userPermissions);
   const {
-    hasExecuteRunPermission,
     hasRunManagePermission,
     hasPlanManagePermission,
     hasSpecCreatePermission,
@@ -1789,51 +1378,8 @@ export default function App() {
     );
   }
 
-  if (!workspace) {
-    return (
-      <div
-        style={{
-          padding: "40px",
-          textAlign: "center",
-          color: "#9ca3af",
-          backgroundColor: "#090d16",
-          height: "100vh",
-        }}
-      >
-        Loading High-Density Workspace...
-      </div>
-    );
-  }
 
-  // Calculate Pass/Fail ratio metrics for Pane 1
-  const passedCount = workspace.cases.filter(
-    (c) => c.latest_verdict === "PASSED",
-  ).length;
-  const failedCount = workspace.cases.filter(
-    (c) => c.latest_verdict === "FAILED",
-  ).length;
 
-  // Build the real, nested SuiteTreeNode hierarchy from the Specification-mode spec-tree
-  // fetch, which drives Pane 1 in BOTH modes (fixes the tree's pre-existing flat/fake-count
-  // display). Execution mode's pass/fail counts are computed per-suite from the current
-  // plan's cases (workspace.cases); Specification mode's in-plan/total counts come straight
-  // from the server (spec-tree already sums them recursively over each subtree).
-  const execCountsBySuite = new Map<string, { passed: number; total: number }>();
-  if (workspaceMode === "EXECUTION") {
-    for (const c of workspace.cases) {
-      if (!c.test_suite_id) continue;
-      const entry = execCountsBySuite.get(c.test_suite_id) || { passed: 0, total: 0 };
-      entry.total += 1;
-      if (c.latest_verdict === "PASSED") entry.passed += 1;
-      execCountsBySuite.set(c.test_suite_id, entry);
-    }
-  }
-
-  // With a search/filter active the tree only shows suites containing a match (plus their
-  // ancestors, which suite_ids already includes) -- counts stay the suite's real totals.
-  const suiteNodes: SuiteTreeNode[] = specData
-    ? buildSuiteNodes(filterResult ? pruneSuiteTree(specData.suites, filterResult.suiteIds) : specData.suites, execCountsBySuite)
-    : [];
 
   // "Expand all"/"Collapse all": only suites with sub-suites have an arrow, so "all expanded"
   // means every one of those is open in the tree as currently shown.
@@ -1970,40 +1516,6 @@ export default function App() {
       ? findSuiteNode(specData.suites, selectedSuiteId)
       : null;
 
-  // Execution mode's Ctrl+Enter "jump to next folder" advance (see onSubmitNotes below)
-  // needs cases ordered by suite-tree position -- see buildExecutionCaseOrder's own comment
-  // for why workspace.cases' own order can't be used directly.
-  const executionCaseOrderByCaseIndex: number[] =
-    workspaceMode === "EXECUTION" && workspace
-      ? buildExecutionCaseOrder(workspace.cases, flattenSuiteOptions(suiteNodes).map((s) => s.id)).filter(
-          // Ctrl+Enter's next-folder jump only ever lands on cases the filter shows.
-          (i) => !filterResult || visibleCaseIndexSet.has(i),
-        )
-      : [];
-
-  // Moves the active case; when the queue is narrowed to one suite and the target lives in a
-  // different suite, the suite selection follows it, so the newly active case is always in
-  // the visible list (finishing a suite's last case flows on into the next suite).
-  const advanceToCase = (target: number) => {
-    setSelectedIndex(target);
-    const targetSuiteId = workspace?.cases[target]?.test_suite_id;
-    if (execSuiteFilterId && targetSuiteId && targetSuiteId !== execSuiteFilterId) {
-      setExecSuiteFilterId(targetSuiteId);
-    }
-  };
-  // The next case after the active one in suite-tree order that's in a DIFFERENT suite --
-  // only meaningful while the queue is narrowed to one suite (otherwise undefined).
-  const crossSuiteNextCaseIndex: number | undefined = (() => {
-    if (!execSuiteFilterId) return undefined;
-    const pos = executionCaseOrderByCaseIndex.indexOf(selectedIndex);
-    return executionCaseOrderByCaseIndex
-      .slice(pos + 1)
-      .find((i) => workspace?.cases[i]?.test_suite_id !== execSuiteFilterId);
-  })();
-  // Next case for the Pass/Skip buttons: the next one in the visible queue, or -- at the end
-  // of a suite-narrowed queue -- the first case of the next suite.
-  const nextVisibleCaseIndex: number | undefined =
-    queueCaseIndices.find((i) => i > selectedIndex) ?? crossSuiteNextCaseIndex;
 
   const specActiveCase = specData?.cases.find((c) => c.id === specSelectedCaseId) || null;
   const specVersionDetail = specCaseDetail?.version || null;
@@ -3393,474 +2905,8 @@ export default function App() {
                   Select a test case or suite to view its details.
                 </div>
               )
-            ) : activeCase ? (
-              <>
-                {/* CASE HEADER WITH VISUAL HOTKEY STATUS BADGE */}
-                <div
-                  style={{
-                    padding: "16px 20px",
-                    borderBottom: "1px solid #1f2937",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "16px",
-                          fontWeight: 700,
-                          color: "#f9fafb",
-                        }}
-                      >
-                        {activeCase.external_id}
-                      </span>
-                      <span style={{ fontSize: "14px", color: "#9ca3af" }}>
-                        {activeCase.title}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          padding: "2px 8px",
-                          borderRadius: "4px",
-                          backgroundColor: "#064e3b",
-                          color: "#34d399",
-                          fontWeight: 600,
-                        }}
-                      >
-                        v{activeCase.version_number} APPROVED
-                      </span>
-                    </div>
-                    <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                      {activeCase.summary}
-                    </div>
-                  </div>
-                </div>
-
-                {/* CASE DETAILS & STEP VERIFICATION */}
-                <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
-                  <div
-                    style={{
-                      marginBottom: "16px",
-                      backgroundColor: "#111827",
-                      padding: "12px",
-                      borderRadius: "6px",
-                      border: "1px solid #1f2937",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        color: "#6b7280",
-                        textTransform: "uppercase",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      Preconditions
-                    </div>
-                    <div style={{ fontSize: "12px", color: "#d1d5db" }}>
-                      {activeCase.preconditions}
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        color: "#6b7280",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Ordered Step Verification Table (Hotkey 'e' toggles drawer)
-                    </span>
-                    <button
-                      onClick={() => setShowStepDrawer((prev) => !prev)}
-                      style={{
-                        backgroundColor: "#1f2937",
-                        color: "#9ca3af",
-                        border: "none",
-                        padding: "2px 8px",
-                        borderRadius: "4px",
-                        fontSize: "11px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {showStepDrawer ? "Hide Drawer" : "Show Drawer (e)"}
-                    </button>
-                  </div>
-
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: "12px",
-                    }}
-                  >
-                    <thead>
-                      <tr
-                        style={{
-                          borderBottom: "1px solid #1f2937",
-                          color: "#9ca3af",
-                          textAlign: "left",
-                        }}
-                      >
-                        <th style={{ padding: "6px", width: "50px" }}>#</th>
-                        <th style={{ padding: "6px" }}>Action</th>
-                        <th style={{ padding: "6px" }}>Expected Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeCase.steps.map((step) => (
-                        <tr
-                          key={step.id}
-                          style={{
-                            borderBottom: "1px solid #1f2937",
-                            color: "#d1d5db",
-                          }}
-                        >
-                          <td style={{ padding: "8px 6px", fontWeight: 600 }}>
-                            {step.step_number}
-                          </td>
-                          <td style={{ padding: "8px 6px" }}>{step.action}</td>
-                          <td style={{ padding: "8px 6px", color: "#a7f3d0" }}>
-                            {step.expected_result}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {execCaseCustomFieldValues && execCaseCustomFieldValues.length > 0 && (
-                    <div style={{ marginTop: "16px" }}>
-                      {execCaseCustomFieldValues.map((entry) => (
-                        <CustomFieldEditor
-                          key={`${activeExecCaseId}-${entry.definition.id}`}
-                          entry={entry}
-                          onChange={() => {}}
-                          disabled
-                          disabledTitle="Custom fields are read-only during execution -- edit them in Specification mode"
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* DETAILED EXECUTION STEP DRAWER */}
-                  {showStepDrawer && (
-                    <div
-                      style={{
-                        marginTop: "16px",
-                        padding: "12px",
-                        backgroundColor: "#1e293b",
-                        borderRadius: "6px",
-                        border: "1px solid #3b82f6",
-                        fontSize: "12px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontWeight: 700,
-                          color: "#60a5fa",
-                          marginBottom: "6px",
-                        }}
-                      >
-                        Step Detail Execution Drawer (e)
-                      </div>
-                      <div style={{ color: "#d1d5db" }}>
-                        Inspect individual step-level actual logs, binary
-                        artifacts, and defect attachments here.
-                      </div>
-                    </div>
-                  )}
-
-                  {/* NOTES & FAILURE REASON TEXTAREA (ZONE 4 INPUT) */}
-                  <div style={{ marginTop: "24px" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        color: "#6b7280",
-                        textTransform: "uppercase",
-                        marginBottom: "6px",
-                      }}
-                    >
-                      Notes
-                    </label>
-                    <textarea
-                      ref={notesInputRef}
-                      value={failureNotes}
-                      disabled={Boolean(verdictBlockReason)}
-                      title={verdictBlockReason ?? undefined}
-                      onChange={(e) => {
-                        setFailureNotes(e.target.value);
-                        notesDirtyRef.current = true;
-                      }}
-                      onFocus={() => fsm.setZone("TEXT_INPUT")}
-                      onBlur={() => {
-                        fsm.setZone("EXECUTION_CONTAINER");
-                        // Unfocusing (click away, Tab, Esc) saves any unsubmitted notes
-                        // instead of silently discarding them. notesDirtyRef (not the
-                        // failureNotes state, which can be stale here -- see Ctrl+Enter's
-                        // own .blur() call) is what prevents double-submitting. No need to
-                        // clear failureNotes after submitting -- it's now this case's saved
-                        // note, and should keep showing exactly that.
-                        if (notesDirtyRef.current && failureNotes.trim()) {
-                          submitVerdict(pendingVerdictRef.current, failureNotes);
-                          notesDirtyRef.current = false;
-                        }
-                      }}
-                      placeholder="Type execution details or notes here... Single-key hotkeys auto-pause while typing. Press Ctrl+Enter to submit."
-                      style={{
-                        width: "100%",
-                        height: "80px",
-                        backgroundColor: "#111827",
-                        border: fsm.isInputFocused
-                          ? "1px solid #3b82f6"
-                          : "1px solid #1f2937",
-                        borderRadius: "6px",
-                        color: "#f9fafb",
-                        padding: "10px",
-                        fontSize: "12px",
-                        boxSizing: "border-box",
-                        outline: "none",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* DOCKED EXECUTION ACTION BAR */}
-                <div
-                  style={{
-                    height: "56px",
-                    backgroundColor: "#111827",
-                    borderTop: "1px solid #1f2937",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "0 20px",
-                  }}
-                >
-                  {activeCase?.removed_from_plan && (
-                    <span
-                      title={REMOVED_CASE_MESSAGE}
-                      style={{ fontSize: "11px", color: "#fbbf24", fontWeight: 600, marginRight: "12px", whiteSpace: "nowrap" }}
-                    >
-                      Removed from plan · read-only
-                    </span>
-                  )}
-                  {/* HOTKEY VERDICT BUTTONS (dimmed while the run is closed) */}
-                  <div
-                    style={{ display: "flex", gap: "10px", opacity: verdictBlockReason ? 0.4 : 1 }}
-                    title={verdictBlockReason ?? undefined}
-                  >
-                    <button
-                      onClick={() => {
-                        if (verdictBlockReason) return showToast(verdictBlockReason);
-                        if (!fsm.canExecute)
-                          return showToast(
-                            "Permission Denied: EXECUTE_RUN required",
-                          );
-                        // Same rule as the verdict hotkeys: changing an existing result needs
-                        // EXECUTE_OVERWRITE (the server enforces it too).
-                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                        submitVerdict("PASSED");
-                        // Covers the case this button doesn't auto-advance from (the last case
-                        // in the list) -- without this, a note-only Ctrl+Enter afterward would
-                        // resubmit whatever stale verdict pendingVerdictRef last held instead of
-                        // PASSED, since staying on the same case means the case-load reset
-                        // effect (keyed on selectedIndex) never re-runs to correct it.
-                        pendingVerdictRef.current = "PASSED";
-                        if (nextVisibleCaseIndex !== undefined)
-                          advanceToCase(nextVisibleCaseIndex);
-                      }}
-                      style={{
-                        backgroundColor: hasExecuteRunPermission
-                          ? "#15803d"
-                          : "#374151",
-                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                        border: "none",
-                        padding: "8px 16px",
-                        borderRadius: "4px",
-                        fontWeight: 600,
-                        fontSize: "13px",
-                        cursor: hasExecuteRunPermission
-                          ? "pointer"
-                          : "not-allowed",
-                      }}
-                    >
-                      Pass
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (verdictBlockReason) return showToast(verdictBlockReason);
-                        if (!fsm.canExecute)
-                          return showToast(
-                            "Permission Denied: EXECUTE_RUN required",
-                          );
-                        // Same rule as the verdict hotkeys: changing an existing result needs
-                        // EXECUTE_OVERWRITE (the server enforces it too).
-                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                        submitVerdict("FAILED");
-                        pendingVerdictRef.current = "FAILED";
-                        if (notesInputRef.current) notesInputRef.current.focus();
-                      }}
-                      style={{
-                        backgroundColor: hasExecuteRunPermission
-                          ? "#b91c1c"
-                          : "#374151",
-                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                        border: "none",
-                        padding: "8px 16px",
-                        borderRadius: "4px",
-                        fontWeight: 600,
-                        fontSize: "13px",
-                        cursor: hasExecuteRunPermission
-                          ? "pointer"
-                          : "not-allowed",
-                      }}
-                    >
-                      Fail
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (verdictBlockReason) return showToast(verdictBlockReason);
-                        if (!fsm.canExecute)
-                          return showToast(
-                            "Permission Denied: EXECUTE_RUN required",
-                          );
-                        // Same rule as the verdict hotkeys: changing an existing result needs
-                        // EXECUTE_OVERWRITE (the server enforces it too).
-                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                        submitVerdict("BLOCKED");
-                        pendingVerdictRef.current = "BLOCKED";
-                        if (notesInputRef.current) notesInputRef.current.focus();
-                      }}
-                      style={{
-                        backgroundColor: hasExecuteRunPermission
-                          ? "#b45309"
-                          : "#374151",
-                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                        border: "none",
-                        padding: "8px 16px",
-                        borderRadius: "4px",
-                        fontWeight: 600,
-                        fontSize: "13px",
-                        cursor: hasExecuteRunPermission
-                          ? "pointer"
-                          : "not-allowed",
-                      }}
-                    >
-                      Block
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (verdictBlockReason) return showToast(verdictBlockReason);
-                        if (!fsm.canExecute)
-                          return showToast(
-                            "Permission Denied: EXECUTE_RUN required",
-                          );
-                        // Same rule as the verdict hotkeys: changing an existing result needs
-                        // EXECUTE_OVERWRITE (the server enforces it too).
-                        if (!fsm.canOverwrite) return setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
-                        submitVerdict("SKIPPED");
-                        // Same reasoning as the Pass button above -- keeps a subsequent
-                        // note-only Ctrl+Enter correct when this is the last case (no advance).
-                        pendingVerdictRef.current = "SKIPPED";
-                        if (nextVisibleCaseIndex !== undefined)
-                          advanceToCase(nextVisibleCaseIndex);
-                      }}
-                      style={{
-                        backgroundColor: hasExecuteRunPermission
-                          ? "#4b5563"
-                          : "#374151",
-                        color: hasExecuteRunPermission ? "#ffffff" : "#9ca3af",
-                        border: "none",
-                        padding: "8px 16px",
-                        borderRadius: "4px",
-                        fontWeight: 600,
-                        fontSize: "13px",
-                        cursor: hasExecuteRunPermission
-                          ? "pointer"
-                          : "not-allowed",
-                      }}
-                    >
-                      Skip
-                    </button>
-                  </div>
-
-                  {/* DOCKED HOTKEY STATUS BADGE */}
-                  <FocusIndicatorBadge
-                    status={fsm.hotkeyStatus}
-                    currentZone={fsm.currentZone}
-                    onToggleHotkeys={fsm.toggleHotkeys}
-                  />
-                </div>
-              </>
             ) : (
-              // Execute mode with no case to show: say why, instead of a blank pane.
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "10px",
-                  color: "#6b7280",
-                  fontSize: "13px",
-                  textAlign: "center",
-                  padding: "24px",
-                }}
-              >
-                {execWorkspaceStatus === "LOADING" ? (
-                  "Loading test cases…"
-                ) : execWorkspaceStatus === "ERROR" ? (
-                  <>
-                    <span style={{ color: "#fca5a5" }}>Couldn't load this test plan's cases.</span>
-                    <button
-                      onClick={() => refreshExecutionWorkspace()}
-                      style={{
-                        padding: "5px 12px",
-                        backgroundColor: "#1f2937",
-                        border: "1px solid #374151",
-                        borderRadius: "4px",
-                        color: "#e5e7eb",
-                        fontSize: "12px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : execWorkspaceStatus === "NO_PLAN" ? (
-                  projectsList.length === 0
-                    ? "There are no projects yet."
-                    : "Select or create a test plan to start executing tests."
-                ) : workspace.cases.length === 0 ? (
-                  hasSpecViewPermission
-                    ? "This test plan has no test cases yet. Add some in Spec mode."
-                    : "This test plan has no test cases yet."
-                ) : (
-                  "No test case selected."
-                )}
-              </div>
+              <ExecutionPane execution={execution} executionWorkspace={executionWorkspace} />
             )}
           </div>
         </div>
