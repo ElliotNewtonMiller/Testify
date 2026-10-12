@@ -381,13 +381,21 @@ export function isPublicError(err: unknown): err is Error {
 }
 
 /** The error's message if it's meant for users, otherwise `fallback` (and the error is logged). */
-export function publicErrorMessage(err: unknown, fallback: string, request?: { id?: string; method?: string; url?: string }): string {
+export function publicErrorMessage(err: unknown, fallback: string, request?: Parameters<typeof logServerError>[1]): string {
   if (isPublicError(err)) return err.message;
   logServerError(err, request);
   return fallback;
 }
 
-export function logServerError(err: unknown, request?: { id?: string; method?: string; url?: string }): void {
+export function logServerError(
+  err: unknown,
+  request?: { id?: string; method?: string; url?: string; log?: { error: (obj: object, msg: string) => void } }
+): void {
+  // Through the request's logger when there is one: a JSON line carrying the request id.
+  if (request?.log) {
+    request.log.error({ err }, 'Unexpected error');
+    return;
+  }
   if (process.env.NODE_ENV === 'test') return;
   const where = request ? ` ${request.method ?? ''} ${request.url ?? ''} (request ${request.id ?? '?'})` : '';
   console.error(`[testify] Unexpected error${where}:`, err);

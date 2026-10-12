@@ -46,7 +46,10 @@ describe('Stored SMTP password', () => {
   async function start(key: string | undefined, real = false) {
     if (key) process.env.SECRETS_KEY = key;
     else delete process.env.SECRETS_KEY;
-    const { app } = await createServer(real ? 'postgres://unused/testify' : undefined, { db });
+    // A real database also requires JWT_SECRET.
+    const { app } = await withEnv({ JWT_SECRET: real ? 'secrets-test-jwt-secret-0123456789' : undefined }, () =>
+      createServer(real ? 'postgres://unused/testify' : undefined, { db })
+    );
     apps.push(app);
     const token = JSON.parse((await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: 'admin', password: 'password' } })).payload).token;
     const call = (method: string, url: string, payload?: unknown) => app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, payload });
@@ -110,3 +113,20 @@ describe('Stored SMTP password', () => {
     expect(await storedPassword()).toBeFalsy();
   });
 });
+
+/** Runs `fn` with these environment variables set (undefined = unset), then puts them back. */
+async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  const apply = (values: Record<string, string | undefined>) => {
+    for (const [k, v] of Object.entries(values)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  apply(vars);
+  try {
+    return await fn();
+  } finally {
+    apply(previous);
+  }
+}

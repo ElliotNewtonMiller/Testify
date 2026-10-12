@@ -4,7 +4,7 @@ import { createServer } from '../src/server.js';
 
 /** Sign-ins are server-side sessions: sign-out ends one, a password change ends the others. */
 describe('Sessions', () => {
-  const SECRET = 'sessions-test-secret';
+  const SECRET = 'sessions-test-secret-0123456789abcdef';
   let app: any;
   let db: any;
   let previousSecret: string | undefined;

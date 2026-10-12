@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -34,7 +33,8 @@ import { createRateLimits } from './services/rateLimits.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
-import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, resolveJwtSecret, resolveLogLevel, ConfigError } from './config.js';
+import { loggerOptions, registerRequestLogging, registerHealthRoute } from './observability.js';
 import { registerWebApp } from './webApp.js';
 import { setSecretBox } from './services/secrets.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
@@ -46,10 +46,13 @@ import { requestOrigin } from './audit.js';
 // works identically on every machine; tests rely on that. Pass a real connectionString to
 // connect to a real Postgres server. The startup code at the bottom of this file decides which
 // from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
-export async function createServer(connectionString?: string, options: { db?: Kysely<Database>; webDistDir?: string | null } = {}) {
+export async function createServer(connectionString?: string, options: { db?: Kysely<Database>; webDistDir?: string | null; logStream?: NodeJS.WritableStream } = {}) {
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
-  const app = Fastify({ logger: false, trustProxy: process.env.TRUST_PROXY === 'true' });
+  // Logging: one JSON line per request on stdout at LOG_LEVEL (observability.ts). Tests pass
+  // `logStream` to read the log.
+  const app = Fastify({ ...loggerOptions(resolveLogLevel(), options.logStream), trustProxy: process.env.TRUST_PROXY === 'true' });
+  registerRequestLogging(app);
   // Per-process rate limits for API tokens, exports and report emails (services/rateLimits.ts).
   app.decorate('rateLimits', createRateLimits());
   // Unexpected errors (database errors, bugs) are logged here and answered with a generic
@@ -80,18 +83,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // `options.db` lets tests start a second server against the same database -- a restart.
   const db: Kysely<Database> = options.db ?? createDbClient({ connectionString });
 
-  // Signing secret for session JWTs (see packages/core/src/security/jwt.ts). Set JWT_SECRET in
-  // production -- every server process serving the same sessions must share it, and it must not
-  // change across restarts or all existing tokens are invalidated. With no JWT_SECRET set, a
-  // random secret is generated for this process only; fine for local dev/tests (tokens just don't
-  // survive a restart), not for a real deployment.
-  const jwtSecret = process.env.JWT_SECRET || randomBytes(32).toString('hex');
-  if (!process.env.JWT_SECRET && process.env.NODE_ENV !== 'test') {
-    console.warn(
-      '[testify] JWT_SECRET is not set -- generated a random secret for this process only. ' +
-        'Set JWT_SECRET in your environment for production so sessions survive restarts and all server instances agree.'
-    );
-  }
+  // Signing secret for session JWTs (see packages/core/src/security/jwt.ts): JWT_SECRET, which
+  // a real database requires (resolveJwtSecret in config.ts). Only the in-memory database falls
+  // back to a random secret for this process.
+  const jwtSecret = resolveJwtSecret({ inMemory: !connectionString });
 
   // Bring the schema up to date (only migrations that haven't run yet -- safe on every start,
   // including against a database that's already current), then seed the RBAC registry
@@ -344,6 +339,9 @@ export async function createServer(connectionString?: string, options: { db?: Ky
       build_status: buildStatus,
     });
   });
+
+  // GET /api/v1/health, for load balancers and uptime monitors (observability.ts).
+  registerHealthRoute(app, db);
 
   // The built web app, served for every address the API doesn't handle (webApp.ts).
   if (options.webDistDir) registerWebApp(app, options.webDistDir);

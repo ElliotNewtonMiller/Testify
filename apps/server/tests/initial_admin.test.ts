@@ -86,6 +86,8 @@ describe('First start against a real database', () => {
   it('creates the admin with a generated password, printed once, that must be changed', async () => {
     const db = createDbClient(); // stands in for a real Postgres; the connection string marks it as one
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const previousJwtSecret = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'initial-admin-test-secret-0123456789'; // a real database requires one
     try {
       const { app } = await createServer('postgres://unused/testify', { db });
       const printed = warn.mock.calls.map((c) => String(c[0])).join('\n');
@@ -109,6 +111,8 @@ describe('First start against a real database', () => {
       await second.app.close();
     } finally {
       warn.mockRestore();
+      if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = previousJwtSecret;
       await db.destroy();
     }
   }, 30_000);

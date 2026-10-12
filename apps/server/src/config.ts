@@ -150,3 +150,46 @@ export function resolveWebDistDir(env: NodeJS.ProcessEnv = process.env, defaultD
   }
   return existsSync(join(defaultDir, 'index.html')) ? defaultDir : null;
 }
+
+/**
+ * The secret that signs sign-in tokens (JWT_SECRET): at least 32 characters, e.g.
+ * `openssl rand -hex 32`. Every server instance must share it, and it must stay the same
+ * across restarts, or everyone is signed out.
+ *
+ * - Set: used as is.
+ * - Unset, in-memory database: a random secret for this process (that data, sessions included,
+ *   is thrown away anyway).
+ * - Unset, real database: refused. A per-process secret would sign everyone out on every restart
+ *   and make several instances reject each other's sign-ins.
+ */
+export function resolveJwtSecret({ inMemory }: { inMemory: boolean }, env: NodeJS.ProcessEnv = process.env): string {
+  const secret = env.JWT_SECRET;
+  if (secret) {
+    if (secret.length < 32) {
+      throw new ConfigError('JWT_SECRET must be at least 32 characters long (e.g. the output of `openssl rand -hex 32`).');
+    }
+    return secret;
+  }
+  if (inMemory) return randomBytes(32).toString('hex');
+  throw new ConfigError(
+    'JWT_SECRET is not set. Set it to a random string of at least 32 characters (e.g. the output of `openssl rand -hex 32`), ' +
+      'the same on every server instance and across restarts -- it signs everyone\'s sign-ins.'
+  );
+}
+
+export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/**
+ * How much the server logs (LOG_LEVEL): one JSON line per request at `info` (the default), plus
+ * unexpected errors at `error`. `warn` or `error` keeps only problems; `silent` turns it off.
+ * The test suite is silent unless LOG_LEVEL is set.
+ */
+export function resolveLogLevel(env: NodeJS.ProcessEnv = process.env): LogLevel {
+  const raw = env.LOG_LEVEL?.trim().toLowerCase();
+  if (!raw) return env.NODE_ENV === 'test' ? 'silent' : 'info';
+  if (!(LOG_LEVELS as readonly string[]).includes(raw)) {
+    throw new ConfigError(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')} (got "${env.LOG_LEVEL}").`);
+  }
+  return raw as LogLevel;
+}
