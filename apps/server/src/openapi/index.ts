@@ -30,6 +30,16 @@ export const OPENAPI_TAGS = [
   { name: 'Search', description: 'Finding cases by text and by property; the same filters work in reports.' },
   { name: 'Plans', description: 'Test plans: a set of cases, each pinned at a version.' },
   { name: 'Runs and results', description: 'Test runs of a plan, and the results recorded in them (one at a time, or in CI batches).' },
+  { name: 'Reports', description: 'Run summaries, trends, test health, case history, breakdowns. The catalog says what each report answers and takes.' },
+  { name: 'Report email', description: 'Emailing reports to anyone, now or on a schedule.' },
+  { name: 'Import', description: 'Importing suites and cases: TestLink XML, JUnit XML, Testify JSON, CSV, TestRail CSV. Preview first, then import.' },
+  { name: 'Export', description: 'Exporting suites and cases, or a run\'s results, as JSON or CSV.' },
+  { name: 'API tokens', description: 'Tokens for CI and scripts. Each works only in its own project.' },
+  { name: 'Admin: users and roles', description: 'Users, roles, project roles and permission overrides. Not available to API tokens.' },
+  { name: 'Admin: custom fields', description: 'Defining custom fields for cases and suites. Not available to API tokens.' },
+  { name: 'Admin: email', description: 'The mail server for report emails. Not available to API tokens.' },
+  { name: 'Admin: audit log', description: 'The security audit log. Not available to API tokens.' },
+  { name: 'Operations', description: 'Health check and the MCP endpoint for AI agents.' },
 ];
 
 const SPEC_DESCRIPTION = `The Testify REST API. Everything the web app does goes through it.
@@ -143,9 +153,36 @@ export interface OpenApiOptions {
   checkResponses?: boolean;
 }
 
+/** A registered route and whether the spec describes it (see `app.openApiRoutes`). */
+export interface RegisteredRoute {
+  method: string;
+  url: string;
+  /** Has a tag, so it's in the spec. */
+  documented: boolean;
+  /** Deliberately left out (`schema.hide`). */
+  hidden: boolean;
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** Every route registered after the OpenAPI setup, for the test that none is undocumented. */
+    openApiRoutes: RegisteredRoute[];
+  }
+}
+
 /** Registers the spec, the docs page, the validator and (optionally) the response check. Call before any route. */
 export async function registerOpenApi(app: FastifyInstance, options: OpenApiOptions = {}) {
   for (const s of SHARED_SCHEMAS) app.addSchema(s);
+
+  const routes: RegisteredRoute[] = [];
+  app.decorate('openApiRoutes', routes);
+  app.addHook('onRoute', (route) => {
+    const schema = route.schema as { tags?: string[]; hide?: boolean } | undefined;
+    for (const method of [route.method].flat()) {
+      if (method === 'HEAD') continue;
+      routes.push({ method, url: route.url, documented: Boolean(schema?.tags?.length) && !schema?.hide, hidden: Boolean(schema?.hide) });
+    }
+  });
 
   await app.register(swagger, {
     openapi: {

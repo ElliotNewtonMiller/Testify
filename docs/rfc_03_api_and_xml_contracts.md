@@ -6,7 +6,7 @@
 **Target Platform:** Testify
 **Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md), [rfc_04_rbac_security_matrix.md](rfc_04_rbac_security_matrix.md), [reports_api_and_mcp.md](reports_api_and_mcp.md), [api_roadmap.md](api_roadmap.md)
 
-> This RFC describes the API as it works today. A generated OpenAPI spec is being added area by area ([api_roadmap.md](api_roadmap.md) step 3): every running server shows it at `/docs` (with "Try it out") and serves it at `/docs/json`. Routes are documented there as each area is done; until then this document and the routes in `apps/server/src/routes/` are the reference. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
+> This RFC describes the API as it works today. Every running server also serves a generated OpenAPI spec at `/docs/json` and a docs page with "Try it out" at `/docs`, covering every route with its fields, allowed values and errors ([api_roadmap.md](api_roadmap.md) step 3). This document gives the conventions and the overview; the spec has the field-level detail. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
 
 ---
 
@@ -267,7 +267,7 @@ The codes a client is most likely to handle (the code is always in `code`; `deta
 | `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
 | `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `TOKEN_NOT_ALLOWED` (an API token on a route outside any project), `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
 | `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |
-| `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, a taken project prefix or run name |
+| `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `USER_EXISTS`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, a taken project prefix or run name |
 | `413` | `IMPORT_TOO_LARGE`, `PAYLOAD_TOO_LARGE` |
 | `422` | `RUN_CLOSED`, `PLAN_LOCKED`, `CASE_VERSION_LOCKED` (editing an approved version), `CASE_VERSION_NOT_APPROVED` (adding a draft to a plan), `CASE_REMOVED_FROM_PLAN`, `VERSION_NOT_DRAFT`, `VERSION_NOT_APPROVED`, `VERSION_NOT_DEPRECATED`, `VERSION_NOT_LATEST`, `REQUIRED_CUSTOM_FIELDS_MISSING`, `REQUIRED_FIELD_NEEDS_DEFAULT` |
 | `429` | `RATE_LIMITED`, `ACCOUNT_LOCKED`, `TOO_MANY_ATTEMPTS`, `IMPORT_BUSY` (with `Retry-After`) |
@@ -516,7 +516,7 @@ sequenceDiagram
 
 | Area | Design | Status |
 | :--- | :--- | :--- |
-| **REST conventions** | Resource naming, verbs, status codes, one id name each (§1-2) | Built (2026-10-12). OpenAPI spec at `/docs/json` in progress; no paging yet ([api_roadmap.md](api_roadmap.md) steps 3-4). |
+| **REST conventions** | Resource naming, verbs, status codes, one id name each (§1-2) | Built (2026-10-12). OpenAPI spec at `/docs/json` for every route; no paging yet ([api_roadmap.md](api_roadmap.md) steps 3-4). |
 | **CI results** | Batch endpoint with all-or-nothing mode (§3) | Built: up to 5,000 results per request, one transaction. |
 | **Errors** | Problem details for every error, with a code registry (§4) | Built. |
 | **Closed runs, locked plans** | Writes rejected with HTTP 422 `RUN_CLOSED` / `PLAN_LOCKED` (§4.1) | Built. |

@@ -12,6 +12,7 @@ import { sendEmail } from '../services/mailer.js';
 import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 import { sendError, reportErrorParams } from '../errors.js';
+import * as O from '../openapi/areas/other.js';
 /**
  * Emailing reports, all gated on REPORT_EMAIL (sending project data outside Testify) and
  * nested under :projectId so project role overrides and API-token scoping apply:
@@ -68,7 +69,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
 
   // ---- Manual "Email this report" -----------------------------------------------------
 
-  app.post('/api/v1/projects/:projectId/report-emails', gate, async (request, reply) => {
+  app.post('/api/v1/projects/:projectId/report-emails', { schema: O.sendReportEmailSchema, ...gate }, async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
     const body = (request.body ?? {}) as { sections?: unknown; recipients?: unknown; message?: unknown; preview?: unknown };
     const actor = request.user!;
@@ -153,13 +154,13 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return schedule && schedule.project_id === projectId ? schedule : null;
   }
 
-  app.get('/api/v1/projects/:projectId/report-schedules', gate, async (request, reply) => {
+  app.get('/api/v1/projects/:projectId/report-schedules', { schema: O.listSchedulesSchema, ...gate }, async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
     if (!(await projectRepo.findById(projectId))) return sendError(reply, 404, 'Project not found');
     return { schedules: await scheduleRepo.listByProject(projectId) };
   });
 
-  app.post('/api/v1/projects/:projectId/report-schedules', gate, async (request, reply) => {
+  app.post('/api/v1/projects/:projectId/report-schedules', { schema: O.createScheduleSchema, ...gate }, async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
     if (!(await projectRepo.findById(projectId))) return sendError(reply, 404, 'Project not found');
     const parsed = await parseScheduleBody(projectId, request.body);
@@ -173,7 +174,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return reply.status(201).send({ schedule });
   });
 
-  app.put('/api/v1/report-schedules/:scheduleId', gate, async (request, reply) => {
+  app.put('/api/v1/report-schedules/:scheduleId', { schema: O.replaceScheduleSchema, ...gate }, async (request, reply) => {
     const { scheduleId: id } = request.params as { scheduleId: string };
     const projectId = request.projectId ?? '';
     if (!(await scheduleInProject(projectId, id))) return sendError(reply, 404, 'Schedule not found in this project');
@@ -188,7 +189,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return { schedule };
   });
 
-  app.delete('/api/v1/report-schedules/:scheduleId', gate, async (request, reply) => {
+  app.delete('/api/v1/report-schedules/:scheduleId', { schema: O.deleteScheduleSchema, ...gate }, async (request, reply) => {
     const { scheduleId: id } = request.params as { scheduleId: string };
     const projectId = request.projectId ?? '';
     const existing = await scheduleInProject(projectId, id);
@@ -198,7 +199,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return reply.status(204).send();
   });
 
-  app.post('/api/v1/report-schedules/:scheduleId/send-now', gate, async (request, reply) => {
+  app.post('/api/v1/report-schedules/:scheduleId/send-now', { schema: O.sendScheduleNowSchema, ...gate }, async (request, reply) => {
     const { scheduleId: id } = request.params as { scheduleId: string };
     const projectId = request.projectId ?? '';
     const schedule = await scheduleInProject(projectId, id);

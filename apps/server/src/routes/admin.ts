@@ -7,6 +7,7 @@ import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError, sendError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
 import { requestOrigin } from '../audit.js';
+import * as A from '../openapi/areas/admin.js';
 
 /** Replies for a guard violation (see services/adminGuard.ts); returns false for any other error. */
 function sendGuardError(reply: any, err: unknown): boolean {
@@ -36,7 +37,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   }
 
   // GET /api/v1/admin/users - List all system users & assigned roles (Gated by USER_MANAGE)
-  app.get('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+  app.get('/api/v1/admin/users', { schema: A.listUsersSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     const rawUsers = await userRepo.findAll();
 
     const users = await Promise.all(
@@ -66,7 +67,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // POST /api/v1/admin/users - Admin provisions a new user account (Gated by USER_MANAGE)
-  app.post('/api/v1/admin/users', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.post('/api/v1/admin/users', { schema: A.createUserSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { username, email, password, global_role, project_roles } = (request.body as any) || {};
 
@@ -146,12 +147,16 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION') || err.message?.startsWith('UNKNOWN_ROLE')) {
         return sendError(reply, 400, err.message);
       }
+      // users.username and users.email are unique; this used to answer a generic 500.
+      if (err?.code === '23505') {
+        return sendError(reply, 409, 'That username or email is already used by another user.', { code: 'USER_EXISTS' });
+      }
       throw err; // unexpected: the global error handler logs it and answers 500
     }
   });
 
   // PATCH /api/v1/admin/users/:userId/roles - Admin updates user privileges (only what the body names) (Gated by USER_MANAGE)
-  app.patch('/api/v1/admin/users/:userId/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.patch('/api/v1/admin/users/:userId/roles', { schema: A.updateUserRolesSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { global_role, project_roles } = (request.body as any) || {};
@@ -223,7 +228,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // PATCH /api/v1/admin/users/:userId - Change a user's status (ACTIVE / DISABLED)
-  app.patch('/api/v1/admin/users/:userId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.patch('/api/v1/admin/users/:userId', { schema: A.updateUserSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { status } = (request.body as { status: 'ACTIVE' | 'DISABLED' }) || {};
@@ -283,7 +288,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   // sign-in lock. Not for your own account: that's the profile form, which asks for the
   // current password. And not for someone with permissions you don't have, in any project --
   // otherwise USER_MANAGE could take over an admin's account (the guard's rank rule).
-  app.post('/api/v1/admin/users/:userId/reset-password', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.post('/api/v1/admin/users/:userId/reset-password', { schema: A.resetPasswordSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { password } = ((request.body as any) || {}) as { password?: unknown };
@@ -357,7 +362,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // GET /api/v1/admin/audit-logs - Filtered Security Audit Log Viewer (Gated by USER_MANAGE or SYSTEM_ADMIN)
-  app.get('/api/v1/admin/audit-logs', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+  app.get('/api/v1/admin/audit-logs', { schema: A.auditLogSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     const securityActions = [
       'USER_CREATED',
       'USER_DISABLED',
@@ -400,17 +405,17 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   // grids grouped by module. Read-only, no audit entry.
   // Any signed-in user: it's only the list of permission names, and the API Tokens and Custom
   // Fields tabs (API_TOKEN_MANAGE / CUSTOM_FIELD_MANAGE, not USER_MANAGE) need it too.
-  app.get('/api/v1/admin/permissions', { preHandler: async (request, reply) => { await authenticateRequest(request, reply, db, jwtSecret); } }, async () => {
+  app.get('/api/v1/admin/permissions', { schema: A.listPermissionsSchema, preHandler: async (request, reply) => { await authenticateRequest(request, reply, db, jwtSecret); } }, async () => {
     return { permissions: roleRepo.listPermissionRegistry() };
   });
 
   // GET /api/v1/admin/roles - List all template roles (built-in + custom) with their bundles
-  app.get('/api/v1/admin/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+  app.get('/api/v1/admin/roles', { schema: A.listRolesSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
     return { roles: await roleRepo.listRoles() };
   });
 
   // POST /api/v1/admin/roles - Create a new template role
-  app.post('/api/v1/admin/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.post('/api/v1/admin/roles', { schema: A.createRoleSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { name, description, permission_keys } = (request.body as any) || {};
 
@@ -452,7 +457,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // PATCH /api/v1/admin/roles/:roleId - Edit a template role's name/description/permission bundle
-  app.patch('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.patch('/api/v1/admin/roles/:roleId', { schema: A.updateRoleSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { roleId } = request.params as { roleId: string };
     const { name, description, permission_keys } = (request.body as any) || {};
@@ -510,7 +515,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   // DELETE /api/v1/admin/roles/:roleId - Delete a template role. Blocked (409) if any user
   // is currently assigned to it, globally or per-project -- is_system_role is informational
   // only and never protects a default role from deletion.
-  app.delete('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  app.delete('/api/v1/admin/roles/:roleId', { schema: A.deleteRoleSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { roleId } = request.params as { roleId: string };
 
@@ -556,7 +561,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   // overrides at a given scope (global when project_id is omitted).
   app.get(
     '/api/v1/admin/users/:userId/permission-overrides',
-    { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
+    { schema: A.getOverridesSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { userId } = request.params as { userId: string };
       const { project_id: projectId } = request.query as { project_id?: string };
@@ -575,7 +580,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   // a given scope. Returns the recomputed effective permissions immediately.
   app.put(
     '/api/v1/admin/users/:userId/permission-overrides',
-    { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
+    { schema: A.setOverridesSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const activeUser = request.user!;
       const { userId } = request.params as { userId: string };

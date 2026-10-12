@@ -30,6 +30,7 @@ import { requestOrigin } from '../audit.js';
 
 import { sendError } from '../errors.js';
 import { listRunsSchema } from '../openapi/areas/projects.js';
+import * as O from '../openapi/areas/other.js';
 function pickSerializer(format: unknown): IFileSerializer {
   return format === 'STANDARD_CSV' ? new CsvExportSerializer() : new JsonExportSerializer();
 }
@@ -69,7 +70,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
 
   app.post(
     '/api/v1/projects/:projectId/exports/definitions',
-    { preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
+    { schema: O.exportDefinitionsSchema, preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
     async (request, reply) => {
       if (!withinRateLimit(request, reply, app.rateLimits.exports, 'exports')) return reply;
       const actor = request.user!;
@@ -273,7 +274,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
 
   app.post(
     '/api/v1/projects/:projectId/exports/results',
-    { preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
+    { schema: O.exportResultsSchema, preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
     async (request, reply) => {
       if (!withinRateLimit(request, reply, app.rateLimits.exports, 'exports')) return reply;
       const actor = request.user!;

@@ -7,6 +7,7 @@ import { PERMISSION_KEYS, TOKEN_EXCLUDED_PERMISSIONS, isTokenGrantable } from '@
 import { requirePermission, apiTokenIssuerAccess } from '../middleware/auth.js';
 import { sendCapabilityCeilingExceededError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
+import * as O from '../openapi/areas/other.js';
 
 /**
  * Machine API token management -- create/list/revoke tokens for CI/automation callers.
@@ -21,7 +22,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
 
   app.post(
     '/api/v1/projects/:projectId/api-tokens',
-    { preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
+    { schema: O.createTokenSchema, preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
@@ -100,7 +101,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
 
   app.get(
     '/api/v1/projects/:projectId/api-tokens',
-    { preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
+    { schema: O.listTokensSchema, preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
     async (request) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
@@ -126,7 +127,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
 
   app.delete(
     '/api/v1/api-tokens/:tokenId',
-    { preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
+    { schema: O.revokeTokenSchema, preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { tokenId: id } = request.params as { tokenId: string };

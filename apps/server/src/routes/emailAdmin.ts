@@ -11,6 +11,7 @@ import { getSecretBox } from '../services/secrets.js';
 import { requestOrigin } from '../audit.js';
 
 import { sendError } from '../errors.js';
+import * as A from '../openapi/areas/admin.js';
 /**
  * Outgoing email settings and the last email sent (SYSTEM_ADMIN only):
  *
@@ -42,9 +43,9 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
     };
   }
 
-  app.get('/api/v1/admin/email-settings', gate, async () => ({ settings: await publicSettings() }));
+  app.get('/api/v1/admin/email-settings', { schema: A.getEmailSettingsSchema, ...gate }, async () => ({ settings: await publicSettings() }));
 
-  app.put('/api/v1/admin/email-settings', gate, async (request, reply) => {
+  app.put('/api/v1/admin/email-settings', { schema: A.putEmailSettingsSchema, ...gate }, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const bad = (field: string, reason: string) => sendError(reply, 400, `${field} ${reason}`, { code: 'INVALID_PARAMS', invalid_params: [{ name: field, reason }] });
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
@@ -108,7 +109,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
     return { settings: await publicSettings() };
   });
 
-  app.post('/api/v1/admin/email-settings/test', gate, async (request, reply) => {
+  app.post('/api/v1/admin/email-settings/test', { schema: A.testEmailSchema, ...gate }, async (request, reply) => {
     const to = String((request.body as any)?.to ?? '').trim().toLowerCase();
     if (!isValidEmail(to)) return sendError(reply, 400, 'to must be an email address', { code: 'INVALID_PARAMS', invalid_params: [{ name: 'to', reason: 'must be an email address' }] });
     if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'emails')) return reply;
@@ -125,5 +126,5 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
     return { email: { status: sent.status, error: sent.error } };
   });
 
-  app.get('/api/v1/admin/last-email', gate, async () => ({ email: (await lastEmailRepo.find()) ?? null }));
+  app.get('/api/v1/admin/last-email', { schema: A.lastEmailSchema, ...gate }, async () => ({ email: (await lastEmailRepo.find()) ?? null }));
 }

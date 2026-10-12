@@ -13,6 +13,7 @@ import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION
 import { sendCustomFieldInUseError, sendProblemDetails, isPublicError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 import * as F from '../openapi/areas/spec.js';
+import * as A from '../openapi/areas/admin.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
   return typeof value === 'string' && (CUSTOM_FIELD_ENTITY_TYPES as readonly string[]).includes(value);
@@ -68,7 +69,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
   app.get(
     '/api/v1/admin/custom-fields',
-    { preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
+    { schema: A.listDefinitionsSchema, preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
     async (request) => {
       const { entity_type: entityType } = request.query as { entity_type?: string };
       const definitions = await fieldRepo.listDefinitions(isEntityType(entityType) ? entityType : undefined);
@@ -78,7 +79,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
   app.post(
     '/api/v1/admin/custom-fields',
-    { preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
+    { schema: A.createDefinitionSchema, preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const activeUser = request.user!;
       const { entity_type: entityType, name, field_label, field_type, is_required, default_value, validation_regex, options } =
@@ -153,7 +154,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
   app.patch(
     '/api/v1/admin/custom-fields/:id',
-    { preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
+    { schema: A.updateDefinitionSchema, preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const activeUser = request.user!;
       const { id } = request.params as { id: string };
@@ -231,7 +232,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   // which never allows deleting a role that's in use.
   app.delete(
     '/api/v1/admin/custom-fields/:id',
-    { preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
+    { schema: A.deleteDefinitionSchema, preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const activeUser = request.user!;
       const { id } = request.params as { id: string };

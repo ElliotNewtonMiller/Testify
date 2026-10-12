@@ -9,6 +9,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { authenticateRequest, canViewProject, type AuthenticatedUser } from '../middleware/auth.js';
 import { ReportError, ReportService } from '../services/reportService.js';
 import { CaseFilterService } from '../services/caseFilterService.js';
+import { mcpSchema } from '../openapi/areas/other.js';
 
 /** Smaller list sizes than the REST defaults, to keep agent context small. */
 const MCP_DEFAULT_LIMIT = 25;
@@ -247,7 +248,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
     return server;
   }
 
-  app.post('/mcp', async (request, reply) => {
+  app.post('/mcp', { schema: mcpSchema }, async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return; // 401 already sent
 
@@ -266,6 +267,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
   // No server-initiated streams or sessions in stateless mode.
   const methodNotAllowed = async (_request: unknown, reply: any) =>
     reply.status(405).header('Allow', 'POST').send({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed. Use POST.' }, id: null });
-  app.get('/mcp', methodNotAllowed);
-  app.delete('/mcp', methodNotAllowed);
+  // Not documented: Streamable HTTP without sessions has no GET or DELETE.
+  app.get('/mcp', { schema: { hide: true } }, methodNotAllowed);
+  app.delete('/mcp', { schema: { hide: true } }, methodNotAllowed);
 }

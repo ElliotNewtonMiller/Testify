@@ -92,7 +92,7 @@ See [RFC 02](./rfc_02_ux_density_and_hotkeys.md). In brief:
 
 ## 5. API, CI Results & Import
 
-- **REST API:** under `/api/v1`. Lists and creation sit under the parent and each item has its own address (`/projects/{id}/plans`, `/plans/{id}`, `/runs/{id}/results`); `PATCH` for partial updates; 201/200/204; problem-details errors. The conventions, route map and error codes are in [RFC 03 §1-4](./rfc_03_api_and_xml_contracts.md). The OpenAPI spec (`/docs/json`) and a docs page with "Try it out" (`/docs`) are being filled in area by area ([api_roadmap.md](./api_roadmap.md) step 3).
+- **REST API:** under `/api/v1`. Lists and creation sit under the parent and each item has its own address (`/projects/{id}/plans`, `/plans/{id}`, `/runs/{id}/results`); `PATCH` for partial updates; 201/200/204; problem-details errors. The conventions, route map and error codes are in [RFC 03 §1-4](./rfc_03_api_and_xml_contracts.md). The OpenAPI spec (`/docs/json`) and a docs page with "Try it out" (`/docs`) cover every route ([api_roadmap.md](./api_roadmap.md) step 3).
 - **Reports and MCP:** a catalog-driven reports API and a read-only MCP endpoint for agents ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).
 - **CI results:** `POST /api/v1/runs/{runId}/results/batch`, up to 5,000 results per request in one transaction, with an all-or-nothing option ([RFC 03 §3](./rfc_03_api_and_xml_contracts.md)).
 - **Import:** dry run then execute, with interactive custom-field mapping and duplicate handling, up to 50 MB per file ([RFC 03 §6](./rfc_03_api_and_xml_contracts.md)).

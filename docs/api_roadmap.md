@@ -22,7 +22,7 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 1. **Documented by hand only.** RFC 03 §1-4 has the conventions, every route and the error codes, with examples; [reports_api_and_mcp.md](reports_api_and_mcp.md) covers reports, MCP and CI results in depth. Request and response fields for most routes still have to be read from the code in `apps/server/src/routes/` (step 3).
 2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
-4. **Machine-readable description in progress.** The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover sign-in, projects, the specification, plans, runs and results so far (step 3).
+4. ~~**No machine-readable description.**~~ The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover every route (step 3). Report outputs are described only at the top level so far.
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
 6. **Reads are coarse** (step 8): no fetching a single item by id, no dedicated list of a run's results, readable ids (SHOP-12) accepted almost nowhere, only a case's latest version.
 7. ~~**API tokens reach global admin routes.**~~ Fixed 2026-10-12 (see below).
@@ -111,7 +111,7 @@ Many tools read that format, so the one file gives:
 
 ### 3. OpenAPI spec and docs page
 
-**Status:** In progress. Stages 1-2 of 4 done (2026-10-12).
+**Status:** In progress. Stages 1-3 of 4 done (2026-10-12): every route is in the spec.
 
 **What:**
 - Add a schema to every route (inputs, outputs, errors).
@@ -129,7 +129,7 @@ Many tools read that format, so the one file gives:
 **Stages** (each its own commit, tested by Elliot before the next):
 1. **Infrastructure and the first area. Done 2026-10-12.** The packages, the page, validation, the response check; sign-in, projects, plans, runs and results (18 routes). `apps/server/tests/openapi.test.ts`.
 2. **Specification and plans. Done 2026-10-12.** Suites, cases, versions, custom-field values, search, move, the spec tree, plan membership and the Execute queue (27 routes; 45 in all). Every field limited to a set of values now lists them in its description. Found while documenting: a case's `priority` and `execution_type` were stored as sent; they're now checked (`CRITICAL`/`HIGH`/`MEDIUM`/`LOW`, `MANUAL`/`AUTOMATED`).
-3. **Everything else.** Not started. Reports, report email, import, export, API tokens, admin, health, and `/mcp` described. Then every route is in the spec, and a test checks that none is missing.
+3. **Everything else. Done 2026-10-12.** Reports, report email, import (multipart or JSON), export, API tokens, admin, health and `/mcp` (39 routes; 84 in all). `openapi.test.ts` checks that every route the server registers is in the spec; only `GET`/`DELETE /mcp` are hidden (they just answer 405). Report outputs are described only at the top level (`report`, `generated_at`, `project`); `POST .../reports/{reportId}` lists each report's parameters, and `reports_api_and_mcp.md` and the catalog say what each contains. Found while documenting: creating a user whose username or email was taken answered 500; it's now `409 USER_EXISTS`.
 4. **Getting-started guide and docs.** Not started. A short guide (tokens, first call, sending CI results) beside the reference; RFC 03 points to `/docs` for field-level detail.
 
 **Allowed values:** Swagger UI's "Example Value" view shows only one value per field (e.g. `"verdict": "PASSED"`); the "Schema" view next to it shows them all. Since stage 2, every such field also lists them in its description (`oneOf()` in `openapi/schemas.ts`).
@@ -234,3 +234,4 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | Swagger UI for the docs page. | Chosen over Scalar: it serves all its files from Testify, so it works without internet access. |
 | 2026-10-12 | `/docs` and the spec are open to anyone. | They describe the API, not data; "Try it out" still needs a sign-in or token. |
 | 2026-10-12 | Schemas validate requests, but don't replace the routes' own checks where those give more specific errors (results, batch). Responses are never reshaped by schemas; tests check them instead. | Keeps behaviour and error codes the same while the spec is added area by area. |
+| 2026-10-12 | Report outputs are described only at the top level in the spec, for now. | Each of the six reports has its own deep shape; the catalog and reports_api_and_mcp.md describe them. Full schemas per report are a possible follow-up. |

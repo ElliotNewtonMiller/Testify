@@ -26,6 +26,7 @@ import {
 import { authenticateRequest, permissionsInProject } from '../middleware/auth.js';
 import { isPublicError, publicErrorMessage, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
+import * as O from '../openapi/areas/other.js';
 
 /**
  * Import size limits. An import file is held in memory while it's parsed (and its parsed tree
@@ -157,8 +158,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   }
 
   // POST /api/v1/projects/:projectId/imports/dry-run
-  app.post('/api/v1/projects/:projectId/imports/dry-run', {
-    bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
+  app.post('/api/v1/projects/:projectId/imports/dry-run', { schema: O.importDryRunSchema, bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
     onRequest: takeImportSlot,
     onResponse: releaseImportSlot,
     onRequestAbort: releaseImportSlot,
@@ -389,8 +389,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   });
 
   // POST /api/v1/projects/:projectId/imports/execute
-  app.post('/api/v1/projects/:projectId/imports/execute', {
-    bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
+  app.post('/api/v1/projects/:projectId/imports/execute', { schema: O.importExecuteSchema, bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
     onRequest: takeImportSlot,
     onResponse: releaseImportSlot,
     onRequestAbort: releaseImportSlot,
@@ -849,7 +848,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
   // (global ∪ the given project's own) visible for mapping an unmapped import column
   // against. Gated more permissively than /api/v1/admin/custom-fields: an importer needs
   // read access to the field catalog without needing full CUSTOM_FIELD_MANAGE rights.
-  app.get('/api/v1/projects/:projectId/imports/custom-field-options', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/v1/projects/:projectId/imports/custom-field-options', { schema: O.importFieldOptionsSchema }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
     if (

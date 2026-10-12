@@ -39,7 +39,7 @@ describe('OpenAPI spec and docs page', () => {
     expect((await app.inject({ url: '/docs/yaml' })).statusCode).toBe(200);
   });
 
-  it('is an OpenAPI 3.1 document whose references all resolve, and documents every route done so far', async () => {
+  it('is an OpenAPI 3.1 document whose references all resolve, with every operation summarized and tagged', async () => {
     const spec = body(await app.inject({ url: '/docs/json' }));
     expect(spec.openapi).toBe('3.1.0');
     expect(spec.info.title).toBe('Testify API');
@@ -115,7 +115,42 @@ describe('OpenAPI spec and docs page', () => {
         'DELETE /api/v1/plans/{planId}/suites/{suiteId}/cases',
       ])
     );
-    expect(operations).toHaveLength(45);
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        // Stage 3: everything else.
+        'GET /api/v1/projects/{projectId}/reports',
+        'POST /api/v1/projects/{projectId}/reports/{reportId}',
+        'POST /api/v1/projects/{projectId}/report-emails',
+        'PUT /api/v1/report-schedules/{scheduleId}',
+        'POST /api/v1/projects/{projectId}/imports/dry-run',
+        'POST /api/v1/projects/{projectId}/exports/results',
+        'DELETE /api/v1/api-tokens/{tokenId}',
+        'GET /api/v1/admin/users',
+        'PUT /api/v1/admin/users/{userId}/permission-overrides',
+        'PATCH /api/v1/admin/custom-fields/{id}',
+        'PUT /api/v1/admin/email-settings',
+        'GET /api/v1/admin/audit-logs',
+        'GET /api/v1/health',
+        'POST /mcp',
+      ])
+    );
+    // Import takes a file upload or JSON.
+    expect(Object.keys(spec.paths['/api/v1/projects/{projectId}/imports/execute'].post.requestBody.content).sort()).toEqual(['application/json', 'multipart/form-data']);
+  });
+
+  it('documents every route the server has (except the two it deliberately hides)', async () => {
+    const spec = body(await app.inject({ url: '/docs/json' }));
+    const inSpec = new Set<string>();
+    for (const [path, item] of Object.entries<any>(spec.paths)) for (const method of Object.keys(item)) inSpec.add(`${method.toUpperCase()} ${path}`);
+    const apiRoutes = (app.openApiRoutes as Array<{ method: string; url: string; documented: boolean; hidden: boolean }>).filter(
+      (r) => (r.url.startsWith('/api/') || r.url === '/mcp') && !r.url.startsWith('/api/v1/__')
+    );
+    const toSpecPath = (url: string) => url.replace(/:(\w+)/g, '{$1}');
+    const missing = apiRoutes.filter((r) => !r.hidden && !(r.documented && inSpec.has(`${r.method} ${toSpecPath(r.url)}`)));
+    expect(missing.map((r) => `${r.method} ${r.url}`)).toEqual([]);
+    expect(apiRoutes.filter((r) => r.hidden).map((r) => `${r.method} ${r.url}`).sort()).toEqual(['DELETE /mcp', 'GET /mcp']);
+    expect(inSpec.size).toBe(apiRoutes.length - 2);
+    expect(inSpec.size).toBe(84);
     // Sign-in needs no credential; everything else does.
     expect(spec.paths['/api/v1/auth/login'].post.security).toEqual([]);
     expect(spec.security).toEqual([{ bearerAuth: [] }, { sessionCookie: [] }]);
@@ -162,6 +197,16 @@ describe('OpenAPI spec and docs page', () => {
     // A body the route checks itself keeps its own, more specific error.
     const result = await call('POST', `/api/v1/runs/${seed.buildId}/results`, { verdict: 'MAYBE' });
     expect(body(result).code).toBe('INVALID_RESULT');
+  });
+
+  it('creating a user whose username or email is taken answers 409, not 500', async () => {
+    const user = { username: 'twin', email: 'twin@testify.local', password: 'SecurePass123!', global_role: 'Viewer' };
+    expect((await call('POST', '/api/v1/admin/users', user)).statusCode).toBe(201);
+    for (const again of [user, { ...user, email: 'other@testify.local' }, { ...user, username: 'other' }]) {
+      const res = await call('POST', '/api/v1/admin/users', again);
+      expect(res.statusCode).toBe(409);
+      expect(body(res).code).toBe('USER_EXISTS');
+    }
   });
 
   it('fails loudly when a response does not match its documented schema', async () => {

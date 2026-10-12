@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { LogController, type FastifyInstance } from 'fastify';
 import type { Database } from '@testify/db';
+import { healthSchema } from './openapi/areas/other.js';
 
 /** How long the health check waits for the database before calling it unreachable. */
 export const HEALTH_DB_TIMEOUT_MS = 3000;
@@ -54,7 +55,7 @@ export function registerRequestLogging(app: FastifyInstance): void {
  */
 export function registerHealthRoute(app: FastifyInstance, db: Kysely<Database>): void {
   const startedAt = Date.now();
-  app.get(HEALTH_PATH, async (request, reply) => {
+  app.get(HEALTH_PATH, { schema: healthSchema }, async (request, reply) => {
     let timer: NodeJS.Timeout | undefined;
     const database = await Promise.race([
       sql`select 1`.execute(db).then(() => 'ok' as const),

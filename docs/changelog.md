@@ -2042,3 +2042,22 @@ New tests: `apps/server/tests/api_token_scope.test.ts` (4):
 - No response in the whole test suite disagrees with the spec, so the new schemas match what the server actually sends.
 
 Tests: `apps/server/tests/openapi.test.ts` +2 (the 45 routes are all in the spec; `verdict` and `priority` list their values in the description; an unknown priority or execution type is refused on create and change, and a known one accepted). 619 tests pass and typecheck is clean. Verified on a production build with the demo data: the docs page shows the new groups.
+
+## Added: every remaining route to the OpenAPI spec (API roadmap step 3, stage 3) (2026-10-12)
+
+- **39 more routes on `/docs`** (84 in all, every route the server has), in ten new groups:
+  - Reports (the catalog, and running a report, with each report's parameters listed);
+  - Report email (sending now, preview, schedules and send-now);
+  - Import (preview and import, as a multipart upload or JSON, and the fields an import can map to);
+  - Export (definitions or a run's results, as JSON or CSV downloads);
+  - API tokens;
+  - Admin: users and roles (users, status, roles, project roles, password resets, permission overrides, the permission list), Admin: custom fields, Admin: email, Admin: audit log;
+  - Operations (the health check, and `/mcp` described as JSON-RPC).
+  New shared schemas: `AdminUser`, `PermissionOverride`, `Role`, `ApiToken`, `ReportSchedule`, `ScheduleSection`, `EmailSettings`, `ImportPreviewNode` (`apps/server/src/openapi/areas/admin.ts`, `other.ts`).
+- **Nothing can be left out by accident:** the OpenAPI setup records every route as it's registered (`app.openApiRoutes`), and `openapi.test.ts` fails if any `/api` or `/mcp` route isn't in the spec. Only `GET` and `DELETE /mcp`, which just answer 405, are hidden on purpose.
+- **Report outputs are described only at the top level** (`report`, `generated_at`, `project`); each report's full shape is in the catalog and `reports_api_and_mcp.md`. Recorded in the roadmap's Decisions table as a possible follow-up.
+- **Request validation:** bodies are enforced where the route has no checks of its own (creating a user, a user's status and roles, roles, overrides). Routes with their own specific checks keep them (`handlerValidated`): custom field definitions, email settings, tokens, reports, report email, import, export.
+- **Fixed while documenting:** creating a user whose username or email was already taken answered a generic 500 (the database's duplicate error). It's now `409 USER_EXISTS` ("That username or email is already used by another user"), added to RFC 03's error codes.
+- **Docs:** the RFC 03 header and summary, the blueprint and the README say every route is on `/docs`; CLAUDE.md's "not built" now names only the report-output schemas; roadmap stage 3 done.
+
+Tests: `openapi.test.ts` +2 (every registered `/api` and `/mcp` route is in the spec, with exactly two hidden, 84 operations, and the import's two body types; a taken username or email gets 409 three ways). The whole suite's responses still match the spec. 621 tests pass and typecheck is clean. Verified on a production build with the demo data: the page shows all 18 groups with the report ids and parameters listed, and a multipart import preview through the new schema works.

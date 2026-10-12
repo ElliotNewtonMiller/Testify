@@ -15,6 +15,7 @@ import { requirePermission } from '../middleware/auth.js';
 import { ReportError, ReportService } from '../services/reportService.js';
 
 import { sendError, reportErrorParams } from '../errors.js';
+import * as O from '../openapi/areas/other.js';
 /**
  * Reports, driven entirely by @testify/core's REPORT_CATALOG:
  *
@@ -32,13 +33,13 @@ export async function registerReportRoutes(app: FastifyInstance, db: Kysely<Data
 
   app.get(
     '/api/v1/projects/:projectId/reports',
-    { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
+    { schema: O.reportCatalogSchema, preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
     async () => ({ reports: REPORT_CATALOG, definitions: REPORT_DEFINITIONS })
   );
 
   app.post(
     '/api/v1/projects/:projectId/reports/:reportId',
-    { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
+    { schema: O.runReportSchema, preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) },
     async (request, reply) => {
       const { projectId, reportId } = request.params as { projectId: string; reportId: string };
       const { format: formatRaw } = request.query as { format?: string };
