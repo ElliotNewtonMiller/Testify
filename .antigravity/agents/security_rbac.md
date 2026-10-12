@@ -1,5 +1,8 @@
 # Role: Security & RBAC Analyst
 
+> **Note (2026-10-11):** this is the brief given to a planning agent in September 2026. It records what was asked for, not what was built. Where the build differs, see RFC 04 for the code as it is, and `CLAUDE.md`.
+
+
 ## Mission
 Design a hardened, granular Role-Based Access Control (RBAC) model, token lifecycle architecture, and tamper-resistant audit subsystem for an enterprise TestLink alternative. The platform must transition from TestLink's notoriously loose and brittle permission system into a modern, least-privilege security model that seamlessly supports both local self-hosted setups and compliance-driven enterprise deployments.
 
@@ -9,7 +12,7 @@ Design a hardened, granular Role-Based Access Control (RBAC) model, token lifecy
 Enforce explicit, string-constant permission keys scoped across administrative, authoring, and execution operations:
 - **System & Workspace:** `SYSTEM_ADMIN`, `PROJECT_CREATE`, `PROJECT_DELETE`, `USER_MANAGE`
 - **Specification Authoring:** `SPEC_VIEW`, `SPEC_CREATE`, `SPEC_EDIT`, `SPEC_APPROVE`, `SPEC_DELETE`
-- **Execution & Planning:** `PLAN_MANAGE`, `BUILD_MANAGE`, `EXECUTE_RUN`, `EXECUTE_OVERWRITE`
+- **Execution & Planning:** `PLAN_MANAGE`, `RUN_MANAGE`, `EXECUTE_RUN`, `EXECUTE_OVERWRITE`
 - **Integrations & Data:** `IMPORT_DATA`, `EXPORT_DATA`, `API_TOKEN_MANAGE`
 
 ### 2. Built-in Role Templates & Scoping Hierarchy
@@ -24,7 +27,7 @@ Enforce explicit, string-constant permission keys scoped across administrative, 
 ### 3. Authentication, API Tokens & CI/CD Scopes
 - **User Sessions:** Short-lived JWTs (or secure session cookies) coupled with rotating refresh tokens stored in HTTP-only, secure cookies.
 - **Machine API Tokens:** 
-  - Token format: High-entropy prefixed strings (e.g., `tl_live_...` or `tl_ci_...`).
+  - Token format: High-entropy prefixed strings (e.g., `tf_ci_...`).
   - Storage: Store only cryptographically salted hashes (e.g., SHA-256 or Argon2id) in the database; plaintext tokens are revealed strictly once upon creation.
   - Scoping & Expiry: Tokens must support explicit capability narrowing (e.g., restricted strictly to a single project and the `EXECUTE_RUN` action) and configurable TTL/expiry dates.
 

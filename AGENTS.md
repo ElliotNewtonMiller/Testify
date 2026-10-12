@@ -81,7 +81,7 @@ packages/core/     Domain logic with no database, each module unit-tested: inges
                    (verdict and status lists), security/ (JWT, password policy).
 packages/db/       Kysely, Postgres-compatible SQL only. createDbClient(): no connection string = in-memory PGlite,
                    otherwise pg. migrations/ (tracked), repositories/, seeds/ (rbac registry, sample project, dev fixtures).
-docs/              changelog.md, deployment.md, reports_api_and_mcp.md, audit_2026-10-07.md, and the original design docs.
+docs/              changelog.md, deployment.md, reports_api_and_mcp.md, audit_2026-10-07.md, and the design docs (RFCs, blueprint, roadmap).
 ```
 
 ## Domain rules
@@ -232,7 +232,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - A custom-field change made by another admin shows only after the next case or suite switch or a reload; nothing is pushed.
 - `AuditLogRepository` is used only by tests; routes insert audit rows directly.
 - Recharts 2 is deprecated upstream; the Recharts 3 upgrade hasn't been done.
-- The design docs in `docs/` (RFCs, blueprint, roadmap) are partly stale; see audit item 38. Treat them as intent, and check the code.
+- RFC 03 §1-4 (API conventions, endpoint contract, error codes) is still the original design, not the API as built; the API revisit will replace it. The routes in `apps/server/src/routes/` are the reference until then.
 
 ## Testing and verification
 
@@ -252,7 +252,8 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - **Commits:** Elliot has authorized committing directly to the local repo, in logical commits with clear messages. There's no git remote; don't add one or push unless asked.
 - **Ask before downloading** packages or images.
 - **After a change,** give Elliot a short checklist of what to test.
-- **Audit:** `docs/audit_2026-10-07.md` tracks the audit findings. Mark an item ✅ there when it's fixed.
+- **Audit:** `docs/audit_2026-10-07.md` records the 2026-10-07 audit; every item is fixed.
+- **Design docs:** when a change makes an RFC, the blueprint or the roadmap wrong, fix that doc in the same change.
 
 ## Doc map
 
@@ -260,7 +261,9 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 2. `docs/changelog.md`: the history and reasoning behind everything.
 3. `docs/reports_api_and_mcp.md`: reports, the results API, MCP.
 4. `docs/audit_2026-10-07.md`: the 2026-10-07 audit and what's been fixed.
-5. The original design (partly stale; verify against the code):
-   - `.antigravity/requirements_alignment.md` (locked intake decisions);
-   - `.antigravity/agents/*.md` (the planning role prompts);
-   - `docs/rfc_01..04`, `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`, `docs/01_vertical_slices_roadmap.md`, `docs/00_requirements_alignment.md`.
+5. Design documents, updated 2026-10-11 to match the code (each says plainly what isn't built):
+   - `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`: the overview, linking to the RFCs.
+   - `docs/rfc_01_domain_model.md` (domain, schema, state machines), `rfc_02` (layout, hotkeys), `rfc_03` (CI results, import; §1-4 are still the original API design), `rfc_04` (permissions, tokens, audit, threat model).
+   - `docs/01_vertical_slices_roadmap.md`: what each build slice planned and delivered.
+   - `docs/00_requirements_alignment.md` (identical to `.antigravity/requirements_alignment.md`): the locked intake decisions, with "As built" notes.
+   - `.antigravity/agents/*.md`: the original planning briefs; they record what was asked for, not what was built.

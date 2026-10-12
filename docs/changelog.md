@@ -1755,3 +1755,54 @@ Decided with Elliot: a guide plus a separate log.
 - **New workflow:** each change adds an entry at the end of this file; `CLAUDE.md` changes only when a fact, convention, decision or gap changes.
 
 Docs only; no code changed.
+
+## Changed: the design documents now match the code (2026-10-11)
+
+Audit item 38 (`docs/audit_2026-10-07.md`), the last open audit item. The design documents in `docs/` and `.antigravity/` described a system that differed from the code in dozens of places, not only the four the audit listed:
+- token prefixes `tl_`/`tk_` and Argon2 hashing;
+- Redis sessions and refresh tokens;
+- a SQLite schema;
+- `IN_REVIEW`;
+- routes and npm scripts that don't exist, and libraries that aren't used;
+- broken `file:///` links.
+
+Decided with Elliot: correct every design doc against the code, except RFC 03's API contract (§1-4). That part gets a note saying it's the original design, because the API and MCP are about to be revisited.
+
+Facts were checked against the code as each doc was written, including a schema dump from a fresh database built by the real migrations.
+
+**What changed, document by document:**
+- **RFC 04 (security):** rewritten to the code:
+  - the 19 permission keys and six roles;
+  - per-project evaluation with overrides, and the AdminGuard rules;
+  - sessions, cookies and CSRF;
+  - `tf_ci_` tokens, stored as a SHA-256 digest and capped by the issuer;
+  - the real `audit_logs` schema and the actions actually written;
+  - the threat model with its real mitigations (in-memory token buckets and lockouts, not Redis or Argon2);
+  - verification pointing at the real test files.
+- **RFC 03:** a note on §1-4. §5-9 rewritten:
+  - batch-write patterns as built;
+  - attachments, retention and webhooks marked not built;
+  - the five import formats with their real mappings, limits, field mapping and duplicate rules;
+  - authentication as built;
+  - corrected sequence diagrams, and a status table.
+- **RFC 02:**
+  - real pane sizes, and the Spec/Execute/Reports modes;
+  - the real hotkey table: `f`/`b` record at once, `Ctrl+Enter` re-records with notes and jumps to the next suite, no `e`, no defect modal;
+  - permission gating as built, and the optimistic rollback (no store, queue or retry);
+  - responsive layouts and the light theme marked not built;
+  - the TREE and LIST focus zones are noted as unused.
+- **RFC 01:**
+  - **§3:** rebuilt from the real schema as a table-by-table data dictionary instead of hand-written DDL, adding the missing tables: users, `user_roles`, sessions, API tokens, report schedules, `last_email`.
+  - **Conventions:** no CHECK constraints (values checked in code); mixed integer and boolean flags; UUIDv7 and v4 ids.
+  - **Version pinning:** re-pinning on approve, and retired plan links.
+  - **State machines:** corrected; results described as append-only rows, with no optimistic-concurrency versions.
+- **Blueprint:** rewritten as a short overview that links to the RFCs instead of copying their schema, hotkeys and permission tables (the copies had drifted). Its requirement matrix now gives each requirement's real status.
+- **Roadmap:** rewritten to record, per slice, what was planned, what was built (with real routes and modules), how it's verified (real test files), and what differs.
+- **Requirements alignment** (`docs/00_...` and its `.antigravity` copy, now identical): the locked decisions kept, with "As built" notes. These cover the purge and attachments, unfrozen custom fields (decided 2026-10-01), hotkey scope, extra formats, and the duplicate toggle and progress bar.
+- **Planning briefs** (`.antigravity/agents/*.md`): a note on each saying it records what was asked for, not what was built, and where to look. Old token prefixes and `BUILD_MANAGE` corrected.
+- **`CLAUDE.md`:**
+  - the doc map describes the updated docs;
+  - the "design docs are stale" gap is replaced by the RFC 03 §1-4 note;
+  - a new workflow rule: fix a design doc in the same change that makes it wrong.
+
+Every item of the 2026-10-07 audit is now fixed. Docs only; no code changed.

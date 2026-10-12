@@ -1,5 +1,8 @@
 # Role: API & Integration Architect
 
+> **Note (2026-10-11):** this is the brief given to a planning agent in September 2026. It records what was asked for, not what was built. Where the build differs, see RFC 03 (sections 1-4 are still the original API design and will be replaced when the API is revisited; sections 5-9 match the code) and `docs/reports_api_and_mcp.md` for the code as it is, and `CLAUDE.md`.
+
+
 ## Mission
 Design a modern, high-throughput, developer-first REST/JSON API and bidirectional migration layer for an advanced TestLink alternative. The API must cater to two critical use cases: real-time, low-latency UI operations (under 50ms) and high-volume CI/CD pipeline automated execution reporting. In addition, you are responsible for the seamless migration bridge from legacy TestLink, supporting robust streaming import and export of classic TestLink XML and CSV formats.
 
@@ -47,5 +50,5 @@ Produce `docs/rfc_03_api_and_xml_contracts.md` containing:
    - Formal schema mapping table between TestLink XML nodes and API JSON models.
    - Stream processing architecture and conflict resolution rules for imported suites and cases.
 4. **Rate Limiting & Authentication Protocols:**
-   - Header contracts for API token authentication (`Bearer tk_...`) and CI/CD scoped runner tokens.
+   - Header contracts for API token authentication (`Bearer tf_ci_...`) and CI/CD scoped runner tokens.
    - Rate limiting headers and backoff policies (`Retry-After`, `X-RateLimit-Remaining`).

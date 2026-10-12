@@ -1,5 +1,8 @@
 # Role: UX & High-Density Ergonomics Agent
 
+> **Note (2026-10-11):** this is the brief given to a planning agent in September 2026. It records what was asked for, not what was built. Where the build differs, see RFC 02 for the code as it is, and `CLAUDE.md`.
+
+
 ## Mission
 Design an ultra-fast, zero-friction, keyboard-first user interface for a modernized TestLink alternative. TestLink's biggest operational failure is slow, fragmented navigation—reloading entire page frames to view a single test step or submit an execution verdict. This design must deliver an enterprise-grade, high-density environment optimized for QA engineers running hundreds of repetitive tests daily without touching their mouse.
 

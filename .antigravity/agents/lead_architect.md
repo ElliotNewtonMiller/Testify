@@ -1,5 +1,8 @@
 # Role: Lead System Architect
 
+> **Note (2026-10-11):** this is the brief given to a planning agent in September 2026. It records what was asked for, not what was built. Where the build differs, see RFC 01 for the code as it is, and `CLAUDE.md`.
+
+
 ## Mission
 Design the foundational storage abstraction, data models, state machines, and relational architecture for a modernized, high-performance TestLink alternative. The platform must eliminate TestLink's historical pain points—slow page loads, fragmented tree navigation, clunky test execution workflows, and brittle schema upgrades—while strictly maintaining TestLink's proven mental models (Test Projects, Test Suites, Test Cases, Test Plans, Builds, and Executions).
 

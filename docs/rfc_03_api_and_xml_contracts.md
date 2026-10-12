@@ -1,10 +1,12 @@
 # RFC 03: API Contracts, High-Throughput Ingestion & Multi-Format Migration Engine
 
-**Document Status:** Approved & Locked  
-**Date:** September 8, 2026  
-**Author:** API & Integration Architecture Team  
-**Target Platform:** Testify / Next-Gen Test Management  
-**Related Documents:** [docs/00_requirements_alignment.md](file:///docs/00_requirements_alignment.md), [docs/rfc_01_domain_model.md](file:///docs/rfc_01_domain_model.md)
+**Document Status:** Design document; sections 5-9 updated 2026-10-11 to match what's built
+**Date:** September 8, 2026
+**Author:** API & Integration Architecture Team
+**Target Platform:** Testify
+**Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md)
+
+> **Sections 1-4 (API conventions, endpoint contract, batch schema, error codes) are the original design, not the API as built.** The real API differs in paths, pagination (there's none yet; list endpoints return everything), payloads and error codes, and there's no OpenAPI spec. The API and MCP are due to be revisited, and that work will replace these sections. Until then, the routes in `apps/server/src/routes/` are the reference, along with [reports_api_and_mcp.md](reports_api_and_mcp.md) for reports, CI results and MCP. Sections 5-9 describe what's built, and say plainly what isn't.
 
 ---
 
@@ -26,7 +28,7 @@ The Testify API layer is built to solve two contrasting operational demands:
 +-----------------------------------------------------------------------------------+
 |                             Testify API Gateway                                   |
 |  +-----------------------------------------------------------------------------+  |
-|  | Authentication (Bearer tk_...) & Rate Limiter (Token Bucket Engine)         |  |
+|  | Authentication (Bearer tf_ci_... / session cookie) & Rate Limiter           |  |
 |  +-----------------------------------------------------------------------------+  |
 |  | OpenAPI 3.1 Router & RFC 7807 Problem Details Error Handler                 |  |
 |  +-----------------------------------------------------------------------------+  |
@@ -41,7 +43,7 @@ The Testify API layer is built to solve two contrasting operational demands:
                                          |
                                          v
 +-----------------------------------------------------------------------------------+
-|                        Dual Database Engine (SQLite / Postgres)                   |
+|                        PostgreSQL (PGlite in development and tests)               |
 |  +-----------------------------------------------------------------------------+  |
 |  | Atomic Batch Transactions / UUIDv7 Foreign Keys / Immutable Execution Logs  |  |
 |  +-----------------------------------------------------------------------------+  |
@@ -49,7 +51,7 @@ The Testify API layer is built to solve two contrasting operational demands:
                                          | (Out-of-band attachments & raw logs)
                                          v
 +-----------------------------------------------------------------------------------+
-|                      IStorageProvider (Local File System / AWS S3)                |
+|            IStorageProvider (Local File System / AWS S3) -- not built             |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -325,24 +327,20 @@ Modern automated test execution streams hundreds to thousands of test results in
 
 ### 3.2 Ingestion Concurrency & Write Optimization Patterns
 
-To guarantee processing under **50ms for 1,000 items**, the batch ingestion pipeline relies on four key execution patterns:
+How the batch route (`apps/server/src/routes/batchExecution.ts`) records results quickly (2,000 results in about 1.5 s in the test suite):
 
-1. **Pre-Fetched Key Resolution Cache:**
-   - Instead of running N separate SQL queries to resolve `external_id`, `by_uuid`, or `suite_path + title`, the server performs a single batch lookup against the locked `test_plan_cases` mapping for `{plan_id}`.
-   - An in-memory map converts incoming identifiers to locked `test_case_version_id` primary keys in $$O(1)$$ time.
-2. **Bulk SQL Batch Insertion:**
-   - Single transactional `INSERT INTO executions` statement constructing multi-row SQL insert tuples (or `COPY` command in PostgreSQL mode).
-   - Prevents round-trip network latencies and avoids holding database table locks.
-3. **Asynchronous Log Offloading:**
-   - Full stack traces and test logs exceeding 4KB are immediately stripped from the synchronous database write payload and written asynchronously to the `IStorageProvider` out-of-band layer.
-4. **Execution Snapshot Binding:**
-   - Executions bind to the **frozen `test_case_version_id` snapshot** that was assigned to the `test_plan` at the moment of plan lock/creation. Changes to the underlying draft test case do not impact historical ingestion.
+1. **Validate everything first:** every item is checked (`validateBatchItem`) before anything touches the database. In all-or-nothing mode, all problems come back in one 400.
+2. **Look identifiers up in bulk:** the plan's cases are loaded once and the incoming `external_id` / `by_uuid` / `by_path_title` identifiers are resolved in memory. Step results are matched exactly against the steps of the version each case runs at.
+3. **One transaction, multi-row inserts:** auto-links, results, step results and the audit row are written in one transaction, with results and step results inserted 500 rows at a time. A refused item never leaves a plan link behind, and in atomic mode a refusal rolls everything back.
+4. **Version binding:** each result belongs to the case's link in the plan, which pins the version the case runs at. Editing or re-approving the case later doesn't change past results.
+
+Failure messages and stack traces are stored in the `executions` row itself (`failure_message`, `stack_trace`). There's no out-of-band offloading (see §5).
 
 ---
 
 ## 4. Locked Plan & Closed Build HTTP 422 Standards
 
-Per the locked system constraints in [docs/00_requirements_alignment.md](file:///docs/00_requirements_alignment.md), completed execution results remain permanently viewable and exportable for audit compliance. However, **any operational attempt to create, update, or overwrite execution results against a locked Test Plan or closed Build must be strictly blocked and rejected with HTTP 422 Unprocessable Entity**.
+Per the locked system constraints in [00_requirements_alignment.md](00_requirements_alignment.md), completed execution results remain permanently viewable and exportable for audit compliance. However, **any operational attempt to create, update, or overwrite execution results against a locked Test Plan or closed Build must be strictly blocked and rejected with HTTP 422 Unprocessable Entity**.
 
 ### 4.1 RFC 7807 Error Specification
 All operational error responses conform strictly to **RFC 7807 Problem Details for HTTP APIs**.
@@ -396,371 +394,160 @@ Content-Type: application/problem+json
 
 ---
 
-## 5. Out-of-Band Log Snippet & Attachment Storage Architecture
+## 5. Attachments, Logs & Retention
 
-Storing massive stack traces, terminal logs, and execution screenshots inside relational database tables (PostgreSQL/SQLite) causes index fragmentation, table bloat, and severe performance degradation.
+> **Not built.** There are no attachments (screenshots, videos, trace files), no `IStorageProvider`, no pre-signed uploads and no retention purge. The design below stays as the plan for when attachments are added.
 
-### 5.1 Storage Policy & Retention Rules
-- **Execution History Purge:**
-  - Default retention threshold: **365 days (1 year)**.
-  - Purge threshold is **admin-modifiable** per environment or project.
-  - Background cron job purges execution records and associated out-of-band attachments older than the configured threshold.
-- **Audit Log Retention:**
-  - The `audit_logs` relational table is stored in the primary database with **no automatic deletion**.
-  - Append-only forever for regulatory compliance, subject to manual administrative CLI maintenance only.
-- **Out-of-Band Storage Rule:**
-  - Log snippets larger than 4KB and all binary attachments (screenshots, videos, trace files) are stored exclusively in out-of-band storage via `IStorageProvider`.
-  - Relational database tables hold only a lightweight URI reference (`storage_key`), checksum (SHA-256), byte size, and MIME type.
+What's built today:
+- **Results and logs** are stored in the database: verdict, notes, `failure_message` and `stack_trace` (text), environment tags and runner details, per result. Nothing is purged automatically.
+- **Audit logs** are append-only forever: database triggers reject UPDATE and DELETE (see RFC 04 §5).
 
----
-
-### 5.2 Storage Abstraction Driver (`IStorageProvider`)
-
-```typescript
-export interface StorageObjectMetadata {
-  key: string;
-  contentType: string;
-  sizeBytes: number;
-  sha256Checksum: string;
-  createdAt: Date;
-}
-
-export interface IStorageProvider {
-  /**
-   * Uploads a data stream to the out-of-band storage layer.
-   */
-  putObject(
-    key: string,
-    content: ReadableStream | Buffer,
-    metadata: { contentType: string; project_id: string }
-  ): Promise<StorageObjectMetadata>;
-
-  /**
-   * Retrieves a read stream for a stored object.
-   */
-  getObject(key: string): Promise<ReadableStream>;
-
-  /**
-   * Deletes an object from storage during retention purge.
-   */
-  deleteObject(key: string): Promise<void>;
-
-  /**
-   * Generates a pre-signed URL for direct client upload or download.
-   */
-  getPresignedUrl(
-    key: string,
-    operation: 'READ' | 'WRITE',
-    expiresInSeconds: number
-  ): Promise<string>;
-}
-```
-
-#### Dual Driver Implementations:
-1. **`LocalStorageProvider` (Dev / SQLite Mode):**
-   - Stores files directly on the local filesystem relative to the app data directory: `./data/attachments/{project_id}/{year}/{month}/{uuidv7}.bin`.
-   - Streaming HTTP routes stream files directly from disk without reading entire payloads into Node.js/Go process memory.
-2. **`S3StorageProvider` (Production / PostgreSQL Mode):**
-   - Integrates with AWS S3, MinIO, Cloudflare R2, or Google Cloud Storage using S3-compatible APIs.
-   - High-volume binary uploads bypass the API gateway completely using **S3 Pre-Signed Upload URLs**.
-
----
-
-### 5.3 Attachment Endpoints & Direct S3 Pre-Signed Protocol
-
-```
-+---------------+              +--------------------+              +--------------------+
-|  CI Runner /  |              | Testify            |              | AWS S3 / MinIO     |
-| Client App    |              | API Gateway        |              | Storage Bucket     |
-+-------+-------+              +---------+----------+              +---------+----------+
-        |                                |                                   |
-        | 1. POST /attachments/presign   |                                   |
-        |------------------------------->|                                   |
-        |                                | 2. Generate S3 PutObject URL      |
-        |                                |---------------------------------->|
-        | 3. Returns presigned_url + key |                                   |
-        |<-------------------------------|                                   |
-        |                                                                    |
-        | 4. PUT binary file directly to presigned_url                       |
-        |------------------------------------------------------------------->|
-        | 5. HTTP 200 OK (Uploaded to S3 bucket)                             |
-        |<-------------------------------------------------------------------|
-        |                                |                                   |
-        | 6. POST /executions/{id}/attach (Register key + SHA256)            |
-        |------------------------------->|                                   |
-        | 7. HTTP 201 Created            |                                   |
-        |<-------------------------------|                                   |
-```
-
-#### `POST /api/v1/executions/{execution_id}/attachments/presign`
-- **Request Body:**
-```json
-{
-  "filename": "failure_screenshot.png",
-  "content_type": "image/png",
-  "size_bytes": 245812
-}
-```
-- **Response (200 OK):**
-```json
-{
-  "storage_key": "att/proj-01/2026/09/0191c4d8-4444-7000-8000-000000000099.png",
-  "upload_url": "https://testify-bucket.s3.us-east-1.amazonaws.com/att/proj-01/2026/09/0191c4d8-4444-7000-8000-000000000099.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&...",
-  "expires_at": "2026-09-08T13:30:00Z"
-}
-```
+The plan:
+- **Attachments and large logs** go to out-of-band storage behind an `IStorageProvider` interface (`putObject`, `getObject`, `deleteObject`, `getPresignedUrl`). The database keeps only a storage key, SHA-256 checksum, size and MIME type.
+- **Two providers,** chosen by configuration, independent of the database:
+  - `LocalStorageProvider` stores files on disk (`./data/attachments/{project_id}/{year}/{month}/{id}.bin`) and streams them.
+  - `S3StorageProvider` works with AWS S3, MinIO, Cloudflare R2 or Google Cloud Storage. Large uploads go straight to the bucket through pre-signed URLs (`POST /api/v1/executions/{execution_id}/attachments/presign`, then registering the key and checksum).
+- **Retention:** an admin-configurable purge of old results and their attachments (planned default: 365 days), never touching audit logs.
 
 ---
 
 ## 6. Extensible Multi-Format Ingestion & Migration Engine
 
-Migrating legacy test repositories into Testify requires supporting legacy **TestLink XML**, native **JSON**, and enterprise **CSV** format spec sheets while handling schema differences, missing custom fields, and duplicate suite titles.
+Importing existing test repositories into Testify supports five formats through one pipeline: preview (dry run), then execute. The import wizard in the web app (`ImportWizardModal.tsx`) walks through Upload → Field Mapping → Duplicates → Confirm → Results.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                        Multi-Format Ingestion Engine                              |
-|  +-----------------------+ +-----------------------+ +-------------------------+  |
-|  | Legacy TestLink XML   | | Testify JSON          | | Standard Tabular CSV    |  |
-|  | (<testsuite>/<steps>) | | Schema Spec Sheet     | | Spec Sheets             |  |
-|  +-----------+-----------+ +-----------+-----------+ +------------+------------+  |
-+--------------|-------------------------|--------------------------|---------------+
-               v                         v                          v
-+-----------------------------------------------------------------------------------+
-|                    Extensible Stream Parser Architecture                          |
-|  +-----------------------------------------------------------------------------+  |
-|  | SAX XML Stream Parser / JSON Stream Parser / CSV Chunked Stream Parser       |  |
-|  +-----------------------------------------------------------------------------+  |
+|  TestLink XML | JUnit XML | Testify JSON | CSV | TestRail CSV (explicit only)     |
 +----------------------------------------+------------------------------------------+
-                                         |
                                          v
 +-----------------------------------------------------------------------------------+
-|               Phase 1: Dry-Run Inspection Diff & Setup Modals                     |
-|  +-----------------------------------------------------------------------------+  |
-|  | 1. Custom Field Pre-Import Setup Modal (Drop / Auto-Create / Route Existing) |  |
-|  | 2. Duplicate Reconciliation Modal (Create / Overwrite / Version Up / Skip)  |  |
-|  +-----------------------------------------------------------------------------+  |
+|        Parsers (packages/core/src/ingestion), one IFileParser per format          |
 +----------------------------------------+------------------------------------------+
-                                         | (Validated Execution Plan)
                                          v
 +-----------------------------------------------------------------------------------+
-|               Phase 2: Atomic Execution & Database Write Engine                   |
+|  POST /api/v1/imports/dry-run: counts, warnings, unmapped custom fields           |
+|  (with inferred types and distinct values), hierarchy preview. Writes nothing.    |
++----------------------------------------+------------------------------------------+
+                                         v  (user chooses field mappings + duplicate action)
++-----------------------------------------------------------------------------------+
+|  POST /api/v1/imports/execute: the same file again, applied in one transaction    |
 +-----------------------------------------------------------------------------------+
 ```
 
-### 6.1 Extensible Parser Plugin Architecture
-The ingestion engine defines a strict parser interface (`IFileParser`). New formats can be registered cleanly without modifying core import pipelines.
+### 6.1 Parser Interface
+Each format implements `IFileParser` (`packages/core/src/ingestion/types.ts`); a new format is a new parser, without changing the import routes.
 
 ```typescript
-export interface ParsedStep {
-  step_number: number;
-  actions: string;
-  expected_results: string;
-  execution_type: 'MANUAL' | 'AUTOMATED';
-}
-
-export interface ParsedCase {
-  external_id?: string;
-  title: string;
-  summary?: string;
-  preconditions?: string;
-  importance: 'HIGH' | 'MEDIUM' | 'LOW';
-  execution_type: 'MANUAL' | 'AUTOMATED';
-  steps: ParsedStep[];
-  custom_fields: Record<string, string>;
-}
-
-export interface ParsedSuite {
-  name: string;
-  details?: string;
-  node_order: number;
-  sub_suites: ParsedSuite[];
-  test_cases: ParsedCase[];
-}
-
 export interface IFileParser {
-  formatId: 'TESTLINK_XML' | 'NATIVE_JSON' | 'STANDARD_CSV';
+  formatId: 'TESTLINK_XML' | 'NATIVE_JSON' | 'STANDARD_CSV' | 'JUNIT_XML' | 'TESTRAIL_CSV';
   canHandle(fileHeader: Buffer, filename: string): boolean;
   parseStream(
-    inputStream: ReadableStream,
-    options: { defaultImportance?: string }
+    inputStream: Readable | ReadableStream | AsyncIterable<Buffer | string>,
+    options?: ParseOptions
   ): AsyncIterable<ParsedSuite>;
 }
 ```
 
----
+`ParsedSuite` holds `name`, `details`, `node_order`, `sub_suites` and `test_cases`. Each `ParsedCase` has `external_id`, `title`, `summary`, `preconditions`, `importance`, `execution_type`, `steps`, a flat `custom_fields` string map, and any parser warnings.
 
-### 6.2 Schema Mapping Specifications
+**Auto-detection** sniffs the first bytes, checking JUnit XML before TestLink XML: both use `<testsuite>`, but JUnit has `tests=`/`classname=` attributes. TestRail CSV is never auto-detected; it has to be chosen explicitly.
 
-#### TestLink XML Node to Domain Model Mapping Table
+### 6.2 Format Mappings
 
-| Legacy TestLink XML Element | Target API / DB Entity Field | Type Transformation & Rules |
+#### TestLink XML
+
+| TestLink XML Element | Testify Field | Rules |
 | :--- | :--- | :--- |
-| `<testsuite name="...">` | `TestSuite.name` | Strips leading/trailing whitespace. Preserves parent-child nesting. |
-| `<details>` | `TestSuite.details` | HTML-decoded string converted to clean Markdown. |
-| `<testcase name="...">` | `TestCase.title` | Mapped to title. Truncated if over 255 chars with warning. |
-| `<externalid>` | `TestCase.external_id` | Mapped directly (e.g. `TC-104`). Uniqueness enforced per project. |
-| `<summary>` | `TestCaseVersion.summary` | Sanitized HTML converted to Markdown format. |
-| `<preconditions>` | `TestCaseVersion.preconditions` | Markdown text blob. |
-| `<importance>` | `TestCaseVersion.importance` | XML `1` -> `LOW`, `2` -> `MEDIUM`, `3` -> `HIGH`. |
-| `<execution_type>` | `TestCaseVersion.execution_type` | XML `1` -> `MANUAL`, `2` -> `AUTOMATED`. |
-| `<steps><step>` | `TestStep` array | Iterated in `<step_number>` order. |
-| `<step_number>` | `TestStep.step_number` | 1-indexed integer. |
-| `<actions>` | `TestStep.actions` | Cleaned text/markdown. |
-| `<expectedresults>` | `TestStep.expected_results` | Cleaned text/markdown. |
-| `<custom_fields><custom_field>` | `TestCaseVersion.custom_fields` | `<name>` mapped to key, `<value>` mapped to value string. |
+| `<testsuite name="...">` | Suite name | Nesting preserved. |
+| `<details>` | Suite details | |
+| `<testcase name="...">` | Case title | Over 255 characters is trimmed, with a `TITLE_TRUNCATED` warning. |
+| `<externalid>` | Case external id | Kept if free in the project; otherwise the next free `PREFIX-n` (§6.4). |
+| `<summary>`, `<preconditions>` | Version summary / preconditions | HTML cleaned to plain text: tags removed, `<br>` and `</p>` become line breaks, entities decoded. |
+| `<importance>` | Case priority | `1` → LOW, `2` → MEDIUM, `3` → HIGH. |
+| `<execution_type>` | Execution type | `1` → MANUAL, `2` → AUTOMATED. |
+| `<steps><step>` | Steps | `<step_number>`, `<actions>`, `<expectedresults>`, cleaned like the summary. |
+| `<custom_fields><custom_field>` | Custom fields | `<name>` → column, `<value>` → value; mapped in the wizard (§6.4). |
 
-#### Native JSON & CSV Mapping Policies:
-- **Native JSON (`.json`):** Validated against `testify-suite.schema.json`. Directly mirrors domain models without loss.
-- **Standard CSV (`.csv`):** Configurable column headers: `Suite Path`, `Title`, `External ID`, `Summary`, `Preconditions`, `Step Number`, `Step Action`, `Step Expected Result`, `Importance`, `Execution Type`, plus arbitrary custom field columns (`CF: Automation ID`).
+#### Other formats
+- **Testify JSON:** mirrors the domain model; the JSON export re-imports through it.
+- **CSV:** a header row with columns matched by name, case-insensitively: `Suite Path`, `External ID`, `Title`, `Summary`, `Preconditions`, `Importance`, `Execution Type`, `Step Number`, `Action`, `Expected Result`. Other columns become custom fields; the CSV export writes them as `cf_<name>`. One row per step, with the case's fields repeated. A CSV definitions export re-imports through this parser. Known limits:
+  - Any `Importance` other than HIGH, MEDIUM or LOW becomes MEDIUM.
+  - A custom field whose name contains a built-in column's word (`title`, `suite`, `action`, `result`...) is read as that column.
+- **JUnit XML:** suites nest by the test's dotted `classname`. Status, duration and failure message arrive as the custom fields `junit_status`, `junit_duration_seconds` and `junit_failure_message`. They're case fields, not results; send results through the batch API instead.
+- **TestRail CSV:** TestRail's export with one combined `Steps` column and one `Expected Result` column, both as numbered lists. TestRail's `Critical` priority becomes HIGH. The variant with one column per step isn't supported; it gets an `UNSUPPORTED_TESTRAIL_COLUMN_FORMAT` warning.
 
----
+### 6.3 File Size & Memory
 
-### 6.3 Large File Streaming Parser Architecture (100MB+)
+Not built as designed: the original plan was to stream 100 MB+ TestLink exports in bounded memory, with progress events. Today the route holds the uploaded file and its parsed tree in memory (it parses once for the preview and again for the import), so it enforces limits instead:
+- At most **50 MB** per file, sent as `multipart/form-data`. A JSON body carrying the file as base64 is limited to 5 MB.
+- At most **2 imports at a time** per server (`429 IMPORT_BUSY`).
+- No progress events; the request returns when the import finishes.
 
-Legacy TestLink exports can exceed 100MB and contain over 50,000 test cases. Loading full XML DOM trees into memory causes Node.js heap exhaustion (`ERR_STRING_TOO_LONG` / `JS allocation failed`).
+### 6.4 Field Mapping & Duplicates
 
-- **XML Streaming Implementation:** Uses a SAX-based event-driven parser (`sax-js` / `expat`). As the parser emits `<testsuite>` and `<testcase>` tag tokens, entities are transformed into lightweight JSON records and pushed to a chunked pipeline stream.
-- **Memory Footprint:** Peak memory usage is bounded to **< 64MB** regardless of XML file size.
-- **Progress Streaming:** Background import jobs stream real-time progress events over WebSocket / SSE (`bytes_processed`, `cases_parsed`, `percentage_complete`).
+#### Custom fields
+The dry run lists every column that isn't an existing custom field, with:
+- an inferred type: CHECKBOX, NUMBER, DATE, or TEXT (the fallback); select types are never guessed;
+- sample values;
+- the column's distinct values (up to 200).
 
----
+The user picks an action for each:
+- `DROP`: ignore the column.
+- `AUTO_CREATE`: create a new **project-scoped** custom field (TEXT, NUMBER, CHECKBOX, DATE, SINGLE_SELECT or MULTI_SELECT). A select field's options are every distinct value in the file; multi-select splits values on commas.
+- `ROUTE_TO_EXISTING`: put the values into an existing global or project custom field.
 
-### 6.4 Pre-Import Setup Modals & Reconciliation Engine
-
-Prior to executing mutations against the database, the import pipeline analyzes the parsed stream and prompts the user through two mandatory configuration steps:
-
-#### 1. Custom Field Pre-Import Setup Modal
-When the incoming import file contains custom fields not yet registered in the target project, the UI displays the Custom Field Reconciliation modal.
-
-```json
-{
-  "unmapped_custom_fields": [
-    {
-      "incoming_key": "cf_jira_key",
-      "sample_value": "PROJ-1234",
-      "detected_type": "STRING"
-    },
-    {
-      "incoming_key": "cf_automation_tool",
-      "sample_value": "Cypress",
-      "detected_type": "SINGLE_SELECT"
-    }
-  ]
-}
-```
-
-The user configures an explicit resolution strategy per field:
-- `DROP`: Ignore incoming field and discard values.
-- `AUTO_CREATE`: Automatically register a new `CustomFieldDefinition` in the project.
-- `ROUTE_TO_EXISTING`: Map incoming key to an existing project custom field UUIDv7.
+Values are validated like any other custom-field value. A value that doesn't fit is skipped and reported (`skipped_custom_field_value_warnings`) without failing the import.
 
 ```json
 {
   "field_mappings": [
-    {
-      "incoming_key": "cf_jira_key",
-      "action": "ROUTE_TO_EXISTING",
-      "target_field_id": "0191c4d0-5555-7000-8000-000000000012"
-    },
-    {
-      "incoming_key": "cf_automation_tool",
-      "action": "AUTO_CREATE",
-      "field_name": "Automation Tooling",
-      "field_type": "SINGLE_SELECT"
-    }
-  ]
-}
-```
-
-#### 2. Duplicate Title Reconciliation Modal
-When duplicate test suite or case titles are detected between the import payload and existing project specifications, the importer prompts the user with reconciliation options:
-
-- **Supported Duplicate Actions:**
-  - `CREATE_NEW`: Create a duplicate entity with suffix `(Copy)`.
-  - `OVERWRITE`: Replace summary, preconditions, and steps on existing case version.
-  - `VERSION_UP`: Increment existing case version (`v1` -> `v2`), preserving historical runs.
-  - `SKIP`: Omit incoming duplicate case from import.
-- **Session Scope Toggle:**
-  - `"apply_to_all_future_duplicates": true`: Instructs the engine to remember the selected decision for all remaining matching duplicates in the session without displaying further prompts.
-
-```json
-{
-  "duplicate_resolution": {
-    "default_action": "VERSION_UP",
-    "apply_to_all_future_duplicates": true,
-    "overrides": [
-      {
-        "external_id": "TC-Auth-102",
-        "action": "OVERWRITE"
-      }
-    ]
-  }
-}
-```
-
----
-
-### 6.5 Mandatory Dry-Run Inspection Diff Endpoint
-
-`POST /api/v1/imports/dry-run`
-
-Reads the import file stream, applies field mappings and duplicate rules in memory without committing database mutations, and returns a comprehensive inspection diff.
-
-#### Request Body (`multipart/form-data`):
-- `file`: Raw binary import file (`.xml`, `.json`, `.csv`).
-- `format`: `TESTLINK_XML` | `NATIVE_JSON` | `STANDARD_CSV`.
-- `target_project_id`: Target project UUIDv7.
-- `configuration`: JSON string specifying field mappings and duplicate resolution settings.
-
-#### Response Payload (`200 OK`):
-```json
-{
-  "dry_run_summary": {
-    "total_suites_detected": 14,
-    "total_cases_detected": 420,
-    "suites_to_create": 14,
-    "cases_to_create": 380,
-    "cases_to_version_up": 35,
-    "cases_to_overwrite": 5,
-    "cases_skipped": 0,
-    "unmapped_custom_fields_count": 0,
-    "validation_warnings_count": 2
-  },
-  "warnings": [
-    {
-      "line_or_node": "testcase[name='Verify Payment Payload']",
-      "code": "TITLE_TRUNCATED",
-      "message": "Title exceeds 255 characters; automatically trimmed."
-    },
-    {
-      "line_or_node": "testcase[external_id='TC-PAY-99']",
-      "code": "EMPTY_STEPS",
-      "message": "Test case contains no steps."
-    }
+    { "incoming_key": "cf_jira_key", "action": "ROUTE_TO_EXISTING", "target_field_id": "..." },
+    { "incoming_key": "automationStatus", "action": "AUTO_CREATE", "field_name": "Automation Status", "field_type": "SINGLE_SELECT" }
   ],
-  "hierarchy_preview": [
-    {
-      "name": "Authentication",
-      "action": "CREATE_NEW",
-      "cases_count": 25,
-      "children": []
-    }
-  ]
+  "duplicate_resolution": { "default_action": "VERSION_UP" }
 }
 ```
 
+#### Duplicates
+A case counts as a duplicate when its external id matches a case in the project, or its title matches a case in the same suite. Actions:
+- `VERSION_UP` (default): add a new version to the existing case, keeping its results.
+- `OVERWRITE`: replace the latest version's content.
+- `CREATE_NEW`: create a separate case titled `<title> (Copy)`, with a fresh external id.
+- `SKIP`: leave the existing case alone.
+
+The API also accepts per-case `overrides` by external id or title; the wizard only sets the default. `apply_to_all_future_duplicates` is accepted but has no effect.
+
+#### External ids
+New cases keep the file's id unless it's taken; otherwise they get the next free `PREFIX-n`, assigned under a per-project lock so concurrent imports and case creation never collide.
+
+### 6.5 Dry Run & Execute
+
+`POST /api/v1/imports/dry-run` and `POST /api/v1/imports/execute` take the same `multipart/form-data` request:
+- `file`;
+- `format` (leave it out to detect the format automatically);
+- `target_project_id`;
+- `configuration`: JSON with the field mappings and duplicate resolution.
+
+Both need `IMPORT_DATA` in the target project. An API token may only import into its own project.
+
+The dry run writes nothing and returns:
+- `dry_run_summary`: suites and cases detected, to create, to version up, to overwrite, skipped, unmapped fields, warnings;
+- `warnings`: e.g. `TITLE_TRUNCATED`, `EMPTY_STEPS` and parser warnings;
+- `unmapped_custom_fields`;
+- `hierarchy_preview`.
+
+Execute runs the whole import in one transaction, writes an `IMPORT_EXECUTED` audit row, and returns the counts. There's no server-side session or ticket: the client sends the file again.
+
 ---
 
-## 7. Webhooks, Rate Limiting & Security Protocols
+## 7. Authentication, Rate Limiting & Webhooks
 
-### 7.1 Authentication Protocols
-All API requests must present a valid Bearer token in the `Authorization` header:
+### 7.1 Authentication
+Every API request needs a credential (RFC 04 §4 has the details):
+- **Machine API tokens** (`Authorization: Bearer tf_ci_...`), for CI and agents. Each is created per project in Admin Panel → API Tokens, with chosen capabilities, and is bound to that project and capped by its issuer's current permissions.
+- **Sign-in tokens:** `POST /api/v1/auth/login` returns a JWT for scripts. The web app uses an HttpOnly session cookie instead, plus a `X-Testify-Client: web` header on changes.
 
-`Authorization: Bearer tk_live_0191c4d08b2b7c4d9f5e2b3c4d5e6f7a`
-
-#### Token Scopes & CI/CD Runner Tokens:
-1. **Personal Access Tokens (`tk_live_...`):** Full access tied to user permissions.
-2. **CI/CD Scoped Runner Tokens (`tk_runner_...`):** Restricted tokens generated specifically for automated test runners. Runner tokens can *only* invoke `POST /api/v1/test-plans/{id}/builds/{id}/executions/batch` and read test plan metadata. Attempts to call admin or spec creation endpoints return `HTTP 403 Forbidden`.
+There are no personal access tokens or separate runner-token types; a token's capabilities decide what it can do. The built-in Automation Service role's set (`SPEC_VIEW`, `RUN_MANAGE`, `EXECUTE_RUN`) suits CI.
 
 ---
 
@@ -789,129 +576,72 @@ Content-Type: application/problem+json
 
 ---
 
-### 7.3 Webhook Event Delivery & HMAC-SHA256 Signing Protocols
-Testify pushes real-time event notifications to external webhooks (Slack, Jira, CI pipelines, custom microservices).
+### 7.3 Webhooks
 
-#### Supported Webhook Events:
-- `execution.failed`: Triggered when an automated or manual test run reports a `FAILED` or `BLOCKED` verdict.
-- `build.completed`: Triggered when an admin closes a Build.
-- `test_case.approved`: Triggered when a draft test case version is approved.
-- `import.completed`: Triggered when a background XML/CSV import job finishes.
+> **Not built.** Nothing pushes events out of Testify yet, except scheduled and manual report emails (see [reports_api_and_mcp.md](reports_api_and_mcp.md)).
 
-#### Webhook Security & Payload Verification:
-Every outbound HTTP POST payload contains security headers allowing receivers to verify authenticity and prevent replay attacks:
-
-- `X-Signature-Timestamp`: UTC Unix timestamp of event dispatch.
-- `X-Signature-SHA256`: HMAC-SHA256 signature calculated over `${timestamp}.${raw_json_body}` using the webhook secret key (`whsec_...`).
-
-#### Outbound Webhook Request Example:
-```http
-POST /hooks/testify-notifications HTTP/1.1
-Host: ci-bridge.company.com
-Content-Type: application/json
-X-Signature-Timestamp: 1757365166
-X-Signature-SHA256: 7f8a9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a
-
-{
-  "id": "evt_0191c4d9-9999-7000-8000-000000000001",
-  "event": "execution.failed",
-  "timestamp": "2026-09-08T13:25:00Z",
-  "data": {
-    "project_id": "0191c4d0-0000-7000-8000-000000000001",
-    "test_plan_id": "0191c4d0-1111-7000-8000-000000000005",
-    "build_id": "0191c4d0-9a9a-7000-8000-000000000099",
-    "case_id": "0191c4d0-9c3c-7d5e-0f6f-3c4d5e6f7a8b",
-    "case_title": "Verify Stripe 3DS Challenge Flow",
-    "verdict": "FAILED",
-    "stack_trace": "TimeoutError: element ('#stripe-3ds-iframe') not visible after 10000ms"
-  }
-}
-```
+The plan:
+- **Events:** e.g. `execution.failed`, `build.completed` (a run closed), `test_case.approved`, `import.completed`.
+- **Signing:** each delivery is signed so receivers can verify it and reject replays. `X-Signature-Timestamp` holds the Unix time; `X-Signature-SHA256` holds an HMAC-SHA256 over `${timestamp}.${raw_json_body}` with the webhook's secret.
 
 ---
 
-## 8. System Workflows & Architecture Diagrams
+## 8. System Workflows
 
-### 8.1 High-Throughput CI/CD Ingestion Sequence Diagram
+### 8.1 CI Results
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant CI as CI Runner (GitHub / Jenkins)
-    participant GW as API Gateway & Auth
-    participant Proc as Batch Ingestion Engine
-    participant DB as DB (Postgres / SQLite)
-    participant Storage as Out-of-Band Storage (S3 / FS)
+    participant CI as CI Runner
+    participant API as Testify API
+    participant DB as PostgreSQL
 
-    CI->>GW: POST /api/v1/test-plans/{p_id}/builds/{b_id}/executions/batch (Bearer tk_runner_...)
-    GW->>GW: Authenticate Token & Check Token Bucket Rate Limits
-    alt Build Closed or Plan Locked
-        GW-->>CI: HTTP 422 Unprocessable Entity (BUILD_CLOSED / PLAN_LOCKED)
-    else Build Open & Valid Token
-        GW->>Proc: Dispatch Batch Payload (up to 1,000 executions)
-        Proc->>DB: Batch Fetch Plan-Case Identifier Mappings (Single Query)
-        Proc->>Proc: Resolve UUIDv7 Frozen Version IDs in Memory
-        
-        par Async Log Offloading
-            Proc->>Storage: Stream Large Stack Traces / Attachments (>4KB)
-            Storage-->>Proc: Return Storage Keys
-        and Atomic SQL Write
-            Proc->>DB: Single Transaction Bulk INSERT into `executions` & `execution_steps`
-            DB-->>Proc: Commit Transaction Success
-        end
-
-        Proc-->>GW: Return Batch Processing Summary
-        GW-->>CI: HTTP 207 Multi-Status / 201 Created JSON
+    CI->>API: POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch (Bearer tf_ci_...)
+    API->>API: Authenticate token, check project binding, rate limit, EXECUTE_RUN
+    alt Run closed or plan locked
+        API-->>CI: 422 (BUILD_CLOSED / PLAN_LOCKED)
+    else
+        API->>API: Validate every item
+        API->>DB: Load the plan's cases and steps (bulk)
+        API->>API: Resolve identifiers, overwrite rule, steps
+        API->>DB: One transaction: auto-links, results, step results, audit row
+        API->>DB: Auto-close the run if every case now has a result (first time only)
+        API-->>CI: 201, or 207 with per-item results when some were refused
     end
 ```
 
----
-
-### 8.2 Multi-Format Streaming Import & Reconciliation Workflow
+### 8.2 Import
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as User / Admin Web UI
-    participant GW as API Gateway
-    participant Stream as Streaming Ingestion Parser
-    participant Recon as Reconciliation & Setup Engine
-    participant DB as Primary Database
+    participant UI as Import wizard
+    participant API as Testify API
+    participant DB as PostgreSQL
 
-    Client->>GW: POST /api/v1/imports/dry-run (TestLink XML / CSV / JSON)
-    GW->>Stream: Pipe File Read Stream (SAX / CSV Stream)
-    Stream->>Recon: Stream Parsed Entities & Detect Custom Fields / Duplicates
-
-    alt Unmapped Custom Fields Detected
-        Recon-->>Client: Prompt Custom Field Pre-Import Setup Modal
-        Client->>Recon: Submit Field Actions (Drop / Auto-Create / Route Existing)
-    end
-
-    alt Duplicate Titles Detected
-        Recon-->>Client: Prompt Duplicate Title Reconciliation Modal
-        Client->>Recon: Submit Resolution (Create Copy / Overwrite / Version Up / Skip)
-    end
-
-    Recon->>Recon: Compute Complete Mutation Diff in Memory
-    Recon-->>Client: HTTP 200 OK (Dry-Run Diff Summary & Hierarchy Preview)
-
-    Client->>GW: POST /api/v1/imports/execute (Confirmed Import Ticket ID)
-    GW->>DB: Execute Atomic Database Batch Mutation
-    DB-->>GW: Transaction Committed
-    GW-->>Client: HTTP 200 OK (Import Complete - X Cases Created, Y Versioned Up)
+    UI->>API: POST /api/v1/imports/dry-run (multipart: file, format, project, configuration)
+    API->>API: Parse, detect unmapped fields and duplicates
+    API-->>UI: Summary, warnings, unmapped fields (types, values), preview
+    UI->>UI: User maps fields and picks the duplicate action
+    UI->>API: POST /api/v1/imports/execute (same file + configuration)
+    API->>DB: One transaction: suites, cases, versions, steps, custom fields and values, audit row
+    API-->>UI: Counts and any skipped custom-field values
 ```
 
 ---
 
-## 9. Summary Compliance Matrix
+## 9. Summary
 
-| Requirement Area | Specification Standard | Conformance Reference |
+| Area | Design | Status |
 | :--- | :--- | :--- |
-| **OpenAPI 3.1 & REST** | Fully-typed JSON Schema endpoints with cursor-based UUIDv7 pagination | Section 1 & 2 |
-| **High-Throughput Batch** | `POST /executions/batch` supporting 1,000 items under 50ms with `all_or_nothing` flag | Section 3 |
-| **Operational Restrictions** | Closed builds & locked plans reject writes with HTTP 422 (`BUILD_CLOSED` / `PLAN_LOCKED`) | Section 4 |
-| **Storage Abstraction** | Dual `IStorageProvider` (Local FS for Dev, AWS S3/MinIO for Prod). Purge at 365 days; Audit logs append-only forever | Section 5 |
-| **Multi-Format Ingestion** | Extensible parser engine for TestLink XML, Native JSON, CSV with SAX streaming (< 64MB memory) | Section 6 |
-| **Reconciliation Modals** | Pre-import custom field mapping & duplicate title reconciliation modals with session sticky toggle | Section 6.4 |
-| **Dry-Run Inspection** | Mandatory `POST /imports/dry-run` inspection diff endpoint returning mutation preview | Section 6.5 |
-| **Webhooks & Auth** | HMAC-SHA256 signed events (`X-Signature-SHA256`) & scoped CI/CD runner tokens | Section 7 |
+| **REST conventions** | OpenAPI 3.1, cursor pagination, resource naming (§1-2) | Not as designed; to be replaced by the API revisit. |
+| **CI results** | Batch endpoint with all-or-nothing mode (§3) | Built: up to 5,000 results per request, one transaction. |
+| **Closed runs, locked plans** | Writes rejected with HTTP 422 `BUILD_CLOSED` / `PLAN_LOCKED` (§4) | Built. |
+| **Attachments and retention** | `IStorageProvider`, pre-signed uploads, 365-day purge (§5) | Not built. Audit logs append-only forever: built. |
+| **Import formats** | Parser interface; TestLink XML, JSON, CSV (§6.1-6.2) | Built, plus JUnit XML and TestRail CSV. |
+| **Large files** | Streaming 100 MB+ in bounded memory (§6.3) | Not built: 50 MB cap, held in memory. |
+| **Field mapping and duplicates** | Drop / auto-create / map; create / overwrite / version up / skip (§6.4) | Built; per-case duplicate choices are API-only. |
+| **Dry run** | `POST /imports/dry-run` preview before import (§6.5) | Built. |
+| **Auth and rate limits** | Bearer tokens, 429 with `Retry-After` (§7.1-7.2) | Built (RFC 04). |
+| **Webhooks** | HMAC-SHA256 signed events (§7.3) | Not built. |

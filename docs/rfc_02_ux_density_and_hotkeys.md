@@ -2,11 +2,11 @@
 
 | Metadata | Value |
 | :--- | :--- |
-| **Status** | Approved & Locked |
+| **Status** | Design document, updated 2026-10-11 to match what's built |
 | **Author** | Testify Architecture Team |
 | **Date** | September 8, 2026 |
 | **Target Release** | v1.0 Enterprise Baseline |
-| **Upstream Requirements** | [`00_requirements_alignment.md`](file:///docs/00_requirements_alignment.md), [UX Ergonomics Spec](file:///.antigravity/agents/ux_ergonomics.md) |
+| **Upstream Requirements** | [`00_requirements_alignment.md`](00_requirements_alignment.md), [UX Ergonomics Spec](../.antigravity/agents/ux_ergonomics.md) |
 
 ---
 
@@ -18,7 +18,7 @@ TestLink's primary operational flaw is fragmented navigation requiring multi-pag
 
 ### Core Objectives
 1. **Zero-Latency Execution:** Instantaneous (<50ms) UI updates upon keypress with optimistic local state rendering.
-2. **Keyboard-First Workflow:** Full suite traversal, test case selection, step-by-step evaluation, defect linking, and verdict submission without touching the mouse.
+2. **Keyboard-First Workflow:** Moving through the queue, recording verdicts and writing notes without touching the mouse. (Step-by-step verdicts and defect linking were planned but aren't built.)
 3. **High-Density Workspace:** Strict **32px row height** tabular layout and **28px tree node** standard to maximize visible screen real estate.
 4. **Collision-Free Ergonomics:** Automatic deactivation of single-key shortcuts when typing in inputs/textareas without requiring manual `Esc` disengagement.
 
@@ -26,45 +26,47 @@ TestLink's primary operational flaw is fragmented navigation requiring multi-pag
 
 ## 2. 3-Pane Topology Layout Specification
 
-The primary workspace operates on a **3-Pane Responsive Topology**. Resizable drag-handles (splitters) separate the three panes, allowing custom width adjustments while retaining explicit constraints.
+The workspace has three panes side by side, separated by draggable dividers.
 
 ```
-+-------------------------------------------------------------------------------------------------------------------------------+
-| TOP HEADER: Project Selector | Test Plan Dropdown | Build Selector | Search Bar (/) | User Profile | Global Settings          |
-+------------------------------------+------------------------------------+-----------------------------------------------------+
-| PANE 1: Suite Tree Navigation      | PANE 2: Suite Test Case Queue      | PANE 3: Execution & Detail Workspace                |
-| (260px - 340px Adjustable)         | (380px - 480px Adjustable)         | (Fluid Remaining Width)                             |
-|------------------------------------+------------------------------------+-----------------------------------------------------|
-| [ Quick Filter Bar               ] | [ Suite: Authentication Engine  ] | [ TC-104: OAuth2 PKCE Token Exchange ] [v2 Approved]|
-| [ Status | Priority | Assignee   ] | [ Search Cases... (Ctrl+F)       ] | Priority: HIGH | Assignee: Alex Dev | Build: v2.4.0-rc1   |
-|------------------------------------+------------------------------------+-----------------------------------------------------|
-| v Auth Suite          [ 12/15 P ]  | [P] TC-101 Login via Password      | > Preconditions (Collapsible)                       |
-|   > OAuth2 Sub-suite  [  4/4  P ]  | [P] TC-102 Login via SAML2 SSO     |   User must have valid client credentials in vault. |
-|   v Token Refresh     [  1/2  F ]  | > [F] TC-104 OAuth2 PKCE Exchange  |-----------------------------------------------------|
-|     * TC-104 PKCE     (Active)     | [B] TC-105 Token Expire Revoke     | Step | Action           | Expected      | Verdict | Notes   |
-|     * TC-105 Revoke   [  1/1  B ]  | [S] TC-106 Multi-Tenant Scopes     |   1  | POST /oauth/token| HTTP 200 OK   |  [P]    | OK      |
-| > Database Suite      [  0/30 U ]  | [U] TC-107 PKCE Code Verifier      |   2  | Invalid Secret   | HTTP 401 Auth |  [F]    | 500 Err |
-| > API Endpoint Suite  [ 50/50 P ]  | [U] TC-108 State Parameter Rej     |-----------------------------------------------------|
-|                                    |                                    | Docked Execution Action Bar  [Hotkeys: ACTIVE (ON)] |
-|                                    |                                    | [P] Pass (p) | [F] Fail (f) | [B] Block (b) | [S] Skip |
-+------------------------------------+------------------------------------+-----------------------------------------------------+
-| FOOTER: Keyboard Focus Zone: [Pane 3 - Execution Form] | Hotkeys: ACTIVE | Sync Status: Connected (0 pending ops)             |
-+-------------------------------------------------------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------+
+| HEADER: Project ▾ ➕✏️🗑️ | Test Plan ▾ ➕✏️🗑️ | Test Run ▾ ➕✏️🗑️ | Import | Export | Reports | Admin | User |
++----------------------------------+------------------------------------+---------------------------------+
+| PANE 1: Suite Tree               | PANE 2: Case List / Queue          | PANE 3: Detail                  |
+| (default 280px, draggable)       | (default 420px, draggable)         | (the rest)                      |
+|----------------------------------+------------------------------------+---------------------------------|
+| [ Execute | Spec ]               | Spec: + Case, case list with       | Spec: case editor (title,       |
+| Search ID, title or suite (/)    | status boxes and + Add / In Plan   | priority, version, steps,       |
+| + Filter  (property → value)     |                                    | custom fields) or Suite Details |
+| v Auth Suite          [12/15]    | Execute: queue with verdict        | Execute: steps, custom fields   |
+|   > OAuth2            [ 4/4 ]    | letters (P F B S, - untested)      | (read-only), verdict buttons,   |
+|   v Token Refresh     [ 1/2 ]    |                                    | notes, hotkey badge             |
++----------------------------------+------------------------------------+---------------------------------+
 ```
 
 ### 2.1 Pane Functionality & Sizing Metrics
 
-| Pane | Role | Width Constraints | Key Components & Features |
+| Pane | Role | Width | Contents |
 | :--- | :--- | :--- | :--- |
-| **Pane 1** | Recursive Tree Navigation | `260px` min / `340px` max | Quick filter bar (Status, Priority, Assignee, Tag); Recursive Test Suite hierarchy; Progress pills (`Passed/Total`); Collapse state toggles. |
-| **Pane 2** | Test Case Queue & Bulk List | `380px` min / `480px` max | High-density grid; 32px row height standard; Active row high-contrast focus outline; Instant visual verdict badges (`P`, `F`, `B`, `S`, `U`). |
-| **Pane 3** | Execution & Detail Workspace | `Fluid` (Rest of Viewport) | Top metadata header; Collapsible preconditions section; Step-by-step verification table; Docked verdict action bar with live hotkey toggle indicator. |
+| **Pane 1** | Suite tree | Default `280px`, at least `140px` | Execute/Spec toggle; search and filter rows; the suite tree with counts, plan-inclusion toggles (Spec) or pass/fail pills (Execute); create, rename and delete buttons; drag-and-drop moving in Spec mode. |
+| **Pane 2** | Case list (Spec) or execution queue (Execute) | Default `420px`, at least `180px` | Virtualized list. Spec: version status boxes and plan toggles. Execute: verdict letters and the selected-suite filter. |
+| **Pane 3** | Details | The rest, at least `160px` | Spec: the case editor or Suite Details. Execute: the case's steps and custom fields, verdict buttons, notes and the hotkey badge. |
+
+The widths reset to the defaults on every load; they aren't saved.
 
 ### 2.2 Responsive & Collapsible Behavior
 
-On narrower displays or smaller laptop screens:
-- **Tablet / Small Viewport (<1280px):** Pane 1 collapses into a slide-out drawer triggered by `[` or an icon button. Pane 2 and Pane 3 split screen 40% / 60%.
-- **Compact Viewport (<1024px):** Single active pane view with top tab switcher: `[1: Tree] | [2: Queue] | [3: Execution]`.
+Not built. The design was:
+- below 1280px, Pane 1 collapses into a slide-out drawer;
+- below 1024px, one pane at a time with a tab switcher.
+
+The layout is desktop-only today.
+
+### 2.3 Modes and Views
+
+- **Spec mode** (the default on load): browse and edit suites and cases, and curate which cases are in the selected plan.
+- **Execute mode:** record results for the selected run. A user without `SPEC_VIEW` is kept in Execute mode, and the toggle is disabled.
+- **Reports** replaces the three panes with a full-width view (Overview, Run, Trends, Health, Scheduled Emails), with shareable `#/reports/...` links. "← Back to workspace" returns to the panes.
 
 ---
 
@@ -88,19 +90,17 @@ To eliminate visual waste and maximize screen capacity, the UI enforces explicit
 +-----------------------------------------------------------------------+
 ```
 
-- **Pane 2 Grid Rows:** Height locked to exactly `32px`. Content centered vertically. Minimal padding: `4px` top/bottom, `8px` left/right.
+- **Pane 2 Grid Rows:** `32px` in the Execute queue; `38px` in the Spec case list, which shows more per row.
 - **Pane 1 Tree Rows:** Height locked to `28px`. Folder/suite icons `16px x 16px`. Indentation `12px` per hierarchy level.
 - **Step Table Rows (Pane 3):** Min-height `32px`, expanding dynamically only when multiline actual results or long payload steps are present.
 
 ### 3.2 Virtualized List Rendering (5,000+ Items)
 
-To prevent DOM degradation during large suite execution:
-- Pane 2 list uses windowed virtual scrolling (`@tanstack/react-virtual` or CSS content-visibility pipeline).
-- Buffer window fixed at `10` extra items above and below the visible viewport.
-- Maximum initial DOM nodes in Pane 2 capped at `~45` nodes regardless of suite size (50 or 10,000 cases).
-- Frame budget: Keystroke navigation (`j`/`k`) updates target index in `<5ms` and re-positions focus frame within `<16ms` (60 FPS).
+The suite tree and both case lists render only the rows in view, plus a buffer of 10 rows above and below (hand-rolled windowing, no library). Their DOM size doesn't grow with the number of cases, and `j`/`k` scrolls the selected row into view.
 
 ### 3.3 CSS Variables & Design Tokens Reference
+
+The design called for these tokens. The app doesn't use CSS variables yet: components use inline styles with the same kinds of values (dark theme, blue `#3b82f6` focus and selection, amber warning banners).
 
 ```css
 :root {
@@ -140,28 +140,28 @@ To prevent DOM degradation during large suite execution:
 
 ## 4. Master Hotkey Matrix & Keybinding Specification
 
-All shortcuts operate out-of-the-box without user key-mapping configuration in v1.
+All shortcuts work out of the box; they can't be remapped. The implementation is `apps/web/src/hooks/useHotkeyEngine.ts`.
 
-```
-+---------------------------------------------------------------------------------------------------------+
-| MASTER HOTKEY MATRIX                                                                                   |
-+---------+-----------------------------------+--------------------+--------------------------------------+
-| Key     | Action Description                | Target Scope       | Conditions & Auto-Advance Behavior   |
-+---------+-----------------------------------+--------------------+--------------------------------------+
-| j / Dn  | Move to next test case in list    | Pane 2 / Pane 3    | Shifts active index down by 1.       |
-| k / Up  | Move to prev test case in list    | Pane 2 / Pane 3    | Shifts active index up by 1.         |
-| [       | Collapse current suite in tree    | Pane 1 Navigation  | Toggles folder collapse state.       |
-| ]       | Expand current suite in tree      | Pane 1 Navigation  | Toggles folder expand state.         |
-| /       | Focus quick search / filter bar   | Global / Top Bar   | Focuses search input; pauses hotkeys.|
-| Esc     | Clear focus / return to list nav  | Any Focused Input  | Blurs input; re-engages hotkeys.     |
-+---------+-----------------------------------+--------------------+--------------------------------------+
-| p       | Mark active case as PASSED        | Pane 3 Execution   | Logs PASS; advances to next case.    |
-| f       | Mark active case as FAILED        | Pane 3 Execution   | Logs FAIL; auto-focuses notes input. |
-| b       | Mark active case as BLOCKED       | Pane 3 Execution   | Logs BLOCK; opens defect ID prompt.  |
-| s       | Mark active case as SKIPPED       | Pane 3 Execution   | Logs SKIP; advances to next case.    |
-| Ctrl+Ent| Submit execution verdict & notes  | Pane 3 Form        | Saves execution form from text input.|
-+---------+-----------------------------------+--------------------+--------------------------------------+
-```
+| Key | Action | Where | Behavior |
+| :--- | :--- | :--- | :--- |
+| `j` / ↓ | Next case | Both modes | Moves the selection down one row. |
+| `k` / ↑ | Previous case | Both modes | Moves the selection up one row. |
+| `[` | Collapse the tree | Both modes | Collapses the suite tree. |
+| `]` | Expand the tree | Both modes | Expands the suite tree. |
+| `/` | Search | Both modes | Focuses the search box in Pane 1; hotkeys pause while typing. |
+| `Esc` | Leave a text box | Any input | Blurs it; hotkeys re-engage. In Spec mode, also clears a multi-selection. |
+| `p` | Passed | Execute | Records PASSED and moves to the next case (into the next suite at the end of one). |
+| `f` | Failed | Execute | Records FAILED and focuses the notes box. |
+| `b` | Blocked | Execute | Records BLOCKED and focuses the notes box. |
+| `s` | Skipped | Execute | Records SKIPPED and moves to the next case. |
+| `Ctrl+Enter` | Save notes | Execute, in the notes box | Records the case's current verdict again with the notes, then jumps to the first case of the next suite. |
+
+The verdict keys and `Ctrl+Enter` are refused, with a message, in these cases:
+- in Spec mode;
+- when no run is selected or the run is closed;
+- for a case removed from the plan;
+- without `EXECUTE_RUN`;
+- or, for a case that already has a result, without `EXECUTE_OVERWRITE`. Re-sending your own latest verdict with notes is still allowed.
 
 ---
 
@@ -175,7 +175,9 @@ Keybinding conflicts are eliminated via a central **Keyboard Focus Manager** ope
 2. **Zone 2: Test Case Queue (`LIST`)** - Focus is inside Pane 2 table. `j`/`k` move selection up/down.
 3. **Zone 3: Execution Workspace (`EXECUTION_CONTAINER`)** - Focus is inside Pane 3 execution container. **Single-key verdict hotkeys (`p`,`f`,`b`,`s`) are ACTIVE.**
 4. **Zone 4: Input / Editing Form (`TEXT_INPUT`)** - User is typing inside `<input>`, `<textarea>`, or `contenteditable`. **Single-key hotkeys are AUTOMATICALLY DEACTIVATED.**
-5. **Zone 5: Modal / Drawer (`MODAL`)** - Focus trapped inside dialog (e.g. defect linking modal).
+5. **Zone 5: Modal (`MODAL`)** - A dialog is open; only `Esc` is handled.
+
+As built, the hotkeys don't depend on which pane has focus. `TREE` and `LIST` exist in the state machine (`useFocusFSM.ts`), but nothing switches to them, and arrow keys in the tree aren't built. What matters is whether a text box (`TEXT_INPUT`) or a dialog (`MODAL`) has focus, so the diagram below is the design rather than the exact behavior.
 
 ### 5.2 State Transition Diagram
 
@@ -193,7 +195,7 @@ Keybinding conflicts are eliminated via a central **Keyboard Focus Manager** ope
              v                                      v
    +----------------------------------------------------------+
    | ZONE 3: EXECUTION CONTAINER (Hotkeys ACTIVE)             |
-   | Active Shortcuts: p, f, b, s, j, k, e                    |
+   | Active Shortcuts: p, f, b, s, j, k                       |
    +----------------------------+-----------------------------+
                                 |
         +-----------------------+-----------------------+
@@ -211,82 +213,28 @@ Keybinding conflicts are eliminated via a central **Keyboard Focus Manager** ope
    +----------------------------------------------------------+
 ```
 
-### 5.3 Collision Protection & RBAC Permission Gating (No `Esc` Required)
+### 5.3 Collision Protection & Permission Gating (No `Esc` Required)
 
-As locked in [`00_requirements_alignment.md`](file:///docs/00_requirements_alignment.md) and aligned with [`rfc_04_rbac_security_matrix.md`](file:///docs/rfc_04_rbac_security_matrix.md):
-- **RBAC Permission Gate:** Single-key execution hotkeys (`p`, `f`, `b`, `s`) are evaluated against the current user's assigned permissions. If the user lacks the `EXECUTE_RUN` key (e.g., `Viewer` role), the hotkey engine enters `State.READ_ONLY_DISABLED`, the header displays `[🔒 READ ONLY]`, and keypresses emit a toast warning without triggering mutations. If editing a previously completed execution, `EXECUTE_OVERWRITE` is validated.
-- **Automatic Input Deactivation:** Whenever an `<input>`, `<textarea>`, `<select>`, or `[contenteditable]` element receives key focus (`focus` event), the hotkey engine immediately shifts to `State.TEXT_INPUT` (`TYPING MODE`) and disables single-character listener execution.
-- **Typing Protection:** Typing the letter `"p"` inside the Actual Results box appends the character `"p"` to the text string rather than triggering a `PASSED` execution state change.
-- **Automatic Re-engagement:** When focus leaves the input field (`blur` event), focus returns to `ZONE 3: EXECUTION_CONTAINER`, and hotkeys re-engage automatically without requiring `Esc`.
-- **Database State Transition Mechanics:**
-  - **Rapid Pass (`p`) / Skip (`s`):** Immediately commits `executions.status = 'COMPLETED'` and `executions.verdict = 'PASSED'` (or `'SKIPPED'`) to local store & API background queue, advancing to the next case.
-  - **Fail (`f`) / Block (`b`):** Sets `executions.status = 'IN_PROGRESS'` with pending `verdict = 'FAILED'` (or `'BLOCKED'`), auto-focuses notes input, and shifts hotkey badge to `[✏️ TYPING MODE]`. Submitting via `Ctrl+Enter` commits `executions.status = 'COMPLETED'`, `executions.verdict = 'FAILED'`, and recorded notes.
-
-```typescript
-// Focus Event Listener Logic Standard with RBAC Permission Checks
-function handleGlobalKeyDown(event: KeyboardEvent) {
-  const { currentUserPermissions, currentExecutionState } = useStore.getState();
-
-  // 1. RBAC Guard: Verify EXECUTE_RUN permission for verdict hotkeys
-  const canExecute = currentUserPermissions.includes('EXECUTE_RUN');
-  const isOverwriting = currentExecutionState?.status === 'COMPLETED';
-  const canOverwrite = isOverwriting ? currentUserPermissions.includes('EXECUTE_OVERWRITE') : true;
-
-  const activeElement = document.activeElement;
-  const isInputFocused = activeElement && (
-    activeElement.tagName === 'INPUT' ||
-    activeElement.tagName === 'TEXTAREA' ||
-    activeElement.tagName === 'SELECT' ||
-    (activeElement as HTMLElement).isContentEditable
-  );
-
-  // 2. Input Focus Guard: Disable single-key shortcuts while typing
-  if (isInputFocused) {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-      if (canExecute && canOverwrite) submitExecutionForm();
-      else showToastWarning('Permission Denied: EXECUTE_RUN required');
-    }
-    return; // Pass through standard text input behavior
-  }
-
-  // 3. Execution Hotkey Handler (ZONE 3)
-  switch (event.key) {
-    case 'p': 
-      if (!canExecute || !canOverwrite) return showToastWarning('EXECUTE_RUN permission required');
-      markVerdict({ status: 'COMPLETED', verdict: 'PASSED' });
-      advanceToNextCase();
-      break;
-    case 'f': 
-      if (!canExecute || !canOverwrite) return showToastWarning('EXECUTE_RUN permission required');
-      markVerdict({ status: 'IN_PROGRESS', verdict: 'FAILED' }); 
-      focusNotesInput(); 
-      break;
-    case 'b': 
-      if (!canExecute || !canOverwrite) return showToastWarning('EXECUTE_RUN permission required');
-      markVerdict({ status: 'IN_PROGRESS', verdict: 'BLOCKED' }); 
-      openDefectModal(); 
-      break;
-    case 's': 
-      if (!canExecute || !canOverwrite) return showToastWarning('EXECUTE_RUN permission required');
-      markVerdict({ status: 'COMPLETED', verdict: 'SKIPPED' });
-      advanceToNextCase();
-      break;
-    case 'j': selectNextCase(); break;
-    case 'k': selectPrevCase(); break;
-  }
-}
-```
-
----
+As locked in [`00_requirements_alignment.md`](00_requirements_alignment.md) and aligned with [`rfc_04_rbac_security_matrix.md`](rfc_04_rbac_security_matrix.md):
+- **Permission gate:**
+  - Verdict hotkeys check the current user's permissions in the selected project (`useFocusFSM`).
+  - Without `EXECUTE_RUN`, the hotkey badge shows `READ ONLY`, and pressing a verdict key shows a yellow "Not permitted" banner instead of recording anything.
+  - Re-recording a case that already has a result needs `EXECUTE_OVERWRITE`.
+  - The server checks all of this too, so the buttons and the API can't get around it.
+- **Automatic input deactivation:** whenever an `<input>`, `<textarea>`, `<select>` or `contenteditable` element has focus, single-key hotkeys are ignored. Typing "p" in the notes box types a "p".
+- **Automatic re-engagement:** when focus leaves the input, hotkeys work again without pressing `Esc`.
+- **Recording:**
+  - Every verdict key records a result immediately (`POST /api/v1/executions`, status `COMPLETED`).
+  - `f` and `b` then focus the notes box. `Ctrl+Enter` records the same verdict again with the notes and moves on.
+  - There's no "in progress" state.
 
 ## 6. Visual Hotkey Toggle Indicator
 
-To remove ambiguity regarding whether keypresses will trigger verdicts or type characters, the top right section of Pane 3 features a prominent **Visual Hotkey Toggle Indicator**.
+To remove ambiguity about whether keypresses will record verdicts or type characters, Pane 3 in Execute mode shows a **hotkey badge** (`FocusIndicatorBadge`). Clicking it turns hotkeys off or back on.
 
 ```
 +-------------------------------------------------------------------------------+
-| PANE 3 HEADER: TC-104 - OAuth2 PKCE Token Exchange                           |
-| Build: v2.4.0-rc1 | Assigned: Alex Dev | [ HOTKEYS: ACTIVE (ON) [kbd: p,f,b,s] ]|
+| PANE 3: TC-104 - OAuth2 PKCE Token Exchange      [ HOTKEYS: ACTIVE (ON) ]   |
 +-------------------------------------------------------------------------------+
 ```
 
@@ -295,6 +243,7 @@ To remove ambiguity regarding whether keypresses will trigger verdicts or type c
 | State | Badge Visual Style | Tooltip / Sub-Text | Hotkey Engine Status |
 | :--- | :--- | :--- | :--- |
 | **ACTIVE** | Solid Green Pill (`#16a34a`) with white text `[⚡ HOTKEYS: ON]` | Single-key shortcuts `p, f, b, s, j, k` active. | Listening & executing. |
+| **READ ONLY** | Dark red pill | The user lacks `EXECUTE_RUN`. | Verdict keys refused; navigation works. |
 | **TYPING PAUSED** | Amber Pill (`#d97706`) with text `[✏️ TYPING MODE]` | Hotkeys auto-paused while typing. Press `Ctrl+Enter` or click outside to re-engage. | Paused (Input Focused). |
 | **MANUALLY OFF** | Dark Gray Outline Pill (`#4b5563`) `[🔒 HOTKEYS: OFF]` | Single-key hotkeys manually disabled by user toggle. | Disabled. |
 
@@ -302,55 +251,26 @@ To remove ambiguity regarding whether keypresses will trigger verdicts or type c
 
 ## 7. Execution Interaction Flow & Optimistic UI
 
-### 7.1 UX Flowcharts
+### 7.1 Flows
 
-#### Rapid Single-Key Execution Mode (Pass / Skip)
-```
-[User presses 'p'] 
-       │
-       ▼
-[1. Trigger Optimistic UI Update (<10ms)]
-       ├── Badge in Pane 2 turns Green [P]
-       ├── Progress bar in Pane 1 increments
-       └── API Request sent asynchronously (POST /api/v1/executions)
-       │
-       ▼
-[2. Advance Active Index (+1 Case)]
-       ├── Focus shifts to next test case in Pane 2
-       └── Pane 3 renders next case details instantly (<30ms)
-```
+**Pass / Skip (`p` / `s`):**
+1. The queue shows the new verdict at once (optimistic update), and the result is sent (`POST /api/v1/executions`).
+2. The selection moves to the next case. At the end of a suite filter, it moves into the next suite.
 
-#### Detailed Step-by-Step Failure Logging (Fail / Block)
-```
-[User presses 'f']
-       │
-       ▼
-[1. Set Pending Verdict State to FAILED]
-       ├── Badge in Pane 3 header highlights RED
-       └── Execution Notes Textarea is AUTOMATICALLY FOCUSED
-       │
-       ▼
-[2. Hotkeys Auto-Pause (Badge changes to [✏️ TYPING MODE])]
-       │
-       ▼
-[3. User types actual result notes / attaches logs]
-       │
-       ▼
-[4. User presses Ctrl+Enter or clicks Submit Verdict]
-       └── Saves execution, advances to next case, re-engages hotkeys
-```
+**Fail / Block (`f` / `b`):**
+1. The verdict is shown and recorded at once, and the notes box is focused (hotkeys pause while typing).
+2. The user types what went wrong.
+3. `Ctrl+Enter` records the verdict again with the notes, re-engages hotkeys, and jumps to the first case of the next suite.
 
-### 7.2 Optimistic UI & Latency Target
+### 7.2 Optimistic UI
 
-- **Latency Guarantee:** Every hotkey verdict action updates the local Client State Store (Zustand/Redux) within **<10ms**.
-- **Network Queueing:** API requests are dispatched in the background with exponential backoff retry logic.
-- **Rollback Protection:** If a network connection drops or server returns HTTP 422/500, the test case badge reverts to its previous state with a toast error notification: *"Failed to save verdict for TC-104. Click to retry."*
-
----
+- The queue updates before the server answers; state lives in React hooks (`useExecution`), with no separate store.
+- **Rollback:** if the server refuses the result (e.g. 403, a closed run) or the request fails, the case's previous verdict and notes come back. A permission refusal shows the yellow "Not permitted" banner; other failures show a toast.
+- There's no offline queue or automatic retry.
 
 ## 8. Accessibility & High-Density Color Palette
 
-Color design guarantees WCAG AAA contrast and colorblind safety (Protanopia, Deuteranopia, Tritanopia). Verdict states pair distinct shape/character cues (`P`, `F`, `B`, `S`, `U`) with background colors.
+Verdicts are never shown by color alone: each has a letter (`P`, `F`, `B`, `S`, and `-` for untested), so they work for colorblind users. The app has only a dark theme; the light-mode colors below were designed but aren't used, and the contrast ratios haven't been measured.
 
 ### 8.1 Verdict Visual Badge Specification
 
@@ -393,23 +313,18 @@ Color design guarantees WCAG AAA contrast and colorblind safety (Protanopia, Deu
 
 ---
 
-## 9. Compliance & Verification Matrix
+## 9. Status
 
-| Requirement | Implementation Target | Verification Method | Status |
-| :--- | :--- | :--- | :--- |
-| **3-Pane Topology** | Resizable splitters, Pane 1 (260-340px), Pane 2 (380-480px), Pane 3 (fluid) | Layout integration test | Locked |
-| **32px Row Standard** | Grid row height locked to 32px, tree nodes 28px | CSS Computed Style Assertion | Locked |
-| **Hotkeys (p, f, b, s, j, k)** | Central keyboard event dispatch manager | Unit tests (Simulated KeyboardEvent) | Locked |
-| **Auto-Deactivation on Input** | Focus event listener on `<input>`, `<textarea>`, `contenteditable` | Playwright E2E focus test | Locked |
-| **Visual Toggle Indicator** | Dynamic badge in Pane 3 header showing `ACTIVE` / `TYPING MODE` | React component test | Locked |
-| **Colorblind-Safe Badges** | Letter badges (`P`,`F`,`B`,`S`,`U`) + high contrast colors | Automated WCAG contrast test | Locked |
+| Requirement | Status |
+| :--- | :--- |
+| **3-pane layout** with draggable dividers | Built. Sizes differ from the original design (§2.1); responsive layouts not built. |
+| **Row heights:** 32px queue rows, 28px tree rows | Built; the Spec case list uses 38px. |
+| **Hotkeys** `j k [ ] / p f b s Esc Ctrl+Enter` | Built; covered by `apps/web/src/tests/hotkeys.test.ts`. |
+| **Hotkeys pause while typing** | Built. |
+| **Hotkey badge** (ACTIVE, TYPING MODE, READ ONLY, OFF) | Built. |
+| **Letter verdict badges** | Built; dark theme only. |
+| **Step-level verdicts, defect linking, light theme** | Not built. |
 
----
+## 10. Summary
 
-## 10. Summary & Next Steps
-
-RFC 02 guarantees that Testify will provide a high-density, zero-friction, keyboard-first environment for QA execution. 
-
-Next steps:
-1. Complete architectural review of `docs/rfc_02_ux_density_and_hotkeys.md`.
-2. Proceed to component design implementation matching CSS tokens and focus state machine.
+RFC 02 set out a high-density, keyboard-first workspace for QA execution. The core of it is built: three panes, virtualized lists, single-key verdicts with typing protection, and permission gating. The open items are in §9.

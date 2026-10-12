@@ -1,5 +1,8 @@
 # Role: QA & Test Engineering Domain Specialist
 
+> **Note (2026-10-11):** this is the brief given to a planning agent in September 2026. It records what was asked for, not what was built. Where the build differs, see RFC 01 and RFC 03 §6 for the code as it is, and `CLAUDE.md`.
+
+
 ## Mission
 Define the exact domain rules, lifecycle policies, and operational behavior for a modern, high-throughput TestLink alternative. You are the custodian of QA workflows: ensure the platform eliminates TestLink's historical frictions (clunky version branching, lost step-level execution history, ambiguous build-assignment logic, and rigid suite reorganization) while preserving core enterprise QA semantics.
 

@@ -1,636 +1,375 @@
 # RFC 01: Core Domain Model, Relational Architecture & State Machines
 
-**Status:** Draft / Approved Design (Amended 2026-09-11)  
-**Author:** Lead System Architect & QA Domain Specialist  
-**Target Platform:** Testify Modernized Execution & Management Platform  
-**Date:** September 8, 2026  
+**Status:** Design document, updated 2026-10-11 to match what's built
+**Author:** Lead System Architect & QA Domain Specialist
+**Target Platform:** Testify
+**Date:** September 8, 2026
 
-> **2026-09-11 amendment:** Section 4 originally specified a dual-driver database layer
-> supporting both a native SQLite engine and PostgreSQL. That native SQLite driver
-> (`better-sqlite3`) proved unreliable across dev machines and CI runners -- its prebuilt
-> binary is sensitive to the host's glibc version and frequently fails to load. The project
-> dropped native SQLite support and standardized on a single Postgres-compatible SQL dialect:
-> an embedded, zero-config `PGlite` (WASM Postgres) instance for local/offline use, and a real
-> PostgreSQL server for production/team deployments. Section 4 below reflects that decision;
-> the rest of this document (domain model, ERD, state machines, RBAC, custom fields) is
-> unaffected and still describes the current architecture. See `AGENTS.md` for implementation
-> detail.
+> **Database engine (changed 2026-09-11):** the original design ran two SQL engines, native SQLite for local use and PostgreSQL for production. The SQLite driver (`better-sqlite3`) proved unreliable across machines, so Testify uses one Postgres-compatible dialect: an embedded `PGlite` (WASM Postgres) instance for development and tests, and a real PostgreSQL server in production. See §4.
 
 ---
 
 ## 1. Executive Summary & Foundational Architectural Constraints
 
-This Request for Comments (RFC) establishes the foundational domain model, database normalization schema, state machines, granular permission matrix, and dynamic extension engine for the modernized Testify platform. The architecture is engineered to eliminate TestLink’s legacy pain points—such as slow tree rendering, step-level data loss during re-runs, ambiguous build assignments, and schema upgrade lock-in—while strictly preserving core enterprise QA abstractions: **Test Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Builds, Executions, and Dynamic Custom Fields**.
+This RFC sets out the domain model, schema, state machines and extension model. The aim is to remove TestLink's pain points (slow tree rendering, step-level data loss on re-runs, ambiguous build assignments, schema-upgrade lock-in) while keeping the core abstractions: **Projects, Test Suites, Test Cases, Test Case Versions, Test Plans, Test Runs (builds), Executions (results) and Custom Fields**.
 
 ```
                            +-------------------------------------+
                            |            Test Project             |
                            +-------------------------------------+
                                               | 1
-                                              |
                                               | N
                            +-------------------------------------+
                            |      Test Suite Tree (Recursive)    |
                            +-------------------------------------+
                                               | 1
-                                              |
                                               | N
                            +-------------------------------------+
                            |              Test Case              |
                            +-------------------------------------+
                                               | 1
-                                              |
                                               | N
                            +-------------------------------------+
-                           |  Test Case Version (Mutable Draft)  |
+                           |   Test Case Version (+ Test Steps)  |
                            +-------------------------------------+
                                               |
-                                     (Pinned / Frozen Snapshot)
-                                              |
+                                     (pinned per plan)
                                               v
 +-----------------------+ 1                  N +-------------------------------------+
-|       Test Plan       |--------------------->|           Test Plan Case            |
+|       Test Plan       |--------------------->|    Test Plan Case (plan membership) |
 +-----------------------+                      +-------------------------------------+
             | 1                                                   | 1
-            |                                                     |
             | N                                                   | N
-+-----------------------+                      +-------------------------------------+
-|         Build         |--------------------->|         Test Run Execution          |
 +-----------------------+ 1                  N +-------------------------------------+
+|   Test Run (builds)   |--------------------->|          Result (executions)        |
++-----------------------+                      +-------------------------------------+
                                                                   | 1
                                                                   | N
                                                +-------------------------------------+
-                                               |           Execution Step            |
+                                               |      Step Result (execution_steps)  |
                                                +-------------------------------------+
 ```
 
+The user-facing name is **test run**; the database and much of the code still say `build`.
+
 ### Core Constraints & Guarantees
 
-1. **Single Postgres-Compatible Dialect:** The system targets Postgres-compatible SQL everywhere: a zero-config, embedded `PGlite` (WASM Postgres) instance for local/offline use and evaluation, and a real multi-node PostgreSQL server for high-scale enterprise teams -- the same SQL dialect in both cases, so there is no cross-dialect compatibility surface to maintain. Vendor-specific SQL ENUMs and procedures remain avoided in favor of string constants with `CHECK` constraints, matching the schema's original intent, but for portability of the schema and tooling rather than dual-driver necessity.
-2. **Domain Separation (Spec vs. Execution):** Test specifications (suites, test case versions, steps) are mutable design assets. Executions (test plan cases, build runs, step verdicts) are immutable historic snapshots. Mutating a test specification after execution never alters past test execution history or audit logs.
-3. **Primary Key Standard:** All primary keys utilize **UUIDv7** (128-bit time-ordered UUIDs). This guarantees monotonic indexing performance comparable to auto-incrementing integers while allowing client-side safe ID generation and distributed multi-region safety.
-4. **Admin Extensibility:** Dynamic Custom Fields, RBAC permission overrides, and verdict workflows are defined via data schemas rather than code modifications.
+1. **One Postgres-compatible dialect:** PGlite in development and tests, PostgreSQL in production; the same SQL and the same migrations for both (§4).
+2. **Specification vs. execution:** suites, cases and versions are editable design assets. Results are append-only: they're never edited, and a new result becomes the latest. Changing a specification never alters past results.
+3. **Primary keys** are `VARCHAR(36)` UUID strings. Repositories generate time-ordered UUIDv7; some routes still generate UUIDv4. Both work, since nothing relies on id order.
+4. **Admin extensibility:** custom fields, role templates and permission overrides are data, not code.
 
 ---
 
-## 2. Specification vs. Execution Boundary & Version Freezing
+## 2. Specification vs. Execution Boundary & Version Pinning
 
-### 2.1 Domain Separation Architecture
-
-The domain model enforces a strict architectural wall between the **Test Specification Domain** (authoring and maintaining test cases) and the **Test Execution Domain** (planning, building, running, and auditing test results).
+### 2.1 Domain Separation
 
 ```
 ===================================================================================
-                       TEST SPECIFICATION DOMAIN (MUTABLE)
+                       TEST SPECIFICATION DOMAIN (EDITABLE)
 ===================================================================================
-  [Project] ---> [TestSuite Tree] ---> [TestCase] ---> [TestCaseVersion (Draft/Approved)]
+  [Project] ---> [TestSuite Tree] ---> [TestCase] ---> [TestCaseVersion (Draft/Approved/Deprecated)]
                                                                 |
-                                                                | (Test Steps)
                                                                 v
                                                          [TestStep 1..N]
 ===================================================================================
-                                      ||  PINNED FREEZE BOUNDARY
-                                      \/
+                                      ||  version pinned per plan
+                                      \\/
 ===================================================================================
-                        TEST EXECUTION DOMAIN (IMMUTABLE)
+                        TEST EXECUTION DOMAIN (APPEND-ONLY RESULTS)
 ===================================================================================
-  [TestPlan] ---> [Build (Open/Closed)] ---> [TestPlanCase (Pinned Version + Custom Fields Snapshot)]
-                                                          |
-                                                          v
-                                             [Execution Run (Iteration 1..N)]
-                                                          |
-                                                          v
-                                             [ExecutionStep Verdicts 1..N]
+  [TestPlan] ---> [TestPlanCase (pinned version; may be retired)]
+       |                     |
+       v                     v
+  [Test Run (Open/Closed)] -> [Result 1..N per case per run] -> [Step Results 1..N]
 ===================================================================================
 ```
 
-### 2.2 Suite Hierarchy Mutability
+### 2.2 Suite Hierarchy
 
-Unlike rigid snapshot systems that clone entire suite trees for every test plan, the **Test Suite Tree is live and mutable**:
-- Reordering, moving, or renaming test suites does not force a suite-tree snapshot. This maintains rapid navigation and low storage overhead.
-- When querying historical execution metrics for a suite path, the execution records resolve the case's current suite placement or historic suite path at execution time, recorded in the immutable execution log.
+The suite tree is live and editable; it's never snapshotted per plan. Moving or renaming suites (including by drag-and-drop) takes effect everywhere at once. Reports group results by each case's **current** suite; results don't record the suite path they were run under.
 
-### 2.3 Version Freezing & Pinning Mechanics
+### 2.3 Version Pinning
 
-1. **Explicit Version Pinning:** When a `TestCase` is attached to a `TestPlan`, a `test_plan_cases` mapping row is generated, locking `(test_plan_id, test_case_id, test_case_version_id)`. Only versions in the `Approved` state can be linked to active test plans (unless the project-level setting `allow_draft_plan_linking` is explicitly enabled).
-2. **Specification Isolation:** If an author creates a new revision of an approved test case, the system increments `version_number` and sets the state to `Draft`. The existing `test_plan_cases` mapping remains pinned to the previously approved `test_case_version_id`.
-3. **Explicit Version Upgrade:** A Test Lead can selectively trigger a version upgrade for a test plan case. Upgrades overwrite `test_case_version_id` in `test_plan_cases` for *unexecuted* runs. Completed executions retain their original `test_case_version_id` reference forever.
-4. **Custom fields aren't frozen into results:** custom field values belong to the test case itself (they aren't versioned), and results don't record them. A result shows the case's current values. (A `custom_fields_snapshot` column was planned for this but never used, and was dropped in migration `006_drop_unused_columns`.)
+1. **Pinning:** adding a case to a plan creates a `test_plan_cases` row that pins `(test_plan_id, test_case_id, test_case_version_id)`. Only cases whose latest version is APPROVED can be added, unless the project setting `allow_draft_plan_linking` is true. DEPRECATED cases can never be added.
+2. **Editing an approved case** ("Edit") creates a new DRAFT version (`version_number` + 1) that copies the latest version's content. Plans stay pinned to the approved version, so Execute mode keeps showing it.
+3. **Approving re-pins:** approving a draft, or restoring a deprecated case, moves the pin to that version in every **ACTIVE** plan. LOCKED and ARCHIVED plans keep their pin. Old results keep their step results, which reference the old version's steps; versions are never deleted while results use them.
+4. **Custom fields aren't frozen into results:** custom field values belong to the case itself, aren't versioned, and results don't record them. A result shows the case's current values. (A `custom_fields_snapshot` column was planned for this but never used, and was dropped in migration `006_drop_unused_columns`.)
+5. **Removing a case from a plan:**
+   - A case with no results is unlinked.
+   - A case with results is **retired** after a confirmation: the link gets `removed_at`/`removed_by` instead of being deleted. Earlier runs keep showing the case where it has a result, read-only.
+   - Re-adding it creates a fresh link, and the case can then be tested again, even in older runs.
 
-### 2.4 Operational Restrictions on Closed Entities
+### 2.4 Closed Runs & Locked Plans
 
-- **Closed Builds & Locked Plans:** If a `Build` is set to `Closed` or a `TestPlan` is set to `Locked` / `Archived`, the application server enforces a strict write block.
-- **HTTP Error Contract:** Any `POST`, `PUT`, or `DELETE` mutation targeting executions against a locked plan or closed build immediately terminates with **HTTP 422 Unprocessable Entity** carrying error codes `PLAN_LOCKED` or `BUILD_CLOSED`.
+- Recording a result in a CLOSED run, or in a LOCKED or ARCHIVED plan, fails with **HTTP 422** `BUILD_CLOSED` / `PLAN_LOCKED`. Results can't be edited or deleted at all.
+- A run closes itself the first time every case in its plan has a result; it can be reopened, and won't auto-close again.
 
-### 2.5 Retention, Archival & Attachment Storage
+### 2.5 Retention & Attachments
 
-- **Execution History Retention:** Execution data remains active for a default threshold of **365 days** (configurable per project/system). Administrative batch routines clean up older executions while preserving high-level aggregate pass/fail metrics.
-- **Audit Logs:** The `audit_logs` table is an append-only ledger with **no automatic deletion**. Deletions can only be executed by a System Administrator.
-- **Binary & Log Storage Abstraction:** Large log outputs, stack traces, and test attachments are stored **out-of-band** (not as SQL text/BLOB columns).
-  - **Local / Zero-Config (PGlite):** Stored on the local filesystem (`/var/app/data/attachments/`).
-  - **Production (PostgreSQL):** Stored via S3 abstraction API (AWS S3, MinIO, or Cloudflare R2).
+- **Results are kept forever.** The planned 365-day purge isn't built.
+- **Audit logs** are append-only with no automatic deletion, enforced by database triggers (RFC 04 §5).
+- **Logs and attachments:** failure messages and stack traces are stored as text on the result row. Attachments (screenshots, files) and out-of-band storage aren't built (RFC 03 §5).
 
 ---
 
-## 3. Comprehensive Relational Schema & Data Dictionary
+## 3. Relational Schema & Data Dictionary
 
-### 3.1 Entity Relationship Diagram (ERD)
+The migrations in `packages/db/src/migrations/` are the source of truth; this section summarizes them as of migration `006`. Column types are as stored: text ids, ISO-timestamp strings, and some booleans as integer 0/1 (§4.3).
+
+### 3.1 Entity Relationship Diagram
 
 ```mermaid
 erDiagram
     projects ||--o{ test_suites : contains
     projects ||--o{ test_cases : contains
     projects ||--o{ test_plans : owns
-    projects ||--o{ custom_field_definitions : scopes
+    projects ||--o{ custom_field_definitions : "project-scoped fields"
+    projects ||--o{ api_tokens : binds
+    projects ||--o{ report_schedules : owns
 
     test_suites ||--o{ test_suites : parent_child
     test_suites ||--o{ test_cases : groups
 
-    test_cases ||--o{ test_case_versions : tracks
+    test_cases ||--o{ test_case_versions : versions
     test_case_versions ||--o{ test_steps : contains
     test_case_versions ||--o{ test_plan_cases : pinned_in
 
-    test_plans ||--o{ builds : includes
+    test_plans ||--o{ builds : "test runs"
     test_plans ||--o{ test_plan_cases : selects
 
-    builds ||--o{ executions : targets
-    test_plan_cases ||--o{ executions : logs
+    builds ||--o{ executions : results
+    test_plan_cases ||--o{ executions : results
+    executions ||--o{ execution_steps : "step results"
+    test_steps ||--o{ execution_steps : refers
 
-    executions ||--o{ execution_steps : records
+    custom_field_definitions ||--o{ custom_field_options : options
+    custom_field_definitions ||--o{ custom_field_values : values
 
-    custom_field_definitions ||--o{ custom_field_options : defines
-    custom_field_definitions ||--o{ custom_field_values : instances
-
+    users ||--o{ user_roles : "global role"
+    users ||--o{ user_project_roles : "project roles"
+    users ||--o{ user_permission_overrides : overrides
+    users ||--o{ sessions : "sign-ins"
     roles ||--o{ role_permissions : grants
     permissions ||--o{ role_permissions : key
-    roles ||--o{ user_project_roles : assigned
-
-    projects ||--o{ user_project_roles : context
-    projects ||--o{ user_permission_overrides : context
+    permissions ||--o{ user_permission_overrides : key
 ```
 
----
+### 3.2 Tables
 
-### 3.2 SQL DDL Specifications & Tables Data Dictionary
+#### Specification
 
-#### 3.2.1 Core Test Specification Tables
+| Table | Key columns | Notes |
+| :--- | :--- | :--- |
+| `projects` | `name`, `prefix` (unique), `description`, `settings` (JSON text) | `settings.allow_draft_plan_linking`. The prefix is locked once the project has cases. |
+| `test_suites` | `project_id`, `parent_suite_id` (null = top level), `name`, `description`, `position`, `path` | `path` is a materialized path of ids, used to find subtrees. FKs are RESTRICT; deleting is done in order by the repository (§7.4). |
+| `test_cases` | `project_id`, `test_suite_id`, `external_id`, `title`, `priority`, `execution_type` | `UNIQUE (project_id, external_id)`. External ids are `PREFIX-n`. Priority is `HIGH`/`MEDIUM`/`LOW` (new cases default to MEDIUM in the app); the column default is still `HIGH`. |
+| `test_case_versions` | `test_case_id`, `version_number`, `status`, `summary`, `preconditions`, `author_id`, `reviewer_id` | `UNIQUE (test_case_id, version_number)`. Status is `DRAFT`, `APPROVED` or `DEPRECATED`. Cascades from `test_cases`. |
+| `test_steps` | `test_case_version_id`, `step_number`, `action`, `expected_result`, `execution_type` | `UNIQUE (test_case_version_id, step_number)`. Cascades from versions. |
 
-```sql
--- Projects Table
-CREATE TABLE projects (
-    id VARCHAR(36) NOT NULL PRIMARY KEY, -- UUIDv7
-    name VARCHAR(255) NOT NULL,
-    prefix VARCHAR(50) NOT NULL UNIQUE, -- e.g. 'TL', 'CORE'
-    description TEXT,
-    settings TEXT NOT NULL DEFAULT '{}', -- JSON configuration object
-    created_at VARCHAR(30) NOT NULL, -- ISO 8601 UTC
-    updated_at VARCHAR(30) NOT NULL
-);
+#### Execution
 
--- Recursive Test Suites Table
-CREATE TABLE test_suites (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-    parent_suite_id VARCHAR(36) REFERENCES test_suites(id) ON DELETE RESTRICT,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    position INT NOT NULL DEFAULT 0,
-    path VARCHAR(1000) NOT NULL, -- Materialized path e.g. '/root_uuid/child_uuid'
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL
-);
-CREATE INDEX idx_test_suites_project ON test_suites(project_id);
-CREATE INDEX idx_test_suites_parent ON test_suites(parent_suite_id);
-CREATE INDEX idx_test_suites_path ON test_suites(path);
+| Table | Key columns | Notes |
+| :--- | :--- | :--- |
+| `test_plans` | `project_id`, `name`, `description`, `status` | Status is `ACTIVE`, `LOCKED` or `ARCHIVED`. |
+| `builds` (test runs) | `test_plan_id`, `name`, `description`, `status`, `release_date` | `UNIQUE (test_plan_id, name)`. Status is `OPEN` or `CLOSED`. |
+| `test_plan_cases` | `test_plan_id`, `test_case_id`, `test_case_version_id`, `position`, `removed_at`, `removed_by` | Partial unique index `(test_plan_id, test_case_id) WHERE removed_at IS NULL`: one active link per case per plan, any number of retired ones. |
+| `executions` (results) | `build_id`, `test_plan_case_id`, `tester_id`, `status`, `verdict`, `execution_duration_ms`, `notes`, `failure_message`, `stack_trace`, `environment` (JSON), `runner` (JSON: name, run id, job, commit SHA, URL), `source` (`UI`/`API`), `execution_timestamp` | Verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `RETEST_REQUIRED`, `KNOWN_ISSUE`. Status: `COMPLETED` (default), `IN_PROGRESS`, `ABORTED`. Duration is null for manual results. `tester_id` is the user or API token that recorded it. |
+| `execution_steps` | `execution_id`, `test_step_id`, `step_number`, `verdict`, `actual_result` | Step verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `UNTESTED`. `test_step_id` is RESTRICT, so steps with results are kept. |
 
--- Test Cases Master Table
-CREATE TABLE test_cases (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-    test_suite_id VARCHAR(36) NOT NULL REFERENCES test_suites(id) ON DELETE RESTRICT,
-    external_id VARCHAR(100) NOT NULL, -- e.g. 'TL-101'
-    title VARCHAR(255) NOT NULL,
-    priority VARCHAR(10) NOT NULL DEFAULT 'HIGH' CHECK (priority IN ('HIGH', 'MEDIUM', 'LOW', 'CRITICAL', 'P1', 'P2', 'P3', 'P4')),
-    execution_type VARCHAR(20) NOT NULL DEFAULT 'MANUAL' CHECK (execution_type IN ('MANUAL', 'AUTOMATED')),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_test_case_external UNIQUE (project_id, external_id)
-);
-CREATE INDEX idx_test_cases_suite ON test_cases(test_suite_id);
+#### Custom fields
 
--- Test Case Versions Table
-CREATE TABLE test_case_versions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    test_case_id VARCHAR(36) NOT NULL REFERENCES test_cases(id) ON DELETE CASCADE,
-    version_number INT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'IN_REVIEW', 'APPROVED', 'DEPRECATED')),
-    summary TEXT,
-    preconditions TEXT,
-    author_id VARCHAR(36) NOT NULL,
-    reviewer_id VARCHAR(36),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_case_version UNIQUE (test_case_id, version_number)
-);
-CREATE INDEX idx_case_versions_lookup ON test_case_versions(test_case_id, status);
+| Table | Key columns | Notes |
+| :--- | :--- | :--- |
+| `custom_field_definitions` | `project_id` (null = global), `entity_type`, `name`, `field_label`, `field_type`, `is_required`, `default_value`, `validation_regex` | Entity types: `TestCase`, `TestSuite`. Field types: `TEXT`, `NUMBER`, `CHECKBOX`, `DATE`, `SINGLE_SELECT`, `MULTI_SELECT`. Names are unique per scope (two partial unique indexes: global, and per project). |
+| `custom_field_options` | `custom_field_definition_id`, `option_label`, `option_value`, `position` | For the select types. |
+| `custom_field_values` | `custom_field_definition_id`, `entity_type`, `entity_id`, `string_value`, `number_value`, `boolean_value`, `date_value`, `json_value` | One typed column per value; `json_value` holds MULTI_SELECT arrays. |
 
--- Test Steps Table
-CREATE TABLE test_steps (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    test_case_version_id VARCHAR(36) NOT NULL REFERENCES test_case_versions(id) ON DELETE CASCADE,
-    step_number INT NOT NULL,
-    action TEXT NOT NULL,
-    expected_result TEXT NOT NULL,
-    execution_type VARCHAR(20) NOT NULL DEFAULT 'MANUAL' CHECK (execution_type IN ('MANUAL', 'AUTOMATED')),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_step_order UNIQUE (test_case_version_id, step_number)
-);
-```
+#### Users, access and administration
 
-#### 3.2.2 Test Execution Tables
+| Table | Key columns | Notes |
+| :--- | :--- | :--- |
+| `users` | `username`, `email` (both unique), `password_hash`, `status`, `must_change_password`, `failed_login_count`, `locked_until` | Status `ACTIVE` or `DISABLED`. |
+| `user_roles` | `user_id`, `role` | The user's global role, by role name. |
+| `user_project_roles` | `user_id`, `project_id`, `role` | A role in one project, by role name; replaces the global role there. |
+| `roles`, `permissions`, `role_permissions` | role `name`, `description`, `is_system_role`; `permission_key`, `module` | The editable role templates and the permission registry (seeded from `packages/core/src/rbac/registry.ts`). |
+| `user_permission_overrides` | `user_id`, `project_id` (null = global), `permission_id`, `is_granted` | Per-user grants and denials. |
+| `sessions` | `user_id`, `created_at`, `expires_at`, `revoked_at` | Server-side sign-ins (RFC 04 §4.1). |
+| `api_tokens` | `project_id`, `name`, `token_prefix`, `token_hash` (unique), `capabilities` (JSON), `created_by`, `expires_at`, `is_revoked`, `last_used_at` | RFC 04 §4.2. |
+| `audit_logs` | `actor_id`, `actor_type`, `action`, `resource_type`, `resource_id`, `project_id`, `diff`, `ip_address`, `user_agent` | Append-only (RFC 04 §5). |
+| `system_settings` | `key`, `value` | SMTP settings (the password encrypted) and the public app address. |
+| `report_schedules` | `project_id`, `name`, `sections` (JSON), `recipients`, `frequency`, `weekday`, `time_of_day`, `timezone`, `only_when_new_run`, `enabled`, `next_run_at`, `last_*`, `created_by` | Scheduled report emails. |
+| `last_email` | `subject`, `recipients`, `html`, `text_body`, `status`, `error` | The most recent email only, for admins to review. |
 
-```sql
--- Test Plans Table
-CREATE TABLE test_plans (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'LOCKED', 'ARCHIVED')),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL
-);
-CREATE INDEX idx_test_plans_project ON test_plans(project_id, status);
-
--- Builds Table
-CREATE TABLE builds (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    test_plan_id VARCHAR(36) NOT NULL REFERENCES test_plans(id) ON DELETE RESTRICT,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
-    release_date VARCHAR(30),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_build_plan_name UNIQUE (test_plan_id, name)
-);
-
--- Test Plan Cases Mapping Table (Pinned Versions)
-CREATE TABLE test_plan_cases (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    test_plan_id VARCHAR(36) NOT NULL REFERENCES test_plans(id) ON DELETE RESTRICT,
-    test_case_id VARCHAR(36) NOT NULL REFERENCES test_cases(id) ON DELETE RESTRICT,
-    test_case_version_id VARCHAR(36) NOT NULL REFERENCES test_case_versions(id) ON DELETE RESTRICT,
-    position INT NOT NULL DEFAULT 0,
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_plan_case UNIQUE (test_plan_id, test_case_id)
-);
-
--- Executions Table (Immutable Historical Runs)
-CREATE TABLE executions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    build_id VARCHAR(36) NOT NULL REFERENCES builds(id) ON DELETE RESTRICT,
-    test_plan_case_id VARCHAR(36) NOT NULL REFERENCES test_plan_cases(id) ON DELETE RESTRICT,
-    tester_id VARCHAR(36) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'COMPLETED' CHECK (status IN ('UNTESTED', 'IN_PROGRESS', 'COMPLETED', 'ABORTED')),
-    verdict VARCHAR(50) NOT NULL CHECK (verdict IN ('PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE')),
-    execution_duration_ms INT DEFAULT 0,
-    notes TEXT,
-    execution_timestamp VARCHAR(30) NOT NULL,
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL
-);
-CREATE INDEX idx_executions_build_case ON executions(build_id, test_plan_case_id);
-CREATE INDEX idx_executions_verdict ON executions(verdict);
-CREATE INDEX idx_executions_timestamp ON executions(execution_timestamp);
-
--- Execution Steps Table
-CREATE TABLE execution_steps (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    execution_id VARCHAR(36) NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
-    test_step_id VARCHAR(36) NOT NULL REFERENCES test_steps(id) ON DELETE RESTRICT,
-    step_number INT NOT NULL,
-    verdict VARCHAR(50) NOT NULL CHECK (verdict IN ('PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'UNTESTED')),
-    actual_result TEXT,
-    created_at VARCHAR(30) NOT NULL
-);
-CREATE INDEX idx_exec_steps_run ON execution_steps(execution_id);
-```
-
-#### 3.2.3 Admin & Extensibility Tables
-
-```sql
--- Audit Logs Table
-CREATE TABLE audit_logs (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    entity_type VARCHAR(50) NOT NULL,
-    entity_id VARCHAR(36) NOT NULL,
-    action VARCHAR(50) NOT NULL, -- e.g. 'CREATE', 'UPDATE', 'EXECUTE', 'ROLE_CHANGE'
-    actor_id VARCHAR(36) NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}', -- JSON payload of change diff
-    created_at VARCHAR(30) NOT NULL
-);
-CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
-CREATE INDEX idx_audit_actor ON audit_logs(actor_id);
-
--- Custom Field Definitions
-CREATE TABLE custom_field_definitions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) REFERENCES projects(id) ON DELETE RESTRICT, -- NULL = System Global
-    entity_type VARCHAR(50) NOT NULL CHECK (entity_type IN ('TestCaseVersion', 'TestSuite', 'Execution', 'Project')),
-    name VARCHAR(100) NOT NULL,
-    field_label VARCHAR(255) NOT NULL,
-    field_type VARCHAR(30) NOT NULL CHECK (field_type IN ('STRING', 'NUMBER', 'BOOLEAN', 'DATE', 'SINGLE_SELECT', 'MULTI_SELECT', 'MARKDOWN_TEXT')),
-    is_required BOOLEAN NOT NULL DEFAULT 0,
-    default_value TEXT,
-    validation_regex VARCHAR(255),
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_custom_field_name UNIQUE (project_id, entity_type, name)
-);
-
--- Custom Field Dropdown Options
-CREATE TABLE custom_field_options (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    custom_field_definition_id VARCHAR(36) NOT NULL REFERENCES custom_field_definitions(id) ON DELETE CASCADE,
-    option_label VARCHAR(255) NOT NULL,
-    option_value VARCHAR(255) NOT NULL,
-    position INT NOT NULL DEFAULT 0
-);
-
--- Custom Field Normalized Storage
-CREATE TABLE custom_field_values (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    custom_field_definition_id VARCHAR(36) NOT NULL REFERENCES custom_field_definitions(id) ON DELETE RESTRICT,
-    entity_type VARCHAR(50) NOT NULL,
-    entity_id VARCHAR(36) NOT NULL,
-    string_value TEXT,
-    number_value REAL,
-    boolean_value BOOLEAN,
-    date_value VARCHAR(30),
-    json_value TEXT, -- Used for MULTI_SELECT array or composite data
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_field_value_entity UNIQUE (custom_field_definition_id, entity_type, entity_id)
-);
-CREATE INDEX idx_field_values_lookup ON custom_field_values(entity_type, entity_id);
-
--- RBAC Roles
-CREATE TABLE roles (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    is_system_role BOOLEAN NOT NULL DEFAULT 0,
-    created_at VARCHAR(30) NOT NULL,
-    updated_at VARCHAR(30) NOT NULL
-);
-
--- Permissions Register
-CREATE TABLE permissions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    permission_key VARCHAR(100) NOT NULL UNIQUE, -- e.g. 'SPEC_EDIT', 'RUN_EXECUTE'
-    description TEXT,
-    module VARCHAR(50) NOT NULL
-);
-
--- Role-Permissions Junction
-CREATE TABLE role_permissions (
-    role_id VARCHAR(36) NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    permission_id VARCHAR(36) NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-    PRIMARY KEY (role_id, permission_id)
-);
-
--- User Project Role Assignments
-CREATE TABLE user_project_roles (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL,
-    project_id VARCHAR(36) REFERENCES projects(id) ON DELETE CASCADE, -- NULL = System-wide role
-    role_id VARCHAR(36) NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
-    created_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_user_proj_role UNIQUE (user_id, project_id, role_id)
-);
-
--- Granular Direct User Permission Overrides
-CREATE TABLE user_permission_overrides (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL,
-    project_id VARCHAR(36) REFERENCES projects(id) ON DELETE CASCADE, -- NULL = System-wide
-    permission_id VARCHAR(36) NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-    is_granted BOOLEAN NOT NULL, -- 1 = EXPLICIT GRANT, 0 = EXPLICIT REVOKE
-    created_at VARCHAR(30) NOT NULL,
-    CONSTRAINT uq_user_perm_override UNIQUE (user_id, project_id, permission_id)
-);
-
--- Key-Value System Settings Table
-CREATE TABLE system_settings (
-    key VARCHAR(100) NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL, -- JSON stringified value
-    description TEXT,
-    updated_at VARCHAR(30) NOT NULL
-);
-```
+`kysely_migration` and `kysely_migration_lock` record which migrations have run.
 
 ---
 
 ## 4. Database Engine: Single Postgres-Compatible Dialect (PGlite + PostgreSQL)
 
-*(Amended 2026-09-11 -- originally titled "Dual-Driver Database Normalization (SQLite + PostgreSQL)"; see the amendment note at the top of this document.)*
-
 ### 4.1 Why one dialect instead of two
 
-The original design ran two independent SQL engines end to end: `better-sqlite3` (a native Node binding) for local/offline use, and PostgreSQL for production, with application code written against a lowest-common-denominator dialect so both would behave identically. In practice, `better-sqlite3`'s prebuilt native binary is tied to the host's glibc version and Node ABI, and rebuilding it from source requires a C++ toolchain and network access to fetch Node headers -- none of which can be assumed on every contributor's machine or CI runner. That fragility, on top of the ongoing cost of validating every schema change against two real SQL dialects, wasn't worth it for the benefit it bought.
+The original design ran two SQL engines end to end: `better-sqlite3` (a native Node binding) for local use, and PostgreSQL for production, with code written to a lowest-common-denominator dialect. In practice, `better-sqlite3`'s prebuilt binary is tied to the host's glibc version and Node ABI, and rebuilding it needs a C++ toolchain and network access, none of which can be assumed on every machine or CI runner. That fragility, plus validating every schema change against two dialects, wasn't worth it.
 
-`@electric-sql/pglite` (a WASM build of real PostgreSQL) removes the dilemma: it's a genuine Postgres engine, so it needs no native binary and no separate server process, yet speaks the exact same SQL dialect as production PostgreSQL. There is now exactly one SQL dialect in this system:
+`@electric-sql/pglite` (a WASM build of real PostgreSQL) removes the dilemma: a genuine Postgres engine with no native binary and no server process. There's one SQL dialect:
 
-- **Local / offline / CI:** an ephemeral, zero-config `PGlite` instance, created in-process with no connection string.
-- **Production / team deployments:** a real PostgreSQL server, connected to via a standard connection string (`DATABASE_URL`).
+- **Development and tests:** an in-memory PGlite instance (`createDbClient()` with no connection string; `DATABASE_URL=memory` for the server).
+- **Production:** a real PostgreSQL server (`DATABASE_URL=postgres://...`).
 
-Both paths run through the same Kysely `PostgresDialect`-compatible interface and the same migrations, with no per-dialect branching in application or migration code.
+Both go through Kysely and the same migrations, with no per-dialect branching. The production build has been run against PostgreSQL 17, and CI does so on every push.
 
-### 4.2 Driver Abstraction Layer (Kysely Query Builder)
+### 4.2 Query Layer (Kysely) and Migrations
 
-All application database interactions execute through Kysely (a strongly typed TypeScript SQL query builder). Raw SQL strings are avoided in application code except where Kysely has no builder API for a construct (e.g. trigger/function DDL in migrations), and even there the SQL is standard PostgreSQL syntax with no dialect branching.
+All database access goes through Kysely, a typed TypeScript query builder. Raw SQL appears only where Kysely has no builder for it: trigger DDL, window functions in reporting queries, and advisory locks.
+
+Migrations are tracked in `kysely_migration` and applied at startup (`migrateToLatest`), under a Postgres advisory lock so concurrent starts are safe. A schema change is a new migration file with `up` and `down`; a migration that has shipped is never edited.
 
 ### 4.3 Type & Column Conventions
 
-With a single dialect, these are conventions chosen for clarity and portability of the schema, not constraints imposed by needing to satisfy two engines at once:
-
-| Aspect | Convention | Notes |
-| :--- | :--- | :--- |
-| **Primary Keys** | `VARCHAR(36)` storing a **UUIDv7** string. | Monotonic, time-ordered, safe to generate client-side. A native `UUID` column type would also work under Postgres/PGlite; `VARCHAR(36)` was kept for simplicity and to match the original design. |
-| **Timestamps** | `VARCHAR(30)` ISO 8601 UTC strings (`YYYY-MM-DDTHH:mm:ss.sssZ`). | Could move to native `TIMESTAMPTZ` now that only one engine is in play; not yet done -- flagged as a possible future cleanup rather than required. |
-| **ENUM-like fields** | **String constants** with SQL `CHECK` constraints, not native `CREATE TYPE ... AS ENUM`. | Kept for schema portability and because `ALTER TYPE ... ADD VALUE` migrations are more awkward than adjusting a `CHECK` constraint; not a dual-driver requirement anymore, just a still-reasonable default. |
-| **JSON Columns** | Serialized JSON strings via the driver abstraction layer (not native `JSONB` operators in application queries). | Postgres/PGlite's native `JSONB` type and `->>`/`@>` operators are available and could be adopted directly; not yet done. |
-| **Boolean Values** | Native `BOOLEAN` (`TRUE`/`FALSE`). | No `0`/`1` integer-flag translation needed now that SQLite is gone. |
-| **Foreign Keys** | Standard relational `ON DELETE RESTRICT` / `ON DELETE CASCADE` behavior, enforced natively by the engine. | No connection-level `PRAGMA foreign_keys = ON;` step needed (that was SQLite-specific); Postgres/PGlite enforce FKs by default. |
+| Aspect | Convention |
+| :--- | :--- |
+| **Primary keys** | `VARCHAR(36)` UUID strings (§1). |
+| **Timestamps** | `VARCHAR(30)` ISO 8601 UTC strings. Native `TIMESTAMPTZ` would work; not done. |
+| **Enum-like fields** | Plain strings. The allowed values are checked in application code (`packages/core`, route validation), not by database `CHECK` constraints. |
+| **JSON** | Stored as text and parsed in code; no `JSONB` operators. |
+| **Booleans** | Mixed: older tables use integer 0/1 (`roles.is_system_role`, `api_tokens.is_revoked`, `custom_field_definitions.is_required`, `custom_field_values.boolean_value`, `user_permission_overrides.is_granted`); newer ones use native `BOOLEAN`. |
+| **Foreign keys** | Mostly `ON DELETE RESTRICT`, so deletes happen in order in code (§7.4); versions, steps and step results `CASCADE`. |
 
 ---
 
-## 5. Dynamic Custom Field Engine & Metadata Architecture
+## 5. Custom Field Engine
 
-### 5.1 Storage Design Analysis & Decision
+### 5.1 Storage Design
 
-Three storage architectures were evaluated for dynamic administrator-defined attributes:
+Three storage designs were considered:
+1. **Pure entity-attribute-value:** heavy joins, hard to filter.
+2. **A JSON column:** flexible, but no validation or indexed search.
+3. **Chosen hybrid:**
+   - Typed definitions and options tables.
+   - A typed values table with one column per value type.
+   - Validation in code (`packages/core/src/custom-fields`).
 
-1. **Pure Entity-Attribute-Value (EAV):** High query overhead with multi-table JOINs; difficult to filter efficiently.
-2. **Pure JSON Column:** Schema-less flexibility, but lacks constraint validation and indexed scalar search compared to typed columns.
-3. **Chosen Hybrid Architecture:**
-   - Definitions (`custom_field_definitions`) and Dropdown Options (`custom_field_options`) are strongly typed.
-   - Active entity values (`custom_field_values`) are stored in a typed relational table supporting indexed scalar queries (`string_value`, `number_value`, `boolean_value`, `date_value`).
-   - Results don't record custom field values (see §2.3, point 4).
+Results don't record custom field values (see §2.3, point 4).
 
-### 5.2 Supported Types & Validation Rules
+### 5.2 Types & Rules
 
-- `STRING`: Single-line text, validated via optional `validation_regex`.
-- `NUMBER`: Floating-point / double precision values.
-- `BOOLEAN`: Native `TRUE` / `FALSE`.
-- `DATE`: ISO 8601 calendar date (`YYYY-MM-DD`).
-- `SINGLE_SELECT`: Constrained to options in `custom_field_options`.
-- `MULTI_SELECT`: Array of option values stored in `json_value`.
-- `MARKDOWN_TEXT`: Multi-line rich text field.
+- `TEXT`: free text, optionally checked against a validation regex. The regex runs with a 50 ms time limit, so a pathological pattern can't freeze the server.
+- `NUMBER`: a number.
+- `CHECKBOX`: true or false. Never-set and explicitly unchecked are different (null vs `false`); filters treat both as unchecked. CHECKBOX fields can't be required.
+- `DATE`: `YYYY-MM-DD`.
+- `SINGLE_SELECT`: one of the field's options.
+- `MULTI_SELECT`: a set of the field's options.
 
----
-
-## 6. Granular RBAC & Permission Resolution Engine
-
-### 6.1 Permission Evaluation Algorithm
-
-When a user requests an operation requiring permission key $P$ on project $PR$, the engine evaluates access following strict priority ordering:
-
-```
-                          +-----------------------------------+
-                          |     Incoming Authorization Check  |
-                          |     User U, Permission P, Proj PR |
-                          +-----------------------------------+
-                                            |
-                                            v
-                          +-----------------------------------+
-                          |  Direct User Override on Proj PR? |
-                          +-----------------------------------+
-                                   /                 \
-                             YES  /                   \ NO
-                                 v                     v
-                    +-----------------------+  +-------------------------------+
-                    | Override Granted?     |  | Direct System User Override?  |
-                    +-----------------------+  +-------------------------------+
-                      /           \              /                           \
-               YES   /             \ NO    YES  /                             \ NO
-                    v               v          v                               v
-            [ALLOW ACCESS]   [DENY ACCESS] [Check Granted]           +-------------------+
-                                                                     | User Role in Proj |
-                                                                     +-------------------+
-                                                                               |
-                                                                               v
-                                                                     +-------------------+
-                                                                     | Role Has Perm P?  |
-                                                                     +-------------------+
-                                                                       /               \
-                                                                 YES  /                 \ NO
-                                                                     v                   v
-                                                               [ALLOW ACCESS]   +------------------+
-                                                                                | Check Global Role|
-                                                                                +------------------+
-                                                                                  /              \
-                                                                            YES  /                \ NO
-                                                                                v                  v
-                                                                          [ALLOW ACCESS]     [DENY ACCESS]
-```
-
-### 6.2 Precedence Order
-
-$$\text{User Project Override} \succ \text{User System Override} \succ \text{Project Role Grant} \succ \text{Global Role Grant} \succ \text{Default Deny}$$
+Behavior around definitions:
+- **Scope:** fields are defined globally by admins, for test cases or test suites. Imports can create **project-scoped** fields.
+- **Required fields:** a required field must always have a usable default. Creating a field writes its default into every existing case or suite. Making a field required fills blank values with the default.
+- **Options:** removing an option deselects it everywhere.
 
 ---
 
-## 7. Formal State Machine Specifications
+## 6. Permission Resolution
+
+Permissions are evaluated for the project a request touches. RFC 04 §3.3 has the details:
+1. **Base:** the user's project role in that project, if any, which replaces the global role there. Otherwise the global role (`user_roles`). `SYSTEM_ADMIN` means the whole registry.
+2. **Overrides:** global overrides, then the project's. The last one applied wins, so project overrides beat global ones, and overrides beat roles.
+3. **Check:** the required key, or `SYSTEM_ADMIN`; otherwise deny.
+
+API tokens use their capabilities, intersected with their issuer's current permissions in the token's project.
+
+---
+
+## 7. State Machines
 
 ### 7.1 Test Case Version Lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : Version Created
-    Draft --> In_Review : Submit for Review
-    In_Review --> Approved : Lead Sign-off
-    In_Review --> Draft : Rejection / Changes Requested
-    Approved --> Deprecated : Obsoleted by New Version / Manual Deprecation
-    Approved --> Draft : Revision (Spins up Version N+1)
-    Deprecated --> [*]
+    [*] --> Draft : Case created (or Approved, with SPEC_AUTO_APPROVE)
+    Draft --> Approved : Approve (SPEC_APPROVE; required custom fields satisfied)
+    Approved --> Deprecated : Deprecate (SPEC_APPROVE)
+    Deprecated --> Approved : Restore (SPEC_APPROVE)
+    Approved --> Draft : Edit (creates version N+1)
 ```
 
-- **Invariant:** Only `Approved` versions can be assigned to active `TestPlans` (unless `allow_draft_plan_linking` is set to true in system settings).
-- **Disallowed Transition:** Moving directly from `Draft` to `Deprecated` without sign-off is restricted.
+- Only the latest version moves through these states. A draft can't be deprecated, and a deprecated case can't be edited until it's restored.
+- DEPRECATED cases are hidden from the spec tree unless "Show deprecated" is on, and can't be added to plans. Plans that already have them keep them.
+- There's no IN_REVIEW state.
 
----
-
-### 7.2 Test Plan & Build Lifecycles
+### 7.2 Test Plan & Test Run Lifecycles
 
 ```mermaid
 stateDiagram-v2
     state TestPlan_Lifecycle {
-        [*] --> Active : Plan Creation
-        Active --> Locked : Execution Complete / Phase Freeze
-        Locked --> Active : Re-opened by Admin
-        Locked --> Archived : Terminal Storage
+        [*] --> Active : Plan created
+        Active --> Locked : Edited by PLAN_MANAGE
+        Locked --> Active
+        Active --> Archived
+        Locked --> Archived
+        Archived --> Active
     }
 
-    state Build_Lifecycle {
-        [*] --> Open : Build Deployed
-        Open --> Closed : Build Frozen / Testing Concluded
-        Closed --> Open : Re-opened by Lead
+    state TestRun_Lifecycle {
+        [*] --> Open : Run created
+        Open --> Closed : Close Run (RUN_MANAGE), or every case has a result (first time only)
+        Closed --> Open : Open Run (RUN_MANAGE)
     }
 ```
 
-- **Invariant:** When a `Build` is `Closed` or a `TestPlan` is `Locked`, any attempt to write execution results returns **HTTP 422 (`BUILD_CLOSED` / `PLAN_LOCKED`)**.
+- A plan's status can be set to any of the three in the plan editor.
+- Results can't be recorded in a closed run or a locked or archived plan (HTTP 422).
+
+### 7.3 Results
+
+Results aren't a state machine: each one is an immutable row.
+- **"Untested"** means a case has no result in that run.
+- **The latest result** for a case in a run, by `execution_timestamp` then `created_at`, is the case's verdict there. Recording another result needs `EXECUTE_OVERWRITE`, except re-sending your own latest verdict with notes.
+- **Status values:** CI can send `IN_PROGRESS` or `ABORTED`; the web app always records `COMPLETED`.
+
+### 7.4 Deleting
+
+Projects, suites, cases, plans and runs warn before deleting anything that has content: the first request returns `409` with counts, and a second with `force=true` deletes. The repositories delete in an order that satisfies the RESTRICT foreign keys:
+1. results (their step results cascade);
+2. runs;
+3. plan links;
+4. plans;
+5. custom field values;
+6. cases (their versions and steps cascade);
+7. suites, leaves first.
 
 ---
 
-### 7.3 Execution & Verdict State Machine
+## 8. Concurrency & Batch Writes
 
-```mermaid
-stateDiagram-v2
-    [*] --> Untested : Pinned to Build Run
-    Untested --> In_Progress : Tester Commences Run
-    In_Progress --> Completed : Final Verdict Submitted
-    In_Progress --> Aborted : Runner Interrupted / Manual Cancel
-    Completed --> In_Progress : Retest Initiated (New Iteration)
-```
+### 8.1 Batch Results
 
-- **Verdict Types:** `Passed`, `Failed`, `Blocked`, `Skipped`, plus optional admin custom verdicts (`Retest_Required`, `Known_Issue`).
-
----
-
-## 8. Concurrency, High-Throughput Batch Writes & Locking Design
-
-### 8.1 Parallel Ingestion Transaction Boundaries
-
-High-throughput CI/CD runners submit test execution batches via `POST /api/v1/executions/batch`. To maintain throughput while avoiding table locking deadlocks, the following transactional rules apply:
+CI sends results to `POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch`:
 
 ```
-[CI/CD Runner] ---> POST /executions/batch (Payload N=500 results)
+[CI runner] ---> POST .../executions/batch (up to 5,000 results)
                           |
                           v
         +-----------------------------------+
-        |  Validate Plan & Build States     | (Reject with 422 if Closed)
+        | Check run and plan state          | (422 if closed / locked)
+        | Validate every item               | (400 with every problem)
         +-----------------------------------+
                           |
                           v
         +-----------------------------------+
-        | Batch Fetch TestPlanCase IDs      | (Single SELECT IN query)
+        | Load the plan's cases and steps   | (bulk)
         +-----------------------------------+
                           |
                           v
         +-----------------------------------+
-        | BEGIN TRANSACTION                 |
-        | Bulk INSERT INTO executions       |
-        | Bulk INSERT INTO execution_steps  |
-        | COMMIT TRANSACTION                |
+        | BEGIN                             |
+        | auto-links, results, step results | (multi-row inserts, 500 at a time)
+        | audit row                         |
+        | COMMIT                            |
         +-----------------------------------+
 ```
 
-### 8.2 Simultaneous Updates & Optimistic Concurrency Control (OCC)
+### 8.2 Concurrent Writes
 
-When multiple automated runners or manual testers update identical execution records simultaneously:
-- Execution rows feature an auto-incrementing `version` sequence or ISO timestamp match.
-- Writes specify `WHERE id = :id AND version = :expected_version`. If zero rows are affected, the API responds with **HTTP 409 Conflict**, requiring client retry.
+- **No optimistic-concurrency versions:** results are never updated, so two testers or runners recording the same case just add two results, and the later one is the verdict.
+- **External ids:** creating cases or importing assigns them under a per-project Postgres advisory lock (`TestCaseRepository.lockExternalIds`). Concurrent creation can't produce duplicates; verified with 12 simultaneous requests on PostgreSQL.
+- **Scheduled emails:** each send is claimed with a compare-and-set update, so several server instances never send the same email twice.
