@@ -118,7 +118,7 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 }
 ```
 
-Steps without `step_number` are numbered in order. The response (`201`) is `{ "test_case": { "id", "external_id", "title", ... }, "version": { "id", "version_number": 1, "status", ... } }`.
+`priority` is one of CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM) and `execution_type` MANUAL or AUTOMATED (default MANUAL); anything else is `400 INVALID_REQUEST`. Steps without `step_number` are numbered in order. The response (`201`) is `{ "test_case": { "id", "external_id", "title", ... }, "version": { "id", "version_number": 1, "status", ... } }`.
 
 ### 2.2 Example: recording one result
 

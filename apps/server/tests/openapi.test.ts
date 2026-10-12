@@ -39,7 +39,7 @@ describe('OpenAPI spec and docs page', () => {
     expect((await app.inject({ url: '/docs/yaml' })).statusCode).toBe(200);
   });
 
-  it('is an OpenAPI 3.1 document whose references all resolve, and documents the first area completely', async () => {
+  it('is an OpenAPI 3.1 document whose references all resolve, and documents every route done so far', async () => {
     const spec = body(await app.inject({ url: '/docs/json' }));
     expect(spec.openapi).toBe('3.1.0');
     expect(spec.info.title).toBe('Testify API');
@@ -85,11 +85,63 @@ describe('OpenAPI spec and docs page', () => {
         'DELETE /api/v1/runs/{runId}',
         'POST /api/v1/runs/{runId}/results',
         'POST /api/v1/runs/{runId}/results/batch',
+        // Stage 2: specification and plans.
+        'GET /api/v1/projects/{projectId}/spec-tree',
+        'POST /api/v1/projects/{projectId}/move',
+        'POST /api/v1/projects/{projectId}/suites',
+        'PATCH /api/v1/suites/{suiteId}',
+        'DELETE /api/v1/suites/{suiteId}',
+        'POST /api/v1/projects/{projectId}/cases',
+        'PATCH /api/v1/cases/{caseId}',
+        'DELETE /api/v1/cases/{caseId}',
+        'GET /api/v1/cases/{caseId}/versions/latest',
+        'POST /api/v1/cases/{caseId}/versions',
+        'PATCH /api/v1/versions/{versionId}',
+        'POST /api/v1/versions/{versionId}/approve',
+        'POST /api/v1/versions/{versionId}/deprecate',
+        'POST /api/v1/versions/{versionId}/restore',
+        'GET /api/v1/cases/{caseId}/custom-fields',
+        'PUT /api/v1/cases/{caseId}/custom-fields/{definitionId}',
+        'DELETE /api/v1/cases/{caseId}/custom-fields/{definitionId}',
+        'GET /api/v1/suites/{suiteId}/custom-fields',
+        'PUT /api/v1/suites/{suiteId}/custom-fields/{definitionId}',
+        'DELETE /api/v1/suites/{suiteId}/custom-fields/{definitionId}',
+        'GET /api/v1/projects/{projectId}/case-search/fields',
+        'POST /api/v1/projects/{projectId}/case-search',
+        'GET /api/v1/plans/{planId}/cases',
+        'POST /api/v1/plans/{planId}/cases',
+        'DELETE /api/v1/plans/{planId}/cases/{caseId}',
+        'POST /api/v1/plans/{planId}/suites/{suiteId}/cases',
+        'DELETE /api/v1/plans/{planId}/suites/{suiteId}/cases',
       ])
     );
+    expect(operations).toHaveLength(45);
     // Sign-in needs no credential; everything else does.
     expect(spec.paths['/api/v1/auth/login'].post.security).toEqual([]);
     expect(spec.security).toEqual([{ bearerAuth: [] }, { sessionCookie: [] }]);
+  });
+
+  it('lists the allowed values of a field in its description, not only in the schema', async () => {
+    const spec = body(await app.inject({ url: '/docs/json' }));
+    const resultBody = spec.paths['/api/v1/runs/{runId}/results'].post.requestBody.content['application/json'].schema;
+    expect(resultBody.properties.verdict.enum).toEqual(['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE']);
+    expect(resultBody.properties.verdict.description).toBe('One of: PASSED, FAILED, BLOCKED, SKIPPED, RETEST_REQUIRED, KNOWN_ISSUE.');
+    const caseBody = spec.paths['/api/v1/projects/{projectId}/cases'].post.requestBody.content['application/json'].schema;
+    expect(caseBody.properties.priority.description).toBe('Default MEDIUM. One of: CRITICAL, HIGH, MEDIUM, LOW.');
+  });
+
+  it("refuses a case priority or execution type the app doesn't know", async () => {
+    const created = await call('POST', `/api/v1/projects/${seed.projectId}/cases`, { test_suite_id: seed.suiteId, title: 'Typed', priority: 'URGENT', execution_type: 'ROBOT' });
+    expect(created.statusCode).toBe(400);
+    expect(body(created)).toMatchObject({
+      code: 'INVALID_REQUEST',
+      invalid_params: [
+        { name: 'priority', reason: 'must be one of: CRITICAL, HIGH, MEDIUM, LOW' },
+        { name: 'execution_type', reason: 'must be one of: MANUAL, AUTOMATED' },
+      ],
+    });
+    expect((await call('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { priority: 'P1' })).statusCode).toBe(400);
+    expect((await call('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { priority: 'CRITICAL', execution_type: 'AUTOMATED' })).statusCode).toBe(200);
   });
 
   it('refuses a request that does not match its schema with problem details naming each field', async () => {

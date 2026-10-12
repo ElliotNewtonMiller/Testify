@@ -6,6 +6,7 @@ import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } f
 import { CaseFilterService } from '../services/caseFilterService.js';
 
 import { sendError, reportErrorParams } from '../errors.js';
+import { searchFieldsSchema, searchSchema } from '../openapi/areas/spec.js';
 /**
  * Case search & filter routes. The evaluation itself lives in CaseFilterService (shared with
  * the reports, which accept the same `filter`). The web UI calls exactly these routes (it
@@ -25,7 +26,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
 
   app.get(
     '/api/v1/projects/:projectId/case-search/fields',
-    { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
+    { schema: searchFieldsSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {
@@ -37,7 +38,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
 
   app.post(
     '/api/v1/projects/:projectId/case-search',
-    { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
+    { schema: searchSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {

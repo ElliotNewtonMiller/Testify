@@ -14,6 +14,7 @@ import { sendCaseVersionLockedError,
 import { validateStepsInput } from '../services/stepValidation.js';
 import type { InvalidParam } from '../services/resultValidation.js';
 import { requestOrigin, type RequestOrigin } from '../audit.js';
+import * as S from '../openapi/areas/spec.js';
 
 /**
  * Create/edit/delete for Test Suites and Test Cases (including versioned content:
@@ -65,7 +66,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.post(
     '/api/v1/projects/:projectId/suites',
-    { preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
+    { schema: S.createSuiteSchema, preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
@@ -105,7 +106,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.patch(
     '/api/v1/suites/:suiteId',
-    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    { schema: S.updateSuiteSchema, preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { suiteId } = request.params as { suiteId: string };
@@ -158,7 +159,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.delete(
     '/api/v1/suites/:suiteId',
-    { preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
+    { schema: S.deleteSuiteSchema, preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { suiteId } = request.params as { suiteId: string };
@@ -204,7 +205,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.post(
     '/api/v1/projects/:projectId/cases',
-    { preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
+    { schema: S.createCaseSchema, preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
@@ -223,6 +224,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       }
       const titleError = nameProblem(title, 'title');
       if (titleError) return sendError(reply, 400, titleError, { code: 'INVALID_NAME' });
+      const fieldProblems = caseFieldProblems({ priority, execution_type: executionType });
+      if (fieldProblems.length > 0) return sendCaseFieldProblems(reply, fieldProblems);
       // Steps are checked before anything is created (a bad step used to fail half-way, as a 500).
       const checkedSteps = steps === undefined || steps === null ? { steps: [] } : validateStepsInput(steps);
       if ('invalid' in checkedSteps) return sendInvalidSteps(reply, checkedSteps.invalid, request.url);
@@ -298,7 +301,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.patch(
     '/api/v1/cases/:caseId',
-    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    { schema: S.updateCaseSchema, preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { caseId } = request.params as { caseId: string };
@@ -313,6 +316,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         const titleError = nameProblem(title, 'title');
         if (titleError) return sendError(reply, 400, titleError, { code: 'INVALID_NAME' });
       }
+      const fieldProblems = caseFieldProblems({ priority, execution_type: executionType });
+      if (fieldProblems.length > 0) return sendCaseFieldProblems(reply, fieldProblems);
 
       if (testSuiteId) {
         const suite = await suiteRepo.findById(testSuiteId);
@@ -344,7 +349,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.delete(
     '/api/v1/cases/:caseId',
-    { preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
+    { schema: S.deleteCaseSchema, preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { caseId } = request.params as { caseId: string };
@@ -385,7 +390,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   // one transaction. Backs Spec mode's multi-select drag; equally usable from the API.
   app.post(
     '/api/v1/projects/:projectId/move',
-    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    { schema: S.moveSchema, preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
@@ -496,7 +501,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.post(
     '/api/v1/cases/:caseId/versions',
-    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    { schema: S.createDraftSchema, preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { caseId } = request.params as { caseId: string };
@@ -541,7 +546,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.patch(
     '/api/v1/versions/:versionId',
-    { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
+    { schema: S.updateVersionSchema, preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { versionId } = request.params as { versionId: string };
@@ -587,7 +592,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   app.post(
     '/api/v1/versions/:versionId/approve',
-    { preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
+    { schema: S.approveVersionSchema, preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
       const { versionId } = request.params as { versionId: string };
@@ -661,7 +666,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   ] as const) {
     app.post(
       `/api/v1/versions/:versionId/${transition.path}`,
-      { preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
+      { schema: (transition.path === 'deprecate' ? S.deprecateVersionSchema : S.restoreVersionSchema), preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
       async (request, reply) => {
         const actor = request.user!;
         const { versionId } = request.params as { versionId: string };
@@ -681,7 +686,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
             code: 'VERSION_NOT_LATEST',
             detail: `Test Case Version (ID: ${versionId}) is not the case's latest version; only the latest version can be ${transition.to === 'DEPRECATED' ? 'deprecated' : 'restored'}.`,
             instance: request.url,
-            invalid_params: [{ name: 'version_id', reason: 'Not the latest version' }],
+            invalid_params: [{ name: 'test_case_version_id', reason: 'Not the latest version' }],
           });
         }
         if (version.status !== transition.from) {
@@ -689,7 +694,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
             code: transition.from === 'APPROVED' ? 'VERSION_NOT_APPROVED' : 'VERSION_NOT_DEPRECATED',
             detail: `Test Case Version (ID: ${versionId}) is ${version.status}, not ${transition.from}, so it cannot be ${transition.to === 'DEPRECATED' ? 'deprecated' : 'restored'}.`,
             instance: request.url,
-            invalid_params: [{ name: 'version_id', reason: `Status is ${version.status}, not ${transition.from}` }],
+            invalid_params: [{ name: 'test_case_version_id', reason: `Status is ${version.status}, not ${transition.from}` }],
           });
         }
 
@@ -738,6 +743,26 @@ const MAX_NAME_LENGTH = 255;
  * Why a suite name or case title can't be saved (blank, not text, or too long), or null. A
  * blank title used to be saved as-is, and an over-long one failed with a 500.
  */
+
+const CASE_PRIORITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const CASE_EXECUTION_TYPES = ['MANUAL', 'AUTOMATED'];
+
+/** `priority` and `execution_type` must be known values when sent (they used to be stored as-is). */
+function caseFieldProblems(fields: { priority?: unknown; execution_type?: unknown }): Array<{ name: string; reason: string }> {
+  const out: Array<{ name: string; reason: string }> = [];
+  if (fields.priority !== undefined && !CASE_PRIORITIES.includes(fields.priority as string)) {
+    out.push({ name: 'priority', reason: `must be one of: ${CASE_PRIORITIES.join(', ')}` });
+  }
+  if (fields.execution_type !== undefined && !CASE_EXECUTION_TYPES.includes(fields.execution_type as string)) {
+    out.push({ name: 'execution_type', reason: `must be one of: ${CASE_EXECUTION_TYPES.join(', ')}` });
+  }
+  return out;
+}
+
+function sendCaseFieldProblems(reply: FastifyReply, problems: Array<{ name: string; reason: string }>) {
+  return sendError(reply, 400, problems.map((p) => `${p.name} ${p.reason}`).join('; '), { code: 'INVALID_REQUEST', invalid_params: problems });
+}
+
 function nameProblem(value: unknown, field: string): string | null {
   if (typeof value !== 'string' || value.trim() === '') return `${field} can't be blank`;
   if (value.trim().length > MAX_NAME_LENGTH) return `${field} can be at most ${MAX_NAME_LENGTH} characters`;

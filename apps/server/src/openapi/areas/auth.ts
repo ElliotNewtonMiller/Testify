@@ -1,4 +1,4 @@
-import { errors, authedErrors } from '../schemas.js';
+import { errors, authedErrors, oneOf } from '../schemas.js';
 
 /** Route schemas for routes/auth.ts (tag "Sign-in"). */
 
@@ -26,7 +26,7 @@ export const loginSchema = {
       username: { type: 'string', description: 'Username or email (either field works)' },
       email: { type: 'string' },
       password: { type: 'string' },
-      session: { type: 'string', enum: ['cookie'], description: 'Use a session cookie instead of returning the token' },
+      session: oneOf(['cookie'], 'Use a session cookie instead of returning the token.'),
     },
   },
   response: {

@@ -22,7 +22,7 @@ Testify is an open-source, self-hosted test case management app meant to replace
 
 Not built:
 - Attachments (no file storage; the planned `IStorageProvider`).
-- A complete OpenAPI spec: `/docs` covers sign-in, projects, plans, runs and results so far (`docs/api_roadmap.md` step 3).
+- A complete OpenAPI spec: `/docs` covers sign-in, projects, the specification (suites, cases, versions, custom-field values, search), plans, runs and results so far; reports, email, import, export, tokens and admin are still to do (`docs/api_roadmap.md` step 3).
 - Step-level results in the web app; the API accepts them.
 
 ## Running things
@@ -171,7 +171,7 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
   - Fields are snake_case, and ids are named after their database columns (`test_plan_id`, `test_run_id`, `test_case_id`, ...). Never "build" or "execution" in a new address, field or code.
   - In the web app, take addresses from `apps/web/src/api/routes.ts`.
 - **Route schemas (OpenAPI):**
-  - A documented route has `schema` (tags, summary, params, query, body, responses) from `apps/server/src/openapi/areas/<area>.ts`; shared schemas and helpers (`wrapped`, `list`, `authedErrors`, `NO_CONTENT`, `FORCE_QUERY`, `handlerValidated`) are in `openapi/schemas.ts`. Routes without a tag stay out of the spec.
+  - A documented route has `schema` (tags, summary, params, query, body, responses) from `apps/server/src/openapi/areas/<area>.ts`; shared schemas and helpers (`wrapped`, `list`, `authedErrors`, `NO_CONTENT`, `FORCE_QUERY`, `handlerValidated`, and `oneOf` for any field limited to a set of values, which also lists them in the description) are in `openapi/schemas.ts`. Routes without a tag stay out of the spec.
   - Request schemas are enforced (bodies without type coercion; query and params with it), giving `400 INVALID_REQUEST` with `invalid_params`. Mark a body `handlerValidated` when the route checks it itself with more specific errors.
   - Response schemas never change a response (plain `JSON.stringify`). In tests every JSON response is checked against its schema, undocumented fields included; a mismatch answers 500 and prints `[openapi] ...`. When you change a route's output, change its schema.
 - **Errors:**

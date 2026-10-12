@@ -1,4 +1,4 @@
-import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, handlerValidated } from '../schemas.js';
+import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, handlerValidated, oneOf, VERDICTS, STEP_VERDICTS, RESULT_STATUSES, PLAN_STATUSES, RUN_STATUSES } from '../schemas.js';
 
 /** Route schemas for routes/projects.ts, the run list in routes/exports.ts, routes/results.ts and routes/batchExecution.ts. */
 
@@ -54,7 +54,7 @@ export const deleteProjectSchema = {
 const planFields = {
   name: { type: 'string', description: 'Trimmed; must not be blank' },
   description: nullableText,
-  status: { type: 'string', enum: ['ACTIVE', 'LOCKED', 'ARCHIVED'], description: 'Default ACTIVE' },
+  status: oneOf(PLAN_STATUSES, 'Default ACTIVE.'),
 };
 
 export const listPlansSchema = {
@@ -97,7 +97,7 @@ export const deletePlanSchema = {
 const runFields = {
   name: { type: 'string', description: 'Trimmed; must not be blank; unique within the plan' },
   description: nullableText,
-  status: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'Default OPEN. A CLOSED run takes no results.' },
+  status: oneOf(RUN_STATUSES, 'Default OPEN. A CLOSED run takes no results.'),
   release_date: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
 };
 
@@ -138,9 +138,6 @@ export const deleteRunSchema = {
 
 // ---- Results ----
 
-const VERDICTS = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE'];
-const STEP_VERDICTS = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'UNTESTED'];
-const STATUSES = ['COMPLETED', 'IN_PROGRESS', 'ABORTED'];
 
 export const recordResultSchema = {
   tags: ['Runs and results'],
@@ -154,8 +151,8 @@ export const recordResultSchema = {
     required: ['test_plan_case_id', 'verdict'],
     properties: {
       test_plan_case_id: { type: 'string', description: "The case's link to the run's plan (`test_plan_case_id` from `GET /api/v1/plans/{planId}/cases`)" },
-      verdict: { type: 'string', enum: VERDICTS },
-      status: { type: 'string', enum: STATUSES, description: 'Default COMPLETED' },
+      verdict: oneOf(VERDICTS),
+      status: oneOf(RESULT_STATUSES, 'Default COMPLETED.'),
       notes: { type: ['string', 'null'], maxLength: 20000 },
       step_results: {
         type: 'array',
@@ -166,7 +163,7 @@ export const recordResultSchema = {
           properties: {
             test_step_id: { type: 'string' },
             step_number: { type: 'integer', minimum: 1, description: "Optional; must match the step's number" },
-            verdict: { type: 'string', enum: STEP_VERDICTS },
+            verdict: oneOf(STEP_VERDICTS),
             actual_result: { type: ['string', 'null'] },
           },
         },
@@ -180,7 +177,7 @@ export const recordResultSchema = {
       required: ['result', 'run_status'],
       properties: {
         result: { $ref: 'RecordedResult#' },
-        run_status: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'CLOSED if this result just closed the run' },
+        run_status: oneOf(RUN_STATUSES, 'CLOSED if this result just closed the run.'),
       },
     },
     ...authedErrors(
@@ -242,7 +239,7 @@ const batchResultsResponse = {
         },
       },
     },
-    run_status: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'CLOSED if this batch just closed the run' },
+    run_status: oneOf(RUN_STATUSES, 'CLOSED if this batch just closed the run.'),
   },
 };
 
@@ -256,7 +253,7 @@ export const batchResultsSchema = {
   params: idParams('runId'),
   querystring: {
     type: 'object',
-    properties: { all_or_nothing: { type: 'string', enum: ['true', 'false', '1', '0'], description: 'Save everything or nothing' } },
+    properties: { all_or_nothing: oneOf(['true', 'false', '1', '0'], 'Save everything or nothing.') },
   },
   body: handlerValidated({
     type: 'object',
@@ -283,8 +280,8 @@ export const batchResultsSchema = {
           required: ['case_identifier', 'verdict'],
           properties: {
             case_identifier: caseIdentifier,
-            verdict: { type: 'string', enum: VERDICTS },
-            status: { type: 'string', enum: STATUSES, description: 'Default COMPLETED' },
+            verdict: oneOf(VERDICTS),
+            status: oneOf(RESULT_STATUSES, 'Default COMPLETED.'),
             duration_ms: { type: 'integer', minimum: 0 },
             executed_at: { type: 'string', description: 'ISO 8601; default now' },
             notes: { type: 'string', maxLength: 20000 },
@@ -299,7 +296,7 @@ export const batchResultsSchema = {
                 properties: {
                   test_step_id: { type: 'string' },
                   step_number: { type: 'integer', minimum: 1, description: 'Either this or `test_step_id`' },
-                  verdict: { type: 'string', enum: STEP_VERDICTS },
+                  verdict: oneOf(STEP_VERDICTS),
                   actual_result: { type: 'string' },
                 },
               },

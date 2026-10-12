@@ -15,6 +15,29 @@ const str = (description?: string): Schema => ({ type: 'string', ...(description
 const nullableStr = (description?: string): Schema => ({ type: ['string', 'null'], ...(description ? { description } : {}) });
 const timestamp = (description = 'ISO 8601 date-time'): Schema => ({ type: 'string', description });
 
+/**
+ * A text field limited to `values`, with the values also written into its description:
+ * Swagger UI's "Example Value" view shows only one of them, the "Schema" view all.
+ */
+export function oneOf(values: readonly string[], description?: string, nullable = false): Schema {
+  const list = `One of: ${values.join(', ')}.`;
+  return {
+    type: nullable ? ['string', 'null'] : 'string',
+    enum: nullable ? [...values, null] : [...values],
+    description: description ? `${description} ${list}` : list,
+  };
+}
+
+export const VERDICTS = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'RETEST_REQUIRED', 'KNOWN_ISSUE'] as const;
+export const STEP_VERDICTS = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'UNTESTED'] as const;
+export const RESULT_STATUSES = ['COMPLETED', 'IN_PROGRESS', 'ABORTED'] as const;
+export const PRIORITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const;
+export const EXECUTION_TYPES = ['MANUAL', 'AUTOMATED'] as const;
+export const VERSION_STATUSES = ['DRAFT', 'APPROVED', 'DEPRECATED'] as const;
+export const PLAN_STATUSES = ['ACTIVE', 'LOCKED', 'ARCHIVED'] as const;
+export const RUN_STATUSES = ['OPEN', 'CLOSED'] as const;
+export const CUSTOM_FIELD_TYPES = ['TEXT', 'NUMBER', 'CHECKBOX', 'DATE', 'SINGLE_SELECT', 'MULTI_SELECT'] as const;
+
 export const PERMISSIONS_LIST: Schema = {
   type: 'array',
   items: { type: 'string' },
@@ -94,7 +117,7 @@ export const SHARED_SCHEMAS: Schema[] = [
       project_id: str(),
       name: str(),
       description: nullableStr(),
-      status: { type: 'string', enum: ['ACTIVE', 'LOCKED', 'ARCHIVED'], description: 'LOCKED and ARCHIVED plans take no new results and keep their pinned versions' },
+      status: oneOf(PLAN_STATUSES, 'LOCKED and ARCHIVED plans take no new results and keep their pinned versions.'),
       created_at: timestamp(),
       updated_at: timestamp(),
     },
@@ -108,7 +131,7 @@ export const SHARED_SCHEMAS: Schema[] = [
       test_plan_id: str(),
       name: str('Unique within its plan'),
       description: nullableStr(),
-      status: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'A CLOSED run takes no results. Runs close themselves the first time every case has a result.' },
+      status: oneOf(RUN_STATUSES, 'A CLOSED run takes no results. Runs close themselves the first time every case has a result.'),
       release_date: nullableStr('YYYY-MM-DD'),
       created_at: timestamp(),
       updated_at: timestamp(),
@@ -122,9 +145,152 @@ export const SHARED_SCHEMAS: Schema[] = [
       id: str('The result id (test_result_id)'),
       test_run_id: str(),
       test_plan_case_id: str(),
-      verdict: str(),
-      status: str(),
+      verdict: oneOf(VERDICTS),
+      status: oneOf(RESULT_STATUSES),
       created_at: timestamp(),
+    },
+  },
+  {
+    $id: 'Suite',
+    type: 'object',
+    required: ['id', 'project_id', 'parent_suite_id', 'name', 'description', 'position', 'path', 'created_at', 'updated_at'],
+    properties: {
+      id: str(),
+      project_id: str(),
+      parent_suite_id: nullableStr('null for a top-level suite'),
+      name: str(),
+      description: nullableStr(),
+      position: { type: 'integer', description: 'Order among its siblings' },
+      path: str('Ids from the top level down, e.g. /<id>/<id>'),
+      created_at: timestamp(),
+      updated_at: timestamp(),
+    },
+  },
+  {
+    $id: 'SuiteNode',
+    type: 'object',
+    description: 'A suite with its sub-suites, and how many cases its whole subtree has (and how many of those are in the plan asked about)',
+    required: ['id', 'project_id', 'parent_suite_id', 'name', 'description', 'position', 'path', 'created_at', 'updated_at', 'children', 'total_case_count', 'in_plan_count'],
+    properties: {
+      id: str(),
+      project_id: str(),
+      parent_suite_id: nullableStr(),
+      name: str(),
+      description: nullableStr(),
+      position: { type: 'integer' },
+      path: str(),
+      created_at: timestamp(),
+      updated_at: timestamp(),
+      children: { type: 'array', items: { $ref: 'SuiteNode#' } },
+      total_case_count: { type: 'integer' },
+      in_plan_count: { type: 'integer', description: '0 without test_plan_id' },
+    },
+  },
+  {
+    $id: 'TestCase',
+    type: 'object',
+    description: "A case's unversioned fields; its content (summary, preconditions, steps) is in its versions.",
+    required: ['id', 'project_id', 'test_suite_id', 'external_id', 'title', 'priority', 'execution_type', 'created_at', 'updated_at'],
+    properties: {
+      id: str(),
+      project_id: str(),
+      test_suite_id: str(),
+      external_id: str('The readable id, e.g. SHOP-101'),
+      title: str(),
+      priority: str(`Usually one of: ${PRIORITIES.join(', ')} (imports may have stored others).`),
+      execution_type: str(`Usually one of: ${EXECUTION_TYPES.join(', ')}.`),
+      created_at: timestamp(),
+      updated_at: timestamp(),
+    },
+  },
+  {
+    $id: 'Step',
+    type: 'object',
+    required: ['id', 'test_case_version_id', 'step_number', 'action', 'expected_result', 'execution_type', 'created_at', 'updated_at'],
+    properties: {
+      id: str('The step id (test_step_id in results)'),
+      test_case_version_id: str(),
+      step_number: { type: 'integer' },
+      action: str(),
+      expected_result: str(),
+      execution_type: str(),
+      created_at: timestamp(),
+      updated_at: timestamp(),
+    },
+  },
+  {
+    $id: 'Version',
+    type: 'object',
+    description: 'A version of a case: its content, editable only while DRAFT.',
+    required: ['id', 'test_case_id', 'version_number', 'status', 'summary', 'preconditions', 'author_id', 'reviewer_id', 'created_at', 'updated_at', 'steps'],
+    properties: {
+      id: str('The version id (test_case_version_id)'),
+      test_case_id: str(),
+      version_number: { type: 'integer' },
+      status: oneOf(VERSION_STATUSES),
+      summary: nullableStr(),
+      preconditions: nullableStr(),
+      author_id: str(),
+      reviewer_id: nullableStr('Who approved it'),
+      created_at: timestamp(),
+      updated_at: timestamp(),
+      steps: { type: 'array', items: { $ref: 'Step#' } },
+    },
+  },
+  {
+    $id: 'PlanCase',
+    type: 'object',
+    description: "A case's link to a plan, pinned at a version (test_plan_case_id).",
+    required: ['id', 'test_plan_id', 'test_case_id', 'test_case_version_id', 'position', 'created_at', 'updated_at', 'removed_at', 'removed_by'],
+    properties: {
+      id: str('test_plan_case_id'),
+      test_plan_id: str(),
+      test_case_id: str(),
+      test_case_version_id: str('The pinned version'),
+      position: { type: 'integer' },
+      created_at: timestamp(),
+      updated_at: timestamp(),
+      removed_at: nullableStr('Set when a case with results was removed from the plan (its results stay)'),
+      removed_by: nullableStr(),
+    },
+  },
+  {
+    $id: 'CustomFieldDefinition',
+    type: 'object',
+    required: ['id', 'project_id', 'entity_type', 'name', 'field_label', 'field_type', 'is_required', 'default_value', 'validation_regex', 'options', 'created_at', 'updated_at'],
+    properties: {
+      id: str('The definition id (definitionId)'),
+      project_id: nullableStr('null for a global field (made in the Admin Panel); a project id for one made by an import'),
+      entity_type: oneOf(['TestCase', 'TestSuite']),
+      name: str(),
+      field_label: str('Shown in the app'),
+      field_type: oneOf(CUSTOM_FIELD_TYPES),
+      is_required: { type: 'boolean' },
+      default_value: nullableStr('As text; a MULTI_SELECT default is a JSON array'),
+      validation_regex: nullableStr('TEXT fields: a JavaScript regular expression values must match'),
+      options: {
+        type: 'array',
+        description: 'SINGLE_SELECT and MULTI_SELECT: the allowed values',
+        items: {
+          type: 'object',
+          required: ['option_label', 'option_value'],
+          properties: { id: str(), option_label: str(), option_value: str('What a value stores'), position: { type: 'integer' } },
+        },
+      },
+      created_at: timestamp(),
+      updated_at: timestamp(),
+    },
+  },
+  {
+    $id: 'CustomFieldValue',
+    type: 'object',
+    required: ['definition', 'value'],
+    properties: {
+      definition: { $ref: 'CustomFieldDefinition#' },
+      value: {
+        description:
+          'Text for TEXT and SINGLE_SELECT, a number for NUMBER, true/false for CHECKBOX, YYYY-MM-DD for DATE, a list of option values for MULTI_SELECT; null when empty. Without a stored value, the field\'s default.',
+      },
     },
   },
 ];
@@ -173,7 +339,7 @@ export function authedErrors(...more: Array<number | [number, string]>): Record<
 /** `?force=true` for "delete anyway". */
 export const FORCE_QUERY: Schema = {
   type: 'object',
-  properties: { force: { type: 'string', enum: ['true', 'false'], description: 'true deletes it even when it still contains things (otherwise 409 names what would be lost)' } },
+  properties: { force: oneOf(['true', 'false'], 'true deletes it even when it still contains things (otherwise 409 names what would be lost).') },
 };
 
 export function idParams(...names: string[]): Schema {

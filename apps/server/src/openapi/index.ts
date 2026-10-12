@@ -24,6 +24,10 @@ import { SHARED_SCHEMAS } from './schemas.js';
 export const OPENAPI_TAGS = [
   { name: 'Sign-in', description: 'Signing in and out, and your own account. Scripts use the `token` from a plain login as `Authorization: Bearer <token>`.' },
   { name: 'Projects', description: 'Projects; each one holds suites, cases, plans and runs. Its prefix starts every case id (SHOP-101).' },
+  { name: 'Specification', description: 'Suites (a tree) and test cases. A case has a readable id (SHOP-101), unversioned fields (title, priority, execution type) and versioned content.' },
+  { name: 'Versions', description: "A case's content: summary, preconditions and steps. Edited on a DRAFT, then approved; DRAFT → APPROVED → DEPRECATED, and Restore back to APPROVED." },
+  { name: 'Custom field values', description: 'Values of admin-defined custom fields on cases and suites. Not versioned.' },
+  { name: 'Search', description: 'Finding cases by text and by property; the same filters work in reports.' },
   { name: 'Plans', description: 'Test plans: a set of cases, each pinned at a version.' },
   { name: 'Runs and results', description: 'Test runs of a plan, and the results recorded in them (one at a time, or in CI batches).' },
 ];

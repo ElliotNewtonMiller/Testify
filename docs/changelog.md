@@ -2023,3 +2023,22 @@ New tests: `apps/server/tests/api_token_scope.test.ts` (4):
 - a token stored with `API_TOKEN_MANAGE` and `USER_MANAGE` (as if made before this change) is left with only `SPEC_VIEW`.
 
 `api_tokens.test.ts`: the "capability the Test Lead lacks" example is now `PROJECT_DELETE`, since `USER_MANAGE` is refused earlier for a different reason.
+
+## Added: the specification and plans to the OpenAPI spec (API roadmap step 3, stage 2) (2026-10-12)
+
+- **27 more routes on `/docs`** (45 in all), in four new groups (Specification, Versions, Custom field values, Search) and the existing Plans group:
+  - the spec tree, suites, cases and moving them;
+  - versions (latest, new draft, edit, approve, deprecate, restore);
+  - custom-field values on cases and suites;
+  - search and its field catalog;
+  - plan membership (one case or a whole suite) and the Execute queue (`GET /plans/{planId}/cases`).
+  Each says what permission it needs, what each field means and which errors to expect. New shared schemas: `Suite`, `SuiteNode` (the recursive tree with case counts), `TestCase`, `Step`, `Version`, `PlanCase`, `CustomFieldDefinition`, `CustomFieldValue` (`apps/server/src/openapi/areas/spec.ts`, `schemas.ts`).
+- **Allowed values in descriptions.** Elliot noticed that Swagger UI's "Example Value" view shows only one value (`"verdict": "PASSED"`). Every field limited to a set of values now lists them in its description too ("One of: PASSED, FAILED, …"), stage 1's fields included, through a new `oneOf()` helper. The value lists (`VERDICTS`, `PRIORITIES`, ...) are shared constants.
+- **Request validation:** these routes check their bodies themselves with specific codes (`INVALID_NAME`, `INVALID_STEPS`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`), so their body schemas are documentation only (`handlerValidated`). Adding a case to a plan (`{ test_case_id }`) and the query strings are enforced.
+- **Fixed while documenting:**
+  - A case's `priority` and `execution_type` were stored exactly as sent (any text). Creating or changing a case now accepts only `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` and `MANUAL`, `AUTOMATED` (the values the app, the filters and the importers use). Anything else is `400 INVALID_REQUEST` naming the field. Existing values aren't touched.
+  - Adding a whole suite to a plan listed skipped cases with `case_id`; it's now `test_case_id`, like every other id. (The web app only counts them.)
+  - Deprecate and restore named `version_id` in `invalid_params`; now `test_case_version_id`.
+- No response in the whole test suite disagrees with the spec, so the new schemas match what the server actually sends.
+
+Tests: `apps/server/tests/openapi.test.ts` +2 (the 45 routes are all in the spec; `verdict` and `priority` list their values in the description; an unknown priority or execution type is refused on create and change, and a known one accepted). 619 tests pass and typecheck is clean. Verified on a production build with the demo data: the docs page shows the new groups.
