@@ -68,7 +68,7 @@ export const patchMeSchema = {
   summary: 'Change your username, email or password',
   description:
     'Changes only the fields sent. A new password needs `current_password`, and ends every other sign-in of the account. Changing the username needs `USER_MANAGE` (or Admin). ' +
-    'A user who must change their password (`must_change_password`) can only set a new, different one here.',
+    'A user who must change their password (`must_change_password`) can only set a new, different one here. Not available to API tokens (`TOKEN_NOT_ALLOWED`).',
   body: {
     type: 'object',
     properties: {

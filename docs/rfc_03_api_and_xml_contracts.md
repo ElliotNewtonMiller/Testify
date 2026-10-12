@@ -66,7 +66,7 @@ The API serves two kinds of client:
   - A few actions answer `200` with a summary instead: e.g. removing a whole suite from a plan returns `{ added, removed, retired, skipped }`.
 - **Bodies:** JSON, snake_case field names. Only send `Content-Type: application/json` when there is a body; Fastify answers `400` to an empty JSON body.
 - **Ids:** UUIDs. A field holding an id is named after its database column, so each id has one name everywhere: `project_id`, `test_suite_id`, `test_case_id`, `test_case_version_id`, `test_plan_id`, `test_plan_case_id` (a case's link to a plan), `test_run_id`, `test_result_id`. Runs and results are never called "builds" or "executions".
-- **The project comes from the ids:** the server works out the project from every id a request names (in the path, query and JSON body) and checks permissions in that project. A request naming ids from two projects is refused with `400 PROJECTS_DIFFER`. An API token is refused on any project but its own (`403 TOKEN_PROJECT_MISMATCH`).
+- **The project comes from the ids:** the server works out the project from every id a request names (in the path, query and JSON body) and checks permissions in that project. A request naming ids from two projects is refused with `400 PROJECTS_DIFFER`. An API token is refused on any project but its own (`403 TOKEN_PROJECT_MISMATCH`), and on routes that aren't part of a project at all, such as `/admin/...` (`403 TOKEN_NOT_ALLOWED`).
 - **Authentication:** every route except sign-in and `GET /api/v1/health` needs a credential (§7.1, RFC 04 §4).
 - **Paging:** none yet; lists return everything. The case-history report is the exception: it pages with `limit` and `cursor`, returning `next_cursor`.
 - **Validation:** input is checked before anything is written; a bad request gets a `400` naming each problem field in `invalid_params` (§4).
@@ -263,9 +263,9 @@ The codes a client is most likely to handle (the code is always in `code`; `deta
 
 | Status | Codes |
 | :--- | :--- |
-| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
+| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
 | `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
-| `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
+| `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `TOKEN_NOT_ALLOWED` (an API token on a route outside any project), `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
 | `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |
 | `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, a taken project prefix or run name |
 | `413` | `IMPORT_TOO_LARGE`, `PAYLOAD_TOO_LARGE` |
@@ -424,7 +424,7 @@ Execute runs the whole import in one transaction, writes an `IMPORT_EXECUTED` au
 
 ### 7.1 Authentication
 Every API request needs a credential (RFC 04 §4 has the details):
-- **Machine API tokens** (`Authorization: Bearer tf_ci_...`), for CI and agents. Each is created per project in Admin Panel → API Tokens, with chosen capabilities, and is bound to that project and capped by its issuer's current permissions.
+- **Machine API tokens** (`Authorization: Bearer tf_ci_...`), for CI and agents. Each is created per project in Admin Panel → API Tokens, with chosen capabilities, and is bound to that project and capped by its issuer's current permissions. Tokens can't use the admin routes or hold system-wide permissions (RFC 04 §4.2).
 - **Sign-in tokens:** `POST /api/v1/auth/login` returns a JWT for scripts. The web app uses an HttpOnly session cookie instead, plus a `X-Testify-Client: web` header on changes.
 
 There are no personal access tokens or separate runner-token types; a token's capabilities decide what it can do. The built-in Automation Service role's set (`SPEC_VIEW`, `RUN_MANAGE`, `EXECUTE_RUN`) suits CI.

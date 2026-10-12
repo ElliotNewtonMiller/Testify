@@ -136,9 +136,10 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
 - 50 failures from one address in 15 minutes block that address.
 
 **API tokens** (`tf_ci_...`):
-- Each is bound to one project, so a token used on another project gets 403.
+- Each is bound to one project, so a token used on another project gets 403 (`TOKEN_PROJECT_MISMATCH`).
+- Routes outside any project (`/admin/...`, creating a project, `PATCH /auth/me`) refuse tokens (`TOKEN_NOT_ALLOWED`); deny by default via `tokenMayUseRoute`, except `GET /auth/me`, `GET /projects` and `/mcp`. A new route outside a project is therefore closed to tokens automatically.
 - A token's capabilities are capped by its issuer's **current** permissions, checked on every use. Disabling the issuer revokes their tokens.
-- `SYSTEM_ADMIN` can never be granted to a token.
+- System-wide permissions can never be granted to a token: `SYSTEM_ADMIN`, `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE`, `API_TOKEN_MANAGE` (`TOKEN_EXCLUDED_PERMISSIONS` in `packages/core/src/rbac/registry.ts`; existing tokens lose them on use).
 - Limit: 1,200 requests per minute per token.
 
 **Permissions:**
@@ -233,7 +234,6 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 
 ## Known gaps
 
-- **API tokens on global admin routes:** the project binding only applies when a request names a project, so a token holding an admin permission (e.g. `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`) works on `/api/v1/admin/...` system-wide. To fix first; see `docs/api_roadmap.md`.
 - Plan and run create/edit/delete write no audit entry.
 - No UI for `allow_draft_plan_linking`.
 - Imports:

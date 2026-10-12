@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
 import { ApiTokenRepository, UserRepository } from '@testify/db';
-import { PERMISSION_KEYS } from '@testify/core';
+import { PERMISSION_KEYS, TOKEN_EXCLUDED_PERMISSIONS, isTokenGrantable } from '@testify/core';
 import { requirePermission, apiTokenIssuerAccess } from '../middleware/auth.js';
 import { sendCapabilityCeilingExceededError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
@@ -45,15 +45,26 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
       // includes the literal string 'SYSTEM_ADMIN' itself for any SYSTEM_ADMIN-holding
       // user (see RoleRepository.evaluatePermissions), so a naive subset check would let
       // an Admin mint a token that bypasses every permission check on every route.
-      if (capabilities.includes('SYSTEM_ADMIN')) {
-        return sendError(reply, 400, "'SYSTEM_ADMIN' can never be granted to a token");
+      // The same goes for every permission whose routes reach beyond one project
+      // (TOKEN_EXCLUDED_PERMISSIONS in packages/core/src/rbac/registry.ts).
+      const excluded = capabilities.filter((k: unknown) => typeof k === 'string' && !isTokenGrantable(k));
+      if (excluded.length > 0) {
+        return sendError(
+          reply,
+          400,
+          `${excluded.map((k: string) => `'${k}'`).join(', ')} can never be granted to a token: API tokens work only inside their own project.`,
+          {
+            code: 'CAPABILITY_NOT_GRANTABLE',
+            invalid_params: excluded.map((k: string) => ({ name: 'capabilities', reason: `${k} can't be given to a token: ${TOKEN_EXCLUDED_PERMISSIONS[k]}` })),
+          }
+        );
       }
       const unknownKeys = capabilities.filter((k: unknown) => typeof k !== 'string' || !PERMISSION_KEYS.includes(k));
       if (unknownKeys.length > 0) {
         return sendError(reply, 400, `Unknown permission key(s): ${unknownKeys.join(', ')}`);
       }
 
-      const allowedCeiling = actor.permissions.filter((k) => k !== 'SYSTEM_ADMIN');
+      const allowedCeiling = actor.permissions.filter(isTokenGrantable);
       if (capabilities.some((k: string) => !allowedCeiling.includes(k))) {
         return sendCapabilityCeilingExceededError(reply, capabilities, allowedCeiling, request.url);
       }
@@ -108,7 +119,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
           };
         })
       );
-      const issuerCapabilityCeiling = actor.permissions.filter((k) => k !== 'SYSTEM_ADMIN');
+      const issuerCapabilityCeiling = actor.permissions.filter(isTokenGrantable);
       return { tokens, issuer_capability_ceiling: issuerCapabilityCeiling };
     }
   );

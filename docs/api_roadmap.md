@@ -25,7 +25,7 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 4. **Machine-readable description in progress.** The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover sign-in, projects, plans, runs and results so far (step 3).
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
 6. **Reads are coarse** (step 8): no fetching a single item by id, no dedicated list of a run's results, readable ids (SHOP-12) accepted almost nowhere, only a case's latest version.
-7. **API tokens reach global admin routes** (fix first, see below).
+7. ~~**API tokens reach global admin routes.**~~ Fixed 2026-10-12 (see below).
 
 ---
 
@@ -49,9 +49,9 @@ Many tools read that format, so the one file gives:
 
 ---
 
-## Fix first: API tokens on global admin routes
+## Fixed first: API tokens on global admin routes
 
-**Status:** Not started. Found 2026-10-12.
+**Status:** Done (2026-10-12), both parts. Found the same day.
 
 **The problem.** An API token is bound to one project, and the docs promise that binding is "checked centrally for every route". It's only checked when the request names a project. The admin routes (users, roles, custom fields, email settings, the audit log) don't name one, so the binding doesn't apply there. A token whose capabilities include an admin permission works across the whole system. Checked with a token made for one project holding `USER_MANAGE` and `CUSTOM_FIELD_MANAGE`; it could:
 - list every user (names, emails, roles, permissions);
@@ -65,7 +65,10 @@ Many tools read that format, so the one file gives:
 
 **Recommendation:** refuse API tokens on every route that doesn't belong to a project (`/admin/...`), and stop offering admin-only permissions (`USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, and any others that only gate global routes) as token capabilities. Admin automation, if wanted later, gets its own kind of credential.
 
-**Open question:** refuse tokens on admin routes only, or also remove those permissions from the capability list (recommended: both)?
+**What was done (decided with Elliot: both):**
+- **Tokens refused outside a project.** Any route whose address names no project item answers a token with `403 TOKEN_NOT_ALLOWED`: every `/admin/...` route, creating a project, changing your own account. It's deny by default (`tokenMayUseRoute` in `middleware/auth.ts`), so a new route of this kind is closed to tokens without anyone remembering to list it. The exceptions stay within the token's project anyway: `GET /auth/me`, `GET /projects` (only its own project) and `/mcp` (each tool call checks its project).
+- **System-wide permissions can't be given to a token:** `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE` and `API_TOKEN_MANAGE` (a token's own tokens would never work, since their issuer isn't a user), on top of `SYSTEM_ADMIN`. Asking for one is `400 CAPABILITY_NOT_GRANTABLE`, the API Tokens tab no longer offers them, and existing tokens lose them on their next use.
+- Admin automation, if wanted later, gets its own kind of credential.
 
 ## Steps
 
@@ -208,7 +211,7 @@ Many tools read that format, so the one file gives:
 ## Recommended order
 
 1. **Steps 1 and 2:** consistency and versioning. Done.
-2. **Fix first:** API tokens on global admin routes.
+2. **Fix first:** API tokens on global admin routes. Done.
 3. **Step 3:** finish the spec and docs page (stages 2-4).
 4. **Steps 8 and 4:** the missing reads and paging, together.
 5. **Step 5:** CI integration, built on the published spec.

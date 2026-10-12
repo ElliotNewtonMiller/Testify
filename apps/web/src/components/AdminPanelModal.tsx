@@ -2774,8 +2774,9 @@ export function AdminPanelModal({
 
         {/* TAB: API TOKENS -- project-scoped machine credentials for CI/automation callers.
             Capabilities are capped at the issuing admin's own effective permissions on the
-            selected project, and SYSTEM_ADMIN can never be granted to a token (see
-            apps/server/src/routes/apiTokens.ts). */}
+            selected project, minus the permissions a token can never hold (TOKEN_EXCLUDED_PERMISSIONS
+            in packages/core/src/rbac/registry.ts); the server leaves them out of
+            issuer_capability_ceiling. */}
         {activeTab === "API_TOKENS" && (
           <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -3035,6 +3036,10 @@ export function AdminPanelModal({
 
                 <div style={{ fontSize: "11px", fontWeight: 700, color: "#e2e8f0", marginBottom: "6px" }}>
                   Capabilities
+                </div>
+                <div style={{ fontSize: "10px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
+                  A token works only inside this project, so system-wide permissions (managing users and roles,
+                  custom field definitions, creating projects, managing tokens) aren't offered.
                 </div>
                 {Array.from(
                   new Set(

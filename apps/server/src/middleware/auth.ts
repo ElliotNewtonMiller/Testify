@@ -3,8 +3,8 @@ import { passesCsrfCheck, requestCredential } from '../sessionCookie.js';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, ApiTokenRepository, SessionRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
-import { verifyJwt } from '@testify/core';
-import { sendInvalidTokenError,
+import { verifyJwt, isTokenGrantable } from '@testify/core';
+import { sendTokenNotAllowedError, sendInvalidTokenError,
   sendTokenRevokedError,
   sendTokenExpiredError,
   sendTokenProjectMismatchError,
@@ -141,7 +141,30 @@ export async function apiTokenIssuerAccess(
   if (!issuer || issuer.status !== 'ACTIVE') return { active: false, reason: 'ISSUER_DISABLED' };
   const held = new Set(await new RoleRepository(db).evaluatePermissions(issuer.id, token.project_id));
   if (!held.has('API_TOKEN_MANAGE') && !held.has('SYSTEM_ADMIN')) return { active: false, reason: 'ISSUER_LOST_ACCESS' };
-  return { active: true, capabilities: token.capabilities.filter((c) => held.has(c)) };
+  // Permissions a token can never hold (TOKEN_EXCLUDED_PERMISSIONS) are dropped too, so a token
+  // made before they were excluded loses them at once.
+  return { active: true, capabilities: token.capabilities.filter((c) => held.has(c) && isTokenGrantable(c)) };
+}
+
+/** A route address names a project item when it has one of these parameters. */
+const PROJECT_ROUTE_PARAM = /:(projectId|planId|runId|caseId|suiteId|versionId|scheduleId|tokenId)\b/;
+/** The routes outside any project that a token may still use: each stays within the token's project. */
+const TOKEN_PROJECTLESS_ROUTES = new Set([
+  'GET /api/v1/auth/me', // who am I
+  'GET /api/v1/projects', // lists only the token's own project
+  'POST /mcp', // every tool call checks its project
+]);
+
+/**
+ * Whether an API token may use this route. A token is bound to one project, which is checked
+ * against the project the request names (resolveRequestProject); a route that names none --
+ * users, roles, global custom fields, email settings, creating projects, your own account --
+ * reaches the whole system, so tokens are refused there unless the route is one of the few
+ * that stay within the token's project anyway. Deny by default, so a new system-wide route
+ * is safe without anyone remembering to list it.
+ */
+export function tokenMayUseRoute(method: string, routeUrl: string): boolean {
+  return PROJECT_ROUTE_PARAM.test(routeUrl) || TOKEN_PROJECTLESS_ROUTES.has(`${method} ${routeUrl}`);
 }
 
 /**
@@ -153,10 +176,9 @@ export async function apiTokenIssuerAccess(
  * The synthetic id is deliberately never the issuing admin's own user id -- attributing
  * every CI-recorded execution/import to the human who happened to mint the token would
  * corrupt tester_id/audit_logs.actor_id with a false identity. permissions are the
- * token's own `capabilities` array, frozen at mint time (no re-evaluation against
- * RoleRepository) -- capabilities can never include 'SYSTEM_ADMIN' (enforced at mint
- * time in routes/apiTokens.ts), so requirePermission's SYSTEM_ADMIN bypass simply never
- * fires for a token, which is exactly the desired behavior.
+ * token's own `capabilities`, intersected with its issuer's current permissions in the
+ * project and never including the permissions in TOKEN_EXCLUDED_PERMISSIONS (SYSTEM_ADMIN among
+ * them), so requirePermission's SYSTEM_ADMIN bypass never fires for a token.
  */
 /** Requests already counted against their API token's rate limit. */
 const rateCountedRequests = new WeakSet<FastifyRequest>();
@@ -201,6 +223,13 @@ async function authenticateApiToken(
   // rather than relying on each route to remember to check (see resolveRequestProject).
   if (requestedProjectId && requestedProjectId !== token.project_id) {
     sendTokenProjectMismatchError(reply, token.project_id, requestedProjectId, request.url);
+    return null;
+  }
+
+  // ...and only to routes inside a project (tokenMayUseRoute).
+  const routeUrl = request.routeOptions?.url ?? request.url.split('?')[0];
+  if (!tokenMayUseRoute(request.method, routeUrl)) {
+    sendTokenNotAllowedError(reply, request.url);
     return null;
   }
 

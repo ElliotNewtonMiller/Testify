@@ -147,7 +147,7 @@ export const NO_CONTENT: Schema = { description: 'Done; no body', type: 'null' }
 const ERROR_TEXT: Record<number, string> = {
   400: 'Invalid request: `invalid_params` names each problem field. Also `PROJECTS_DIFFER` when ids belong to two projects.',
   401: 'Not signed in, or the sign-in has ended (`SESSION_ENDED`), or the API token is invalid, revoked or expired',
-  403: 'Missing permission (`required_permission` names it), or an API token used on another project (`TOKEN_PROJECT_MISMATCH`)',
+  403: 'Missing permission (`required_permission` names it), or an API token used on another project (`TOKEN_PROJECT_MISMATCH`) or on a system-wide route (`TOKEN_NOT_ALLOWED`)',
   404: 'Not found (or not in a project you can see)',
   409: 'Conflict: e.g. still contains things (retry with `?force=true`), or a name that is taken',
   413: 'Body too large',

@@ -22,7 +22,7 @@ const projectFields = {
 export const createProjectSchema = {
   tags: ['Projects'],
   summary: 'Create a project',
-  description: 'Needs `PROJECT_CREATE`.',
+  description: 'Needs `PROJECT_CREATE`. Not available to API tokens (`TOKEN_NOT_ALLOWED`), which work only inside their own project.',
   body: { type: 'object', required: ['name', 'prefix'], properties: projectFields },
   response: { 201: wrapped('project', 'Project', 'Created'), ...authedErrors(400, [409, 'The prefix is already used']) },
 };

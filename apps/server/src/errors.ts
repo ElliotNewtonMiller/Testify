@@ -392,10 +392,22 @@ export function sendTokenProjectMismatchError(
     instance,
     invalid_params: [
       {
-        name: 'target_project_id',
+        name: 'project_id',
         reason: "Does not match the authenticating token's bound project",
       },
     ],
+  });
+}
+
+/** An API token used on a route that isn't part of any project (see tokenMayUseRoute in middleware/auth.ts). */
+export function sendTokenNotAllowedError(reply: FastifyReply, instance?: string) {
+  return sendProblemDetails(reply, {
+    code: 'TOKEN_NOT_ALLOWED',
+    status: 403,
+    title: 'Forbidden',
+    detail:
+      "API tokens work only inside their own project, and this route isn't part of a project (it manages the whole system). Sign in as a user to use it.",
+    instance,
   });
 }
 

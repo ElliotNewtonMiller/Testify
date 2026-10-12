@@ -2002,3 +2002,24 @@ Found while answering Elliot's question about whether the API is enough for auto
 - **Step 8, "Fill the read gaps":** single items by id, a run's results, readable ids (SHOP-12), version history, and changing one report-schedule recipient.
 - **Step 3:** a note to list each field's allowed values in its description, since Swagger UI's "Example Value" view shows only one.
 - **Recommended order:** the token fix, then step 3, then steps 8 and 4 together.
+
+## Fixed: API tokens could use the system-wide admin routes (2026-10-12)
+
+The "Fix first" item recorded earlier the same day in `docs/api_roadmap.md`. A token's project binding was only checked when the request named a project, and the admin routes don't, so a token holding an admin permission worked system-wide: it could list every user, read the whole Security Audit Log, create users and create global custom fields. Since a token's ceiling is its issuer's permissions in that project, someone who is an admin in one project only could make such a token. Decided with Elliot: fix both ways.
+
+- **Tokens are refused on routes outside a project** (`tokenMayUseRoute`, checked in `authenticateApiToken`, `apps/server/src/middleware/auth.ts`). A route counts as inside a project when its address has a project item parameter (`:projectId`, `:planId`, `:runId`, `:caseId`, `:suiteId`, `:versionId`, `:scheduleId`, `:tokenId`). Every other route refuses tokens with `403 TOKEN_NOT_ALLOWED` ("Sign in as a user to use it"), except three that stay inside the token's project anyway: `GET /api/v1/auth/me`, `GET /api/v1/projects` (lists only its own project) and `POST /mcp` (checks each tool call). This is deny by default, so a route of this kind added later is closed to tokens automatically. Now refused: all of `/api/v1/admin/...`, `POST /api/v1/projects` and `PATCH /api/v1/auth/me`. An unknown id on a route inside a project still answers 404.
+- **Permissions a token can never hold:** new `TOKEN_EXCLUDED_PERMISSIONS` and `isTokenGrantable` (`packages/core/src/rbac/registry.ts`), each permission with the reason:
+  - `SYSTEM_ADMIN` (as before);
+  - `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE`: their routes reach the whole system;
+  - `API_TOKEN_MANAGE`: tokens made by a token would never work, because their issuer isn't a user.
+  Creating a token with one is `400 CAPABILITY_NOT_GRANTABLE`, with the reason in `invalid_params`. The API Tokens tab no longer offers them (the server leaves them out of `issuer_capability_ceiling`) and says why in one line under "Capabilities". Existing tokens lose them on every use: `apiTokenIssuerAccess` drops them, so `effective_capabilities` shows them struck through.
+- **Smaller fixes:** `TOKEN_PROJECT_MISMATCH` named a field that no longer exists (`target_project_id`); it's now `project_id`. The spec's 403 descriptions, `POST /projects` and `PATCH /auth/me` mention `TOKEN_NOT_ALLOWED`.
+- **Docs:** RFC 04 §4.2 points 3 and 5 rewritten (and the gap note removed), RFC 03 error codes and §7.1, `reports_api_and_mcp.md`, CLAUDE.md (auth rules; the known gap removed), and the roadmap (done).
+
+New tests: `apps/server/tests/api_token_scope.test.ts` (4):
+- which route addresses count as inside a project;
+- every excluded permission is refused with its reason, and none appears in the grantable list;
+- a token gets `TOKEN_NOT_ALLOWED` on eleven system-wide routes and changes nothing there (no user, custom field or project created), while still working on `/auth/me`, `GET /projects`, its project's routes and `/mcp`, with an unknown id still 404;
+- a token stored with `API_TOKEN_MANAGE` and `USER_MANAGE` (as if made before this change) is left with only `SPEC_VIEW`.
+
+`api_tokens.test.ts`: the "capability the Test Lead lacks" example is now `PROJECT_DELETE`, since `USER_MANAGE` is refused earlier for a different reason.

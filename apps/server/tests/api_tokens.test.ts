@@ -65,7 +65,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     }
   });
 
-  it('an Admin can create a token with any registered capability except SYSTEM_ADMIN, which is always rejected', async () => {
+  it('an Admin can create a token with project capabilities; SYSTEM_ADMIN is always rejected (the other system-wide ones: api_token_scope.test.ts)', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
@@ -97,7 +97,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     const { token: adminToken } = await loginAsAdmin(app);
     const { token: leadToken } = await createAndLoginAs(app, adminToken, 'Test Lead');
 
-    // Test Lead holds SPEC_VIEW/EXECUTE_RUN but not USER_MANAGE (Admin-only).
+    // Test Lead holds SPEC_VIEW/EXECUTE_RUN but not PROJECT_DELETE (Admin-only).
     const okRes = await app.inject({
       method: 'POST',
       url: `/api/v1/projects/${seed.projectId}/api-tokens`,
@@ -110,7 +110,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
       method: 'POST',
       url: `/api/v1/projects/${seed.projectId}/api-tokens`,
       headers: { authorization: `Bearer ${leadToken}` },
-      payload: { name: 'Over-privileged', capabilities: ['USER_MANAGE'] },
+      payload: { name: 'Over-privileged', capabilities: ['PROJECT_DELETE'] },
     });
     expect(exceededRes.statusCode).toBe(403);
     expect(JSON.parse(exceededRes.payload).code).toBe('CAPABILITY_CEILING_EXCEEDED');
@@ -145,7 +145,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     expect(noCapsRes.statusCode).toBe(400);
   });
 
-  it('GET list never includes the plaintext or hash, and returns the issuer_capability_ceiling excluding SYSTEM_ADMIN', async () => {
+  it('GET list never includes the plaintext or hash, and returns the issuer_capability_ceiling without SYSTEM_ADMIN', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
