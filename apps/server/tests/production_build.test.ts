@@ -128,6 +128,12 @@ describe('Production: the build runs with plain Node', () => {
         body: JSON.stringify({ username: 'admin', password: 'password' }),
       });
       expect(login.status).toBe(200);
+      // The API docs page and its files (served from node_modules by the bundled server).
+      const docs = await fetch(`http://127.0.0.1:${port}/docs/`);
+      expect(docs.status).toBe(200);
+      expect(await docs.text()).toContain('swagger-ui');
+      expect((await fetch(`http://127.0.0.1:${port}/docs/static/swagger-ui-bundle.js`)).status).toBe(200);
+      expect((await (await fetch(`http://127.0.0.1:${port}/docs/json`)).json()).openapi).toBe('3.1.0');
     } finally {
       child.kill();
       rmSync(webDir, { recursive: true, force: true });

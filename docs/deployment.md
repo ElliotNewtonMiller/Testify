@@ -68,6 +68,7 @@ The session cookie is `SameSite=Strict`, so serve the web app and the API from t
 
 ## Health and logs
 
+- **API docs:** `/docs` (Swagger UI) and `/docs/json` (the OpenAPI spec) need no sign-in. They describe the API, not your data; "Try it out" still needs a sign-in or API token.
 - **Health:** `GET /api/v1/health` needs no sign-in. It returns 200 while the server and its database are up, and 503 otherwise. Point load balancers and uptime monitors at it.
 - **Logs:** everything goes to stdout and stderr. Each request is one JSON line with its id, method, address, status, time taken and who made it; headers and request bodies are never logged.
 - **Tracing an error:** every reply carries an `X-Request-Id` header. An unexpected error's reply shows the same id, so you can find its log line.

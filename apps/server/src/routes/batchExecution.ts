@@ -14,6 +14,7 @@ import type {
 } from '@testify/core';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
 import { requestOrigin } from '../audit.js';
+import { batchResultsSchema } from '../openapi/areas/projects.js';
 
 const INSERT_CHUNK = 500;
 
@@ -32,6 +33,7 @@ class AtomicRejection extends Error {
 export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   app.post(
     '/api/v1/runs/:runId/results/batch',
+    { schema: batchResultsSchema },
     async (
       req: FastifyRequest<{
         Params: { runId: string };

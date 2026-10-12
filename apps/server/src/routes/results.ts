@@ -8,6 +8,7 @@ import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResul
 import { requirePermission } from '../middleware/auth.js';
 import { autoCloseRunIfComplete } from '../runAutoClose.js';
 import { requestOrigin } from '../audit.js';
+import { recordResultSchema } from '../openapi/areas/projects.js';
 
 /**
  * POST /api/v1/runs/:runId/results -- records one result for a case in a run (what Execute
@@ -16,7 +17,7 @@ import { requestOrigin } from '../audit.js';
  * (routes/batchExecution.ts).
  */
 export async function registerResultRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
-  app.post('/api/v1/runs/:runId/results', { preHandler: requirePermission('EXECUTE_RUN', db, jwtSecret) }, async (request, reply) => {
+  app.post('/api/v1/runs/:runId/results', { schema: recordResultSchema, preHandler: requirePermission('EXECUTE_RUN', db, jwtSecret) }, async (request, reply) => {
     const actorId = request.user!.id;
     const { runId } = request.params as { runId: string };
     // Verdict, status and step verdicts must be known values (they're stored as plain strings).

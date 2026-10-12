@@ -22,7 +22,7 @@ Testify is an open-source, self-hosted test case management app meant to replace
 
 Not built:
 - Attachments (no file storage; the planned `IStorageProvider`).
-- An OpenAPI spec.
+- A complete OpenAPI spec: `/docs` covers sign-in, projects, plans, runs and results so far (`docs/api_roadmap.md` step 3).
 - Step-level results in the web app; the API accepts them.
 
 ## Running things
@@ -67,6 +67,8 @@ apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createSer
                    rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets.
   src/middleware/auth.ts   Authentication and permission checks (see "Auth and permissions").
   src/mcp/mcpServer.ts     POST /mcp: read-only MCP tools over the same services.
+  src/openapi/     The OpenAPI spec and /docs page: index.ts (setup, validation, test-time response check),
+                   schemas.ts (shared schemas, helpers), areas/ (route schemas per area).
   src/{config,errors,audit,observability,webApp,sessionCookie,sessionLifetime,runAutoClose}.ts
   scripts/build.mjs        esbuild bundle (workspace packages bundled, other dependencies external).
 apps/web/          React + Vite. src/App.tsx (~680 lines) calls the hooks, provides the context, lays out panes and modals, wires hotkeys.
@@ -167,6 +169,10 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
   - Responses: create answers 201 with the item wrapped in its name (`{ "plan": {...} }`), update 200 the same way, delete 204 with no body. Lists are `{ "plans": [...] }`.
   - Fields are snake_case, and ids are named after their database columns (`test_plan_id`, `test_run_id`, `test_case_id`, ...). Never "build" or "execution" in a new address, field or code.
   - In the web app, take addresses from `apps/web/src/api/routes.ts`.
+- **Route schemas (OpenAPI):**
+  - A documented route has `schema` (tags, summary, params, query, body, responses) from `apps/server/src/openapi/areas/<area>.ts`; shared schemas and helpers (`wrapped`, `list`, `authedErrors`, `NO_CONTENT`, `FORCE_QUERY`, `handlerValidated`) are in `openapi/schemas.ts`. Routes without a tag stay out of the spec.
+  - Request schemas are enforced (bodies without type coercion; query and params with it), giving `400 INVALID_REQUEST` with `invalid_params`. Mark a body `handlerValidated` when the route checks it itself with more specific errors.
+  - Response schemas never change a response (plain `JSON.stringify`). In tests every JSON response is checked against its schema, undocumented fields included; a mismatch answers 500 and prints `[openapi] ...`. When you change a route's output, change its schema.
 - **Errors:**
   - Every error is problem details (`application/problem+json`): `type`, `title`, `status`, `code`, `detail` (the message people see), the request path as `instance`, `timestamp`, optional `invalid_params: [{ name, reason }]`, and extension fields in snake_case (e.g. `required_permission`, `project_ids`).
   - Send errors with `sendError(reply, status, detail, { code?, invalid_params?, ...extensions })` from `errors.ts`, or one of its specific `send*Error` helpers. `code` defaults from the status (404 → `NOT_FOUND`).

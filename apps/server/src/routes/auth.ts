@@ -16,6 +16,7 @@ import {
 import { requestOrigin, type RequestOrigin } from '../audit.js';
 
 import { sendError } from '../errors.js';
+import { loginSchema, logoutSchema, getMeSchema, patchMeSchema } from '../openapi/areas/auth.js';
 /** How long a sign-in lasts (the login token and its session expire together). */
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
@@ -56,7 +57,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   }
 
   // POST /api/v1/auth/login
-  app.post('/api/v1/auth/login', async (request, reply) => {
+  app.post('/api/v1/auth/login', { schema: loginSchema }, async (request, reply) => {
     const { username, email, password, session: sessionMode } = (request.body as any) || {};
     const identifier = username || email;
 
@@ -124,7 +125,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   // POST /api/v1/auth/logout -- ends the caller's session, so its token stops working, and
   // clears the web app's session cookie. Always answers 200 (signing out with a missing or
   // already-dead token is still "signed out").
-  app.post('/api/v1/auth/logout', async (request, reply) => {
+  app.post('/api/v1/auth/logout', { schema: logoutSchema }, async (request, reply) => {
     const credential = requestCredential(request);
     const result = credential ? verifyJwt(credential.token, jwtSecret) : null;
     clearSessionCookie(request, reply);
@@ -136,7 +137,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   });
 
   // GET /api/v1/auth/me
-  app.get('/api/v1/auth/me', async (request, reply) => {
+  app.get('/api/v1/auth/me', { schema: getMeSchema }, async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
@@ -144,7 +145,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   });
 
   // PATCH /api/v1/auth/me - Self-service username, email & password update (only what the body names)
-  app.patch('/api/v1/auth/me', async (request, reply) => {
+  app.patch('/api/v1/auth/me', { schema: patchMeSchema }, async (request, reply) => {
     const activeUser = await authenticateRequest(request, reply, db, jwtSecret);
     if (!activeUser) return;
 

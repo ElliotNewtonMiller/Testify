@@ -14,9 +14,12 @@
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.0.3",
+    "@fastify/swagger": "^9.9.2",
+    "@fastify/swagger-ui": "^5.2.6",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@testify/core": "*",
     "@testify/db": "*",
+    "ajv": "^8.20.0",
     "fastify": "^5.2.1",
     "nodemailer": "^10.0.15",
     "uuid": "^11.0.5"

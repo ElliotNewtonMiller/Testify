@@ -22,7 +22,7 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 1. **Documented by hand only.** RFC 03 §1-4 has the conventions, every route and the error codes, with examples; [reports_api_and_mcp.md](reports_api_and_mcp.md) covers reports, MCP and CI results in depth. Request and response fields for most routes still have to be read from the code in `apps/server/src/routes/` (step 3).
 2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
-4. **No machine-readable description.** There's no OpenAPI spec (step 3).
+4. **Machine-readable description in progress.** The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover sign-in, projects, plans, runs and results so far (step 3).
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
 
 ---
@@ -88,7 +88,7 @@ Many tools read that format, so the one file gives:
 
 ### 3. OpenAPI spec and docs page
 
-**Status:** Not started
+**Status:** In progress. Stage 1 of 4 done (2026-10-12).
 
 **What:**
 - Add a schema to every route (inputs, outputs, errors).
@@ -96,16 +96,22 @@ Many tools read that format, so the one file gives:
 - Serve the docs page with "try it" at `/docs`.
 - Add a test that real responses match the spec.
 
-**Recommendation:**
-- Do it area by area, together with step 1, so each area is cleaned up and documented once.
-- The schemas replace the hand-written checks in `resultValidation.ts`, `stepValidation.ts` and similar.
-- Keep a short getting-started guide (tokens, first call, sending CI results) beside the generated reference.
+**How it works** (`apps/server/src/openapi/`):
+- **The page and spec:** Swagger UI at `/docs`, the spec at `/docs/json` and `/docs/yaml`, open to anyone. "Try it out" sends real requests: with the browser's session cookie (the page adds the `X-Testify-Client` header), or with a token entered under "Authorize". Routes without a schema yet are left out of the spec.
+- **Route schemas** live in `openapi/areas/<area>.ts`; shared ones (`Problem`, `User`, `Project`, `Plan`, `Run`, ...) in `openapi/schemas.ts`, which become `#/components/schemas/...`.
+- **Requests are validated** against them: bodies exactly as sent, query strings and path parameters with type coercion. A mismatch is `400 INVALID_REQUEST` naming each field. Routes that already check their input more precisely (single and batch results) keep their own checks; their body schema is documentation only (`handlerValidated`).
+- **Responses aren't changed** by their schemas: they're serialized with plain `JSON.stringify`.
+- **Tests keep the spec honest:** in tests every JSON response is checked against its route's schema, undocumented fields included; a mismatch fails the request with a message naming the field. So every existing test is also a contract test.
 
-**Open questions:**
-- Swagger UI or Scalar for the page?
-- Should `/docs` be public, or need a sign-in?
+**Stages** (each its own commit, tested by Elliot before the next):
+1. **Infrastructure and the first area. Done 2026-10-12.** The packages, the page, validation, the response check; sign-in, projects, plans, runs and results (18 routes). `apps/server/tests/openapi.test.ts`.
+2. **Specification and plans.** Not started. Suites, cases, versions, custom-field values, search, move, the spec tree, plan membership and the Execute queue.
+3. **Everything else.** Not started. Reports, report email, import, export, API tokens, admin, health, and `/mcp` described. Then every route is in the spec, and a test checks that none is missing.
+4. **Getting-started guide and docs.** Not started. A short guide (tokens, first call, sending CI results) beside the reference; RFC 03 points to `/docs` for field-level detail.
 
-**Needs:** new npm packages (ask before downloading).
+**Open questions:** none.
+
+**Needs:** `@fastify/swagger` and `@fastify/swagger-ui` (installed 2026-10-12, with Elliot's OK); `ajv`, which Fastify already used, is now a direct dependency.
 
 ### 4. Paging and filtering for lists
 
@@ -175,7 +181,7 @@ Many tools read that format, so the one file gives:
 
 | Date | Decision | Notes |
 | :--- | :--- | :--- |
-| 2026-10-11 | Prefer an OpenAPI spec with a served docs page over a hand-written reference. | Recommended; confirm during planning. |
+| 2026-10-11 | Prefer an OpenAPI spec with a served docs page over a hand-written reference. | Confirmed 2026-10-12 (step 3). |
 | 2026-10-11 | Shallow addresses: lists and creation under the parent (`/projects/{id}/plans`), each item by its own id (`/plans/{id}`). | Chosen over fully nested and flat. |
 | 2026-10-11 | Short path names: `/suites`, `/cases`, `/versions`, `/plans`, `/runs`, `/results`. | |
 | 2026-10-11 | Rename in the database too: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`. | Migration `007`. |
@@ -183,3 +189,6 @@ Many tools read that format, so the one file gives:
 | 2026-10-11 | No aliases: old addresses change outright; the cleaned-up API becomes the stable `/api/v1` (step 2). | Nothing outside Testify uses the API yet. |
 | 2026-10-12 | `PUT` stays for updates that replace the whole thing: report schedules and the email settings. Everything else that updates part of an item is `PATCH`. | Found while converting; a missing field in those bodies clears the value. |
 | 2026-10-12 | Removing a whole suite from a plan answers 200 with counts, not 204. | The counts (`removed`, `retired`, `skipped`) are what the web app shows. |
+| 2026-10-12 | Swagger UI for the docs page. | Chosen over Scalar: it serves all its files from Testify, so it works without internet access. |
+| 2026-10-12 | `/docs` and the spec are open to anyone. | They describe the API, not data; "Try it out" still needs a sign-in or token. |
+| 2026-10-12 | Schemas validate requests, but don't replace the routes' own checks where those give more specific errors (results, batch). Responses are never reshaped by schemas; tests check them instead. | Keeps behaviour and error codes the same while the spec is added area by area. |

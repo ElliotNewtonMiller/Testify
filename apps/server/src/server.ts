@@ -32,6 +32,7 @@ import { runDueSchedules } from './services/reportEmailService.js';
 import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, resolveJwtSecret, resolveLogLevel, ConfigError } from './config.js';
 import { loggerOptions, registerRequestLogging, registerHealthRoute } from './observability.js';
 import { registerWebApp } from './webApp.js';
+import { registerOpenApi, validationProblem } from './openapi/index.js';
 import { setSecretBox } from './services/secrets.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
@@ -41,7 +42,10 @@ import { UserRepository } from '@testify/db';
 // works identically on every machine; tests rely on that. Pass a real connectionString to
 // connect to a real Postgres server. The startup code at the bottom of this file decides which
 // from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
-export async function createServer(connectionString?: string, options: { db?: Kysely<Database>; webDistDir?: string | null; logStream?: NodeJS.WritableStream } = {}) {
+export async function createServer(
+  connectionString?: string,
+  options: { db?: Kysely<Database>; webDistDir?: string | null; logStream?: NodeJS.WritableStream; checkResponses?: boolean } = {}
+) {
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
   // Logging: one JSON line per request on stdout at LOG_LEVEL (observability.ts). Tests pass
@@ -55,6 +59,14 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   // client. Fastify's own request errors (bad JSON, body too large, ...) are about the request,
   // so they keep their status and message.
   app.setErrorHandler((error: any, request, reply) => {
+    // A request that doesn't match its route's schema (openapi/index.ts): name each field.
+    if (Array.isArray(error?.validation)) {
+      const invalid = validationProblem(error.validation, error.validationContext);
+      return sendError(reply, 400, invalid.map((p) => `${p.name} ${p.reason}`).join('; ') || 'Invalid request', {
+        code: 'INVALID_REQUEST',
+        invalid_params: invalid,
+      });
+    }
     const status = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     if (status >= 400 && status < 500) {
       // Fastify's own codes (FST_...) are internal names; callers get the standard code for the status.
@@ -72,6 +84,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   if (corsOrigins.length > 0) {
     await app.register(cors, { origin: corsOrigins, credentials: true });
   }
+  // The OpenAPI spec (/docs/json), the docs page (/docs), request validation from route
+  // schemas, and -- in tests -- checking every response against the spec. Before any route.
+  await registerOpenApi(app, { checkResponses: options.checkResponses ?? process.env.NODE_ENV === 'test' });
+
   // Multipart is only used for import uploads; see the limits in routes/ingestion.ts.
   await app.register(multipart, {
     limits: { fileSize: IMPORT_MAX_FILE_BYTES, files: 1, fields: 20, fieldSize: IMPORT_FIELD_LIMIT_BYTES },

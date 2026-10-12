@@ -29,6 +29,7 @@ import { requirePermission, authenticateRequest, requireAnyPermission, EXECUTION
 import { requestOrigin } from '../audit.js';
 
 import { sendError } from '../errors.js';
+import { listRunsSchema } from '../openapi/areas/projects.js';
 function pickSerializer(format: unknown): IFileSerializer {
   return format === 'STANDARD_CSV' ? new CsvExportSerializer() : new JsonExportSerializer();
 }
@@ -55,7 +56,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   // is otherwise only ever called from inside the much heavier GET /api/v1/plans/:planId/cases,
   // which also joins every case + step + latest execution -- too expensive just for a
   // dropdown). Needs SPEC_VIEW on the project, like every other read.
-  app.get('/api/v1/plans/:planId/runs', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/plans/:planId/runs', { schema: listRunsSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
     const { planId } = request.params as { planId: string };
     const projectId = request.projectId ?? '';
     const plan = await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst();

@@ -1974,3 +1974,22 @@ The last stage of `docs/api_roadmap.md` step 1, which is now Done.
 - **Code:** two report-parameter descriptions in the catalog said "executions"/"executed" (`case_history.limit`, `test_health.stale_days`); they now say "results".
 
 609 tests pass and typecheck is clean.
+
+## Added: an OpenAPI spec and a docs page at /docs (API roadmap step 3, stage 1) (2026-10-12)
+
+The first stage of `docs/api_roadmap.md` step 3. Decided with Elliot: Swagger UI for the page (it serves all its files from Testify, so it works without internet access), and the page and spec open to anyone (they describe the API, not data). New packages, installed with his OK: `@fastify/swagger` 9 and `@fastify/swagger-ui` 5 (about 3.4 MB); `ajv`, already installed as a Fastify dependency, became a direct dependency of `apps/server`.
+
+- **The page:** Swagger UI at `/docs` titled "Testify API", without the Swagger top bar; the spec at `/docs/json` and `/docs/yaml` (OpenAPI 3.1). "Try it out" sends real requests: with the browser's session cookie (the page adds the `X-Testify-Client: web` header that cookie changes need), or with a token under "Authorize". The spec's introduction explains the three ways to authenticate and the API conventions. Routes without a schema yet are left out.
+- **Where the schemas live:** `apps/server/src/openapi/`:
+  - `index.ts`: registers the spec, the page, request validation and the test-time response check.
+  - `schemas.ts`: shared schemas (`Problem`, `User`, `Project`, `Plan`, `Run`, `RecordedResult`) that become `#/components/schemas/...`, and helpers for wrapped items, lists, error responses, `?force=true` and `handlerValidated`.
+  - `areas/auth.ts`, `areas/projects.ts`: the route schemas for this stage.
+- **Documented in this stage (18 routes):** sign-in (login, logout, `GET`/`PATCH /auth/me`), projects, plans, runs, recording one result, and CI batches. Each has a summary, a description (permission needed, what `force` does, which errors to expect), its parameters and body, and every response.
+- **Requests are validated against the schemas.** Bodies are taken exactly as sent (a number isn't accepted for a string); query strings and path parameters are coerced, since they're always text. A mismatch answers `400 INVALID_REQUEST` with `invalid_params` naming each field in plain words ("name is required", "status must be one of: ACTIVE, LOCKED, ARCHIVED"); the global error handler formats it. The single-result and batch routes keep their own checks (codes `INVALID_RESULT`, `UNKNOWN_STEP`...), so their body schemas are documentation only (`handlerValidated`). Validation runs before the sign-in check, so a malformed request without a sign-in gets 400 rather than 401.
+- **Responses are never changed by schemas:** they're serialized with plain `JSON.stringify`, so a schema can't drop a field.
+- **Tests keep the spec honest:** `createServer({ checkResponses })`, on whenever `NODE_ENV=test`, checks every JSON response against its route's schema, counting undocumented fields as mismatches. A mismatch answers 500 and prints `[openapi] <route> <status>: response doesn't match the spec: <field> <reason>`, so every existing server test is now also a contract test. An error status a route doesn't list is checked against the general `Problem` shape. The whole suite passes with no mismatch.
+- **Production:** the bundled server serves the page's files from `node_modules`; the production-build test now checks `/docs`, a Swagger UI file and `/docs/json`.
+
+New tests: `apps/server/tests/openapi.test.ts` (4): the page and spec need no sign-in, and the page sends the CSRF header; the spec is OpenAPI 3.1, every `$ref` resolves, every operation has a summary, a tag and a success response, the 18 routes are all there, and login needs no credential; a malformed request gets `INVALID_REQUEST` naming each field (no body coercion), while the results route keeps `INVALID_RESULT`; a route whose response doesn't match its schema fails with the field named. `production_build.test.ts` +3 assertions.
+
+613 tests pass and typecheck is clean. Verified on a production build in a separate origin: the docs page loads with the demo data present; signed in through the web app, "Try it out" on `GET /api/v1/projects` returned 200 and on `POST /api/v1/projects` created a project (201) through the session cookie; the demo script (which uses the batch route) ran unchanged.

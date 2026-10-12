@@ -6,7 +6,7 @@
 **Target Platform:** Testify
 **Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md), [rfc_04_rbac_security_matrix.md](rfc_04_rbac_security_matrix.md), [reports_api_and_mcp.md](reports_api_and_mcp.md), [api_roadmap.md](api_roadmap.md)
 
-> This RFC describes the API as it works today. There's no OpenAPI spec yet (planned: [api_roadmap.md](api_roadmap.md) step 3), so this document and the routes in `apps/server/src/routes/` are the reference. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
+> This RFC describes the API as it works today. A generated OpenAPI spec is being added area by area ([api_roadmap.md](api_roadmap.md) step 3): every running server shows it at `/docs` (with "Try it out") and serves it at `/docs/json`. Routes are documented there as each area is done; until then this document and the routes in `apps/server/src/routes/` are the reference. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
 
 ---
 
@@ -516,7 +516,7 @@ sequenceDiagram
 
 | Area | Design | Status |
 | :--- | :--- | :--- |
-| **REST conventions** | Resource naming, verbs, status codes, one id name each (§1-2) | Built (2026-10-12). No OpenAPI spec and no paging yet ([api_roadmap.md](api_roadmap.md) steps 3-4). |
+| **REST conventions** | Resource naming, verbs, status codes, one id name each (§1-2) | Built (2026-10-12). OpenAPI spec at `/docs/json` in progress; no paging yet ([api_roadmap.md](api_roadmap.md) steps 3-4). |
 | **CI results** | Batch endpoint with all-or-nothing mode (§3) | Built: up to 5,000 results per request, one transaction. |
 | **Errors** | Problem details for every error, with a code registry (§4) | Built. |
 | **Closed runs, locked plans** | Writes rejected with HTTP 422 `RUN_CLOSED` / `PLAN_LOCKED` (§4.1) | Built. |

@@ -6,6 +6,7 @@ import { authenticateRequest, requirePermission, permissionsInProject, requireAn
 import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendRunInUseError, sendProjectInUseError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
+import * as S from '../openapi/areas/projects.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
 const VALID_BUILD_STATUSES = new Set(['OPEN', 'CLOSED']);
@@ -30,7 +31,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   const planRepo = new TestPlanRepository(db);
   const runRepo = new TestRunRepository(db);
 
-  app.get('/api/v1/projects', async (request, reply) => {
+  app.get('/api/v1/projects', { schema: S.listProjectsSchema }, async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
 
@@ -51,7 +52,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.post(
     '/api/v1/projects',
-    { preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
+    { schema: S.createProjectSchema, preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const { name, prefix, description } = (request.body as any) || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -79,7 +80,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   // whoever can create projects is the natural owner of renaming them.
   app.patch(
     '/api/v1/projects/:projectId',
-    { preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
+    { schema: S.updateProjectSchema, preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       const existing = await projectRepo.findById(projectId);
@@ -126,7 +127,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.delete(
     '/api/v1/projects/:projectId',
-    { preHandler: requirePermission('PROJECT_DELETE', db, jwtSecret) },
+    { schema: S.deleteProjectSchema, preHandler: requirePermission('PROJECT_DELETE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       const { force } = request.query as { force?: string };
@@ -178,7 +179,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       .execute();
   }
 
-  app.get('/api/v1/projects/:projectId/plans', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/projects/:projectId/plans', { schema: S.listPlansSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
     const project = await projectRepo.findById(projectId);
@@ -192,7 +193,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.post(
     '/api/v1/projects/:projectId/plans',
-    { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
+    { schema: S.createPlanSchema, preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       const project = await projectRepo.findById(projectId);
@@ -215,7 +216,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.patch(
     '/api/v1/plans/:planId',
-    { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
+    { schema: S.updatePlanSchema, preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { planId } = request.params as { planId: string };
       const projectId = request.projectId ?? '';
@@ -243,7 +244,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.delete(
     '/api/v1/plans/:planId',
-    { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
+    { schema: S.deletePlanSchema, preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { planId } = request.params as { planId: string };
       const projectId = request.projectId ?? '';
@@ -278,7 +279,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   // Admin/Test Lead/Automation Service, just never had a route to gate until now).
   app.post(
     '/api/v1/plans/:planId/runs',
-    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
+    { schema: S.createRunSchema, preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { planId } = request.params as { planId: string };
       const projectId = request.projectId ?? '';
@@ -324,7 +325,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.patch(
     '/api/v1/runs/:runId',
-    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
+    { schema: S.updateRunSchema, preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { runId } = request.params as { runId: string };
       const found = await findRunInProject(runId, request.projectId ?? '');
@@ -359,7 +360,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   app.delete(
     '/api/v1/runs/:runId',
-    { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
+    { schema: S.deleteRunSchema, preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { runId } = request.params as { runId: string };
       const { force } = request.query as { force?: string };
