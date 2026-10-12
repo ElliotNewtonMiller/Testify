@@ -387,7 +387,7 @@ if (process.env.NODE_ENV !== 'test') {
       console.error(err);
       process.exit(1);
     }
-    console.log(`Core Loop Fastify Server listening on ${address}`);
+    console.log(`[testify] Listening on ${address}`);
   });
 
   // Scheduled report emails: check for due schedules once a minute. (Tests call

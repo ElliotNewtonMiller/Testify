@@ -11,7 +11,8 @@
     "build": "npm run build --workspace=apps/web && npm run build --workspace=apps/server",
     "start": "npm run start --workspace=apps/server",
     "test": "vitest run",
-    "test:db": "npm run test --workspace=packages/db"
+    "test:db": "npm run test --workspace=packages/db",
+    "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/db && tsc --noEmit -p apps/server && tsc --noEmit -p apps/web"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

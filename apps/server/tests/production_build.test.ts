@@ -113,8 +113,8 @@ describe('Production: the build runs with plain Node', () => {
     child.stderr.on('data', (d) => (output += d));
     try {
       const deadline = Date.now() + 30_000;
-      while (!output.includes('listening on') && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
-      expect(output).toContain('listening on');
+      while (!output.includes('[testify] Listening on') && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      expect(output).toContain('[testify] Listening on');
       expect(output).toContain(`Serving the web app from ${webDir}`);
 
       const page = await fetch(`http://127.0.0.1:${port}/reports`);

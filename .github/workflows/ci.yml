@@ -1,0 +1,86 @@
+# Typecheck, test and build on every push and pull request, then check the production build
+# against a real PostgreSQL (the test suite uses an in-memory one) and that the Docker image builds.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  postgres:
+    name: Production build on PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: testify
+          POSTGRES_USER: testify
+          POSTGRES_PASSWORD: testify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testify -d testify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://testify:testify@localhost:5432/testify
+      JWT_SECRET: ci-only-jwt-secret-not-for-real-use-0123456789
+      ADMIN_PASSWORD: CiAdminPassword123!
+      PORT: 3001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Start the server
+        run: |
+          NODE_ENV=production npm start > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/api/v1/health && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - name: Load the demo data through the API
+        run: npx tsx apps/server/scripts/report-demo.ts
+        env:
+          TESTIFY_URL: http://localhost:3001
+          TESTIFY_PASSWORD: CiAdminPassword123!
+      - name: Restart against the same database
+        run: |
+          pkill -f "[n]ode dist/server.js"
+          sleep 2
+          NODE_ENV=production npm start > server2.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/api/v1/health && break; sleep 1; done
+          curl -sf http://localhost:3001/ | grep -q '<div id="root">'
+          TOKEN=$(curl -sf -X POST http://localhost:3001/api/v1/auth/login -H 'content-type: application/json' \
+            -d '{"username":"admin","password":"CiAdminPassword123!"}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+          curl -sf -H "authorization: Bearer $TOKEN" http://localhost:3001/api/v1/projects | grep -q 'Report Demo'
+      - name: Server log
+        if: always()
+        run: cat server.log server2.log 2>/dev/null || true
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t testify:ci .

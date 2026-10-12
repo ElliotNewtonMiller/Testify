@@ -46,6 +46,8 @@ npm run dev --workspace=apps/server      # Fastify API on :3001 (tsx, no build s
 npm run dev --workspace=apps/web         # Vite dev server on :3000, proxies /api -> :3001
 npm run build                            # production: builds apps/web/dist, then bundles the server to apps/server/dist/server.js
 npm start                                # production: node apps/server/dist/server.js -- API and web app on one port (needs DATABASE_URL)
+npm run typecheck                        # tsc --noEmit in all four workspaces
+docker compose up -d                     # Testify + PostgreSQL (copy .env.example to .env first); see docs/deployment.md
 ```
 
 `GET /api/v1/health` (no sign-in) answers 200 while the server and its database are up, 503 otherwise -- for load balancers and uptime checks.
@@ -1762,6 +1764,27 @@ New tests: `apps/server/tests/observability.test.ts` (5 -- the `JWT_SECRET` and 
 
 Not done (item 27): no README/deployment guide, Dockerfile or CI. The roadmap's `/health` and `/api/v1/system/info` examples (`docs/01_vertical_slices_roadmap.md`) still differ from what's built -- item 38's stale docs.
 
+## Added: README, deployment guide, Docker image and CI (2026-10-11)
+
+Audit item 27 (`docs/audit_2026-10-07.md`). Nothing told a newcomer how to run Testify, there was no way to deploy it beyond reading the code, and nothing ran the tests on a change. Decided with Elliot: GitHub Actions for CI, and the Docker setup was built and run here (the base images and packages were downloaded with his go-ahead).
+
+- **`README.md`**: what Testify does, development quick start (incl. the dev fixture users and `report-demo.ts`), running it for real (Compose or `npm run build` + `npm start`), development commands, the workspace layout, the API/MCP pointers, license.
+- **`docs/deployment.md`**: Compose and plain-Node setups, every environment variable, HTTPS/reverse proxies (`TRUST_PROXY`, `client_max_body_size` for 50 MB imports, the email link address), health and logs, backups (`pg_dump`; keep `JWT_SECRET`/`SECRETS_KEY` too), upgrades (migrations forward-only), several instances (which limits are per instance), and a security checklist.
+- **`Dockerfile`** (multi-stage, `node:22-slim`): the build stage runs `npm ci` and `npm run build`; the runtime stage installs only the server's production dependencies (`npm ci --omit=dev --workspace=apps/server`) and copies `apps/server/dist` and `apps/web/dist`, keeping the repo layout so the server finds the web build. `NODE_ENV=production`, runs as `node`, port 3001, a `HEALTHCHECK` on `/api/v1/health`, `--enable-source-maps`. 426 MB. `.dockerignore` keeps `node_modules`, `dist`, `.git`, `.claude` and `.env` out.
+- **`docker-compose.yml`** + **`.env.example`**: Testify and `postgres:17-alpine` (data in a named volume, `pg_isready` health check, Testify waits for it). `POSTGRES_PASSWORD` and `JWT_SECRET` are required (Compose refuses to start without them); `SECRETS_KEY`, `ADMIN_PASSWORD`, `TRUST_PROXY`, `LOG_LEVEL`, `TESTIFY_PORT` optional.
+- **`.github/workflows/ci.yml`**, on every push and pull request:
+  - typecheck, `npm test`, `npm run build`;
+  - the production build on a real PostgreSQL service: start it, load `report-demo.ts` through the API, restart, and check the web app is served and the data and admin sign-in survived;
+  - `docker build`.
+- Root `npm run typecheck` (all four workspaces). The startup line is now `[testify] Listening on <address>` (was "Core Loop Fastify Server listening on"); `production_build.test.ts` waits for it.
+
+**First run on real PostgreSQL.** Until now every test and dev session used in-memory PGlite. Through Compose, against `postgres:17`, this all worked with no code changes:
+- first start with a generated admin password, the forced password change, `report-demo.ts` (8 runs, batches, manual results);
+- all reports incl. Markdown, case search, a CSV export, a multipart TestLink import, and MCP `list_projects`;
+- a restart keeping data and existing sign-ins.
+
+Twelve cases created at once got twelve distinct consecutive ids (DEMO-14..25). That's the concurrent case-creation race of item 23, which couldn't be shown on PGlite's single connection. The CI job's Postgres steps were also run locally against a Postgres container. The workflow itself hasn't run on GitHub (no remote yet).
+
 ## Implementation status vs. the roadmap
 
 - **Slice 0 (infra/DB):** Done — Kysely client (PGlite locally / real Postgres via `connectionString`, single dialect — see "SQLite support was dropped" above), migration `001_initial_schema.ts` (14+ tables), seeds.
@@ -1783,7 +1806,7 @@ Not done (item 27): no README/deployment guide, Dockerfile or CI. The roadmap's 
 - **Fixed (2026-10-09): rate limits on data export routes** -- see "Added: generous rate limits on API tokens, exports and report emails" above.
 - **CSV export/import lossiness is real, not hypothetical.** A definitions export's `Importance` column folds anything other than exactly `HIGH`/`MEDIUM`/`LOW` to `MEDIUM` on reimport (a `CRITICAL`-priority case silently becomes `MEDIUM`), and a custom field whose name collides with a reserved importer substring (`title`/`suite`/`action`/`result`/etc.) will be miscategorized as that built-in column rather than preserved as a custom field, on both the import and the export-then-reimport path. Both are pre-existing `CsvParser.ts` behaviors surfaced (not introduced) while building the export feature -- see "Added: flexible export..." above. Fixing either would mean changing the already-shipped importer's column-matching logic, out of scope for both features so far.
 - **Fixed (2026-09-21, 2026-09-24, 2026-10-05): Test Plan, Test Run and Project create/edit/delete all really persist now.** All three were client-side mock state -- see "Added: real Test Plan create/edit/delete...", "Added: real Test Run (Build) CRUD..." and "Changed: no sample projects on startup; real Project create/edit/delete" above.
-- **No README or CI config.** Nothing tells a new contributor how to get started or runs tests automatically on changes. (A `LICENSE` — MIT — was added 2026-09-11; still no README.)
+- **Fixed (2026-10-11): README, deployment guide, Docker and CI** -- see "Added: README, deployment guide, Docker image and CI" above.
 
 ## Git
 

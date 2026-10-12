@@ -1,0 +1,38 @@
+# Testify and PostgreSQL. Copy .env.example to .env, fill it in, then:
+#   docker compose up -d
+# Testify is then on http://localhost:3001 (or TESTIFY_PORT). See docs/deployment.md.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: testify
+      POSTGRES_USER: testify
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testify -d testify"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  testify:
+    build: .
+    image: testify:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://testify:${POSTGRES_PASSWORD}@db:5432/testify
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      SECRETS_KEY: ${SECRETS_KEY:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${TESTIFY_PORT:-3001}:3001"
+
+volumes:
+  db-data:
