@@ -187,7 +187,7 @@ Many tools read that format, so the one file gives:
 
 ### 8. Fill the read gaps
 
-**Status:** Not started. Added 2026-10-12.
+**Status:** In progress (with step 4). Part 1 of 3 done (2026-10-12): single items by id, version history, readable ids everywhere.
 
 **What:** reads a script needs and doesn't have today:
 - **Single items by id:** `GET /projects/{id}`, `/plans/{id}`, `/runs/{id}`, `/suites/{id}`, `/cases/{id}` (the case with its latest version and steps), `/results/{id}` (with step results). Today only lists exist, or the whole project's tree.
@@ -235,3 +235,7 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | `/docs` and the spec are open to anyone. | They describe the API, not data; "Try it out" still needs a sign-in or token. |
 | 2026-10-12 | Schemas validate requests, but don't replace the routes' own checks where those give more specific errors (results, batch). Responses are never reshaped by schemas; tests check them instead. | Keeps behaviour and error codes the same while the spec is added area by area. |
 | 2026-10-12 | Report outputs are described only at the top level in the spec, for now. | Each of the six reports has its own deep shape; the catalog and reports_api_and_mcp.md describe them. Full schemas per report are a possible follow-up. |
+| 2026-10-12 | Steps 8 and 4 together, in three commits: single items and readable ids; paging and the new lists; changing one report-email recipient. | |
+| 2026-10-12 | Readable case ids (SHOP-12) are accepted wherever a case id is, not only through a lookup route. | Imported cases can share a readable id across projects: the request's project decides, otherwise `400 AMBIGUOUS_CASE_ID`. |
+| 2026-10-12 | Paging only for lists that grow (cases, a run's results, the audit log, case history); short lists stay whole. | The web app is unchanged. |
+| 2026-10-12 | Bulk changes (e.g. deprecating many cases) become their own roadmap step. | Keeps this pass to reads and paging. |

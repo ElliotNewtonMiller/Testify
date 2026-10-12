@@ -546,3 +546,47 @@ export const removeSuiteCasesSchema = {
   querystring: FORCE_QUERY,
   response: { 200: { description: 'What changed', ...suiteCasesResult }, ...authedErrors(404, [409, '`CASE_HAS_RESULTS`'], [422, '`PLAN_LOCKED`']) },
 };
+
+// ---- Single items and version history ----
+
+const CASE_REF = 'A case id, or its readable id (e.g. SHOP-12)';
+
+export const getSuiteSchema = {
+  tags: SPEC,
+  summary: 'A suite',
+  description: 'Needs `SPEC_VIEW`. Its sub-suites and cases: the spec tree.',
+  params: idParams('suiteId'),
+  response: { 200: wrapped('suite', 'Suite', 'The suite'), ...authedErrors(404) },
+};
+
+export const getCaseSchema = {
+  tags: SPEC,
+  summary: 'A test case',
+  description: `The case and its latest version (content and steps). \`caseId\` may be the readable id, e.g. \`GET /api/v1/cases/SHOP-12\`. Needs \`SPEC_VIEW\`.`,
+  params: { type: 'object', required: ['caseId'], properties: { caseId: { type: 'string', description: CASE_REF } } },
+  response: {
+    200: {
+      description: 'The case',
+      type: 'object',
+      required: ['test_case', 'latest_version'],
+      properties: { test_case: { $ref: 'TestCase#' }, latest_version: { anyOf: [{ $ref: 'Version#' }, { type: 'null' }] } },
+    },
+    ...authedErrors([400, '`AMBIGUOUS_CASE_ID`: a readable id shared by cases in several projects'], 404),
+  },
+};
+
+export const listVersionsSchema = {
+  tags: VERSIONS,
+  summary: "A case's versions",
+  description: 'Every version, newest first, each with its steps. Needs `SPEC_VIEW`.',
+  params: { type: 'object', required: ['caseId'], properties: { caseId: { type: 'string', description: CASE_REF } } },
+  response: { 200: list('versions', 'Version', 'The versions'), ...authedErrors(404) },
+};
+
+export const getVersionSchema = {
+  tags: VERSIONS,
+  summary: 'A version',
+  description: 'Needs `SPEC_VIEW`.',
+  params: idParams('versionId'),
+  response: { 200: wrapped('version', 'Version', 'The version'), ...authedErrors(404) },
+};

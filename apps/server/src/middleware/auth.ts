@@ -11,6 +11,7 @@ import { sendTokenNotAllowedError, sendInvalidTokenError,
   sendTokenIssuerInactiveError, sendError } from '../errors.js';
 import { sendRateLimitedError } from '../services/rateLimits.js';
 import { SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS } from '../sessionLifetime.js';
+import { applyCaseRefs, resolveCaseRef } from '../caseRefs.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -46,7 +47,7 @@ declare module 'fastify' {
  *
  * The project comes from every id the request names:
  * - path params `:projectId`, `:planId`, `:runId`, `:caseId`, `:suiteId`, `:versionId`,
- *   `:scheduleId`, `:tokenId`;
+ *   `:scheduleId`, `:tokenId` (a case may be named by its readable id, e.g. SHOP-12);
  * - `project_id`, `test_plan_id`, `test_run_id`, `test_case_id`, `test_suite_id` in the query or
  *   JSON body.
  * They must all belong to the same project, or the request is refused (`PROJECTS_DIFFER`) -- so a
@@ -57,7 +58,7 @@ declare module 'fastify' {
  */
 export type ResolvedProject = { projectId: string | null } | { conflict: string[] };
 
-export async function resolveRequestProject(request: FastifyRequest, db: Kysely<Database>): Promise<ResolvedProject> {
+export async function resolveRequestProject(request: FastifyRequest, db: Kysely<Database>, projectHint: string | null = null): Promise<ResolvedProject> {
   const params = (request.params as Record<string, string | undefined>) || {};
   const query = (request.query as Record<string, string | undefined>) || {};
   const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : {};
@@ -82,8 +83,6 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
         .executeTakeFirst()
     );
   }
-  const caseId = pick('caseId', 'test_case_id');
-  if (caseId) add(await db.selectFrom('test_cases').select('project_id').where('id', '=', caseId).executeTakeFirst());
   const suiteId = pick('suiteId', 'test_suite_id');
   if (suiteId) add(await db.selectFrom('test_suites').select('project_id').where('id', '=', suiteId).executeTakeFirst());
   if (params.versionId) {
@@ -98,6 +97,14 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   }
   if (params.scheduleId) add(await db.selectFrom('report_schedules').select('project_id').where('id', '=', params.scheduleId).executeTakeFirst());
   if (params.tokenId) add(await db.selectFrom('api_tokens').select('project_id').where('id', '=', params.tokenId).executeTakeFirst());
+  // A case id, or its readable id (SHOP-12; see caseRefs.ts). Last, so a readable id shared by
+  // several projects can be settled by the project the other ids name -- or, failing that, by
+  // `projectHint` (an API token's own project).
+  const caseRef = pick('caseId', 'test_case_id');
+  if (caseRef) {
+    const resolvedCase = await resolveCaseRef(db, caseRef, found.size === 1 ? [...found][0] : projectHint);
+    if ('projectId' in resolvedCase) found.add(resolvedCase.projectId);
+  }
 
   if (found.size > 1) return { conflict: [...found] };
   return { projectId: found.size === 1 ? [...found][0] : null };
@@ -307,7 +314,9 @@ export async function authenticateRequest(
     }
   }
 
-  const resolved = await resolveRequestProject(request, db);
+  // An API token's own project settles a readable case id shared by several projects (caseRefs.ts).
+  const projectHint = token.startsWith(API_TOKEN_PREFIX) ? ((await new ApiTokenRepository(db).findByHash(hashToken(token)))?.project_id ?? null) : null;
+  const resolved = await resolveRequestProject(request, db, projectHint);
   if ('conflict' in resolved) {
     sendError(reply, 400, 'The ids in this request belong to different projects.', { code: 'PROJECTS_DIFFER', project_ids: resolved.conflict });
     return null;
@@ -316,7 +325,9 @@ export async function authenticateRequest(
   request.projectId = projectId;
 
   if (token.startsWith(API_TOKEN_PREFIX)) {
-    return authenticateApiToken(token, request, reply, db, projectId);
+    const tokenUser = await authenticateApiToken(token, request, reply, db, projectId);
+    if (!tokenUser) return null;
+    return (await applyCaseRefsOrRefuse(request, reply, db, projectId ?? tokenUser.api_token!.project_id)) ? tokenUser : null;
   }
 
   const result = verifyJwt(token, jwtSecret);
@@ -371,7 +382,15 @@ export async function authenticateRequest(
   };
 
   request.user = authUser;
-  return authUser;
+  return (await applyCaseRefsOrRefuse(request, reply, db, projectId)) ? authUser : null;
+}
+
+/** Readable case ids → internal ids (caseRefs.ts), once the caller is known; false after refusing an ambiguous one. */
+async function applyCaseRefsOrRefuse(request: FastifyRequest, reply: FastifyReply, db: Kysely<Database>, projectId: string | null): Promise<boolean> {
+  const problem = await applyCaseRefs(request, db, projectId);
+  if (!problem) return true;
+  sendError(reply, 400, problem.detail, { code: 'AMBIGUOUS_CASE_ID', invalid_params: problem.invalid_params });
+  return false;
 }
 
 /**

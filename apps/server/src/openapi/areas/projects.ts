@@ -316,3 +316,29 @@ export const batchResultsSchema = {
     ),
   },
 };
+
+// ---- Single items ----
+
+export const getProjectSchema = {
+  tags: ['Projects'],
+  summary: 'A project',
+  description: 'With `permissions`: what the caller may do in it. Needs `SPEC_VIEW` or `EXECUTE_RUN` in the project.',
+  params: idParams('projectId'),
+  response: { 200: wrapped('project', 'Project', 'The project'), ...authedErrors(404) },
+};
+
+export const getPlanSchema = {
+  tags: ['Plans'],
+  summary: 'A test plan',
+  description: 'Needs `SPEC_VIEW` or `EXECUTE_RUN`. Its cases: `GET /api/v1/plans/{planId}/cases`.',
+  params: idParams('planId'),
+  response: { 200: wrapped('plan', 'Plan', 'The plan'), ...authedErrors(404) },
+};
+
+export const getRunSchema = {
+  tags: ['Runs and results'],
+  summary: 'A test run',
+  description: 'Needs `SPEC_VIEW` or `EXECUTE_RUN`. Its results: `GET /api/v1/runs/{runId}/results`; a summary: the `run_summary` report.',
+  params: idParams('runId'),
+  response: { 200: wrapped('run', 'Run', 'The run'), ...authedErrors(404) },
+};

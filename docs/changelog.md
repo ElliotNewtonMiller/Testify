@@ -2082,3 +2082,33 @@ The last stage of step 3, which is now Done.
 - **Links:** the README, RFC 03, `reports_api_and_mcp.md` and CLAUDE.md's doc map point to the guide. In the roadmap, step 3 is Done and the "mostly undocumented" weakness is struck through.
 
 621 tests pass and typecheck is clean (no test asserted the old batch wording).
+
+## Added: reading single items, version history, and readable case ids everywhere (API roadmap steps 8 and 4, part 1) (2026-10-12)
+
+Steps 8 ("fill the read gaps") and 4 (paging) are being done together, in three commits. Decided with Elliot:
+- readable case ids work everywhere a case id does, not only through a lookup route;
+- paging only for lists that grow;
+- bulk changes become their own roadmap step.
+
+This is the first commit.
+
+- **Single items by id** (7 new routes, all on `/docs`):
+  - `GET /projects/{id}` (with the caller's `permissions` there), `GET /plans/{id}`, `GET /runs/{id}`: for anyone who can view or execute in the project;
+  - `GET /suites/{id}`, `GET /cases/{id}` (the case and its latest version with steps), `GET /cases/{id}/versions` (every version, newest first, with steps; new `TestCaseVersionRepository.findAllForCase`) and `GET /versions/{id}`: need `SPEC_VIEW`.
+- **Readable case ids everywhere** (`apps/server/src/caseRefs.ts`):
+  - Wherever a case id is taken (the `:caseId` path parameter, `test_case_id` in the query or body, `case_ids` in a body), the readable id works too: `GET /cases/SHOP-12`, `DELETE /plans/{id}/cases/SHOP-12`, `{"test_case_id": "SHOP-12"}`, a move's `case_ids`, the `case_history` report.
+  - `authenticateRequest` swaps them for internal ids once the caller is identified, so routes only see internal ids, and nothing about readable ids is revealed before sign-in.
+  - Project resolution understands them, so permissions are checked in the right project.
+- **Shared readable ids:** imported cases keep the ids from their file, so two projects can share one (normally they can't, since ids start with the project's unique prefix). Then the request's project decides: the project its other ids name, or an API token's own project. Without one, the answer is `400 AMBIGUOUS_CASE_ID` naming the field. A value matching nothing is left alone, so the route answers its usual 404.
+- **Migration `009_index_case_external_id`:** an index on `test_cases.external_id`, since lookups by readable id don't know the project.
+- **Docs:** RFC 03's conventions, route map and error codes; the roadmap (status and four decisions); CLAUDE.md.
+
+Tests:
+- `apps/server/tests/api_reads.test.ts` (4):
+  - every new read, with 404s for unknown ids;
+  - readable ids on the case routes, plan membership (path and body), a move and a report;
+  - a readable id shared by two projects: refused alone, settled by a plan or by an API token's project, never mentioned without a sign-in;
+  - a token of another project gets `TOKEN_PROJECT_MISMATCH` on all five items, readable id included.
+- `migrations.test.ts` +1 (009 and its rollback). `openapi.test.ts` now expects 91 routes.
+
+626 tests pass and typecheck is clean.

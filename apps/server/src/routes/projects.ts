@@ -179,6 +179,29 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       .execute();
   }
 
+  // ---- Single items ----
+
+  app.get('/api/v1/projects/:projectId', { schema: S.getProjectSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+    const { projectId } = request.params as { projectId: string };
+    const project = await projectRepo.findById(projectId);
+    if (!project) return sendError(reply, 404, 'Project not found');
+    return { project: { ...project, permissions: await permissionsInProject(request.user!, projectId, db) } };
+  });
+
+  app.get('/api/v1/plans/:planId', { schema: S.getPlanSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+    const { planId } = request.params as { planId: string };
+    const plan = await planRepo.findById(planId);
+    if (!plan || plan.project_id !== request.projectId) return sendError(reply, 404, 'Test plan not found');
+    return { plan };
+  });
+
+  app.get('/api/v1/runs/:runId', { schema: S.getRunSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const found = await findRunInProject(runId, request.projectId ?? '');
+    if (!found) return sendError(reply, 404, 'Test run not found');
+    return { run: found.run };
+  });
+
   app.get('/api/v1/projects/:projectId/plans', { schema: S.listPlansSchema, preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };

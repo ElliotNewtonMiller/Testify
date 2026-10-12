@@ -150,4 +150,13 @@ describe('migrateToLatest', () => {
     expect((await migrator.migrateTo('007_rename_runs_and_results')).error).toBeUndefined();
     expect(JSON.parse(await stored('rs1'))).toEqual([{ kind: 'overview' }, { kind: 'latest_run', filter: { q: 'x' }, plan_id: 'pl1' }]);
   }, 30_000);
+  it('009 adds an index for looking cases up by readable id; rolling back removes it', async () => {
+    const indexes = async () =>
+      (await sql<{ indexname: string }>`SELECT indexname FROM pg_indexes WHERE tablename = 'test_cases'`.execute(db)).rows.map((r) => r.indexname);
+    expect(await migrateToLatest(db)).toContain('009_index_case_external_id');
+    expect(await indexes()).toContain('idx_test_cases_external_id');
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('008_rename_report_schedule_fields')).error).toBeUndefined();
+    expect(await indexes()).not.toContain('idx_test_cases_external_id');
+  }, 30_000);
 });

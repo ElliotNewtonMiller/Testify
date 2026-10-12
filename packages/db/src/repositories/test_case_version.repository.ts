@@ -166,6 +166,18 @@ export class TestCaseVersionRepository {
     };
   }
 
+  /** Every version of a case, newest first, each with its steps. */
+  async findAllForCase(testCaseId: string): Promise<TestCaseVersionWithSteps[]> {
+    const versions = await this.db
+      .selectFrom('test_case_versions')
+      .selectAll()
+      .where('test_case_id', '=', testCaseId)
+      .orderBy('version_number', 'desc')
+      .execute();
+    const steps = await this.getStepsForVersions(versions.map((v) => v.id));
+    return versions.map((v) => ({ ...v, steps: steps.get(v.id) ?? [] }));
+  }
+
   /** Batched lookup of version rows by id (metadata only, no steps) -- for scopes (e.g. a
    * Plan's pinned versions) that need a specific, possibly-non-latest set of version ids in
    * one round-trip instead of N findById calls. */

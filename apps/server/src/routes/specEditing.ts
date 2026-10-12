@@ -201,6 +201,38 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
+  // ---- Reading single items ----
+
+  const specView = requirePermission('SPEC_VIEW', db, jwtSecret);
+
+  app.get('/api/v1/suites/:suiteId', { schema: S.getSuiteSchema, preHandler: specView }, async (request, reply) => {
+    const { suiteId } = request.params as { suiteId: string };
+    const suite = await suiteRepo.findById(suiteId);
+    if (!suite || suite.project_id !== request.projectId) return sendError(reply, 404, 'Test suite not found');
+    return { suite };
+  });
+
+  app.get('/api/v1/cases/:caseId', { schema: S.getCaseSchema, preHandler: specView }, async (request, reply) => {
+    const { caseId } = request.params as { caseId: string };
+    const testCase = await caseRepo.findById(caseId);
+    if (!testCase || testCase.project_id !== request.projectId) return sendError(reply, 404, 'Test case not found');
+    return { test_case: testCase, latest_version: (await versionRepo.findLatestVersion(caseId)) ?? null };
+  });
+
+  app.get('/api/v1/cases/:caseId/versions', { schema: S.listVersionsSchema, preHandler: specView }, async (request, reply) => {
+    const { caseId } = request.params as { caseId: string };
+    const testCase = await caseRepo.findById(caseId);
+    if (!testCase || testCase.project_id !== request.projectId) return sendError(reply, 404, 'Test case not found');
+    return { versions: await versionRepo.findAllForCase(caseId) };
+  });
+
+  app.get('/api/v1/versions/:versionId', { schema: S.getVersionSchema, preHandler: specView }, async (request, reply) => {
+    const { versionId } = request.params as { versionId: string };
+    const version = await versionRepo.findById(versionId);
+    if (!version) return sendError(reply, 404, 'Test case version not found');
+    return { version };
+  });
+
   // ---- Test Cases ----
 
   app.post(
