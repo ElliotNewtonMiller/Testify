@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { authHeaders } from "../utils/session";
 
+import { errorMessage as apiErrorMessage } from "../api/errors";
 interface ProjectItem {
   id: string;
   name: string;
@@ -246,7 +247,7 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
       });
       const data = await readJsonResponse(res);
       if (!res.ok) {
-        throw new Error(data.error || data.detail || describeFailedResponse(res, "Failed to preview import"));
+        throw new Error(apiErrorMessage(data) || describeFailedResponse(res, "Failed to preview import"));
       }
       setDryRunResult(data);
       return data as DryRunResult;
@@ -322,7 +323,7 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
       });
       const data = await readJsonResponse(res);
       if (!res.ok) {
-        throw new Error(data.error || data.detail || describeFailedResponse(res, "Import failed"));
+        throw new Error(apiErrorMessage(data) || describeFailedResponse(res, "Import failed"));
       }
       setExecuteResult(data);
       setStep("RESULTS");

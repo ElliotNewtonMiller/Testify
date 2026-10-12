@@ -142,7 +142,7 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
 
       const badAddress = await call(app, admin, 'POST', url, { sections, recipients: 'not-an-email' });
       expect(badAddress.statusCode).toBe(400);
-      expect(JSON.parse(badAddress.payload).details[0].param).toBe('recipients');
+      expect(JSON.parse(badAddress.payload).invalid_params[0].name).toBe('recipients');
       const tooMany = Array.from({ length: 51 }, (_, i) => `u${i}@x.com`);
       expect((await call(app, admin, 'POST', url, { sections, recipients: tooMany })).statusCode).toBe(400);
       expect((await call(app, admin, 'POST', url, { sections: [{ report_id: 'case_history', params: { case_id: 'SHOP-101' } }], recipients: 'a@b.co' })).statusCode).toBe(400);
@@ -173,7 +173,7 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       const bad = async (extra: Record<string, unknown>, param: string) => {
         const res = await call(app, admin, 'POST', base, scheduleBody(seed.planId, extra));
         expect(res.statusCode).toBe(400);
-        expect(JSON.parse(res.payload).details[0].param).toBe(param);
+        expect(JSON.parse(res.payload).invalid_params[0].name).toBe(param);
       };
       await bad({ timezone: 'Mars/Base' }, 'timezone');
       await bad({ time_of_day: '9am' }, 'time_of_day');

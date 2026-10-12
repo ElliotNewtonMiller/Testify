@@ -28,6 +28,7 @@ import {
 import { requirePermission, authenticateRequest, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { requestOrigin } from '../audit.js';
 
+import { sendError } from '../errors.js';
 function pickSerializer(format: unknown): IFileSerializer {
   return format === 'STANDARD_CSV' ? new CsvExportSerializer() : new JsonExportSerializer();
 }
@@ -58,7 +59,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
     const { projectId, planId } = request.params as { projectId: string; planId: string };
     const plan = await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst();
     if (!plan || plan.project_id !== projectId) {
-      return reply.status(404).send({ error: 'Test plan not found in this project' });
+      return sendError(reply, 404, 'Test plan not found in this project');
     }
     const builds = await runRepo.findByTestPlan(planId);
     return reply.status(200).send({ builds });
@@ -75,7 +76,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
       const statusFilter: 'ALL' | 'APPROVED_ONLY' = statusFilterRaw === 'APPROVED_ONLY' ? 'APPROVED_ONLY' : 'ALL';
 
       const project = await projectRepo.findById(projectId);
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      if (!project) return sendError(reply, 404, 'Project not found');
 
       const scopeType = scope?.type === 'SUITE' || scope?.type === 'PLAN' ? scope.type : 'PROJECT';
 
@@ -87,7 +88,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         const suiteId = scope.suite_id as string;
         const rootSuite = await suiteRepo.findById(suiteId);
         if (!rootSuite || rootSuite.project_id !== projectId) {
-          return reply.status(404).send({ error: `Suite ${suiteId} not found in project ${projectId}` });
+          return sendError(reply, 404, `Suite ${suiteId} not found in project ${projectId}`);
         }
         suiteTree = await suiteRepo.getTree(projectId, suiteId);
         exportScope = { type: 'SUITE', suite_id: suiteId, suite_name: rootSuite.name };
@@ -95,7 +96,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         const planId = scope.plan_id as string;
         const plan = await planRepo.findById(planId);
         if (!plan || plan.project_id !== projectId) {
-          return reply.status(404).send({ error: `Plan ${planId} not found in project ${projectId}` });
+          return sendError(reply, 404, `Plan ${planId} not found in project ${projectId}`);
         }
         suiteTree = await suiteRepo.getTree(projectId);
         exportScope = { type: 'PLAN', plan_id: planId, plan_name: plan.name };
@@ -294,11 +295,11 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         .executeTakeFirst();
 
       if (!buildPlanInfo || buildPlanInfo.project_id !== projectId) {
-        return reply.status(404).send({ error: `Build ${buildId} not found under Plan ${planId} in Project ${projectId}` });
+        return sendError(reply, 404, `Build ${buildId} not found under Plan ${planId} in Project ${projectId}`);
       }
 
       const project = await projectRepo.findById(projectId);
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      if (!project) return sendError(reply, 404, 'Project not found');
 
       const executions = await resultRepo.findByRun(buildId);
       const executionIds = executions.map((e) => e.id);

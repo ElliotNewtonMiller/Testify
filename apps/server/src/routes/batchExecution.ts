@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { sendPlanLockedError, sendBuildClosedError, sendTokenProjectMismatchError, sendProblemDetails } from '../errors.js';
+import { sendPlanLockedError, sendBuildClosedError, sendTokenProjectMismatchError, sendProblemDetails, sendError } from '../errors.js';
 import { MAX_BATCH_RESULTS, validateBatchItem, type InvalidParam } from '../services/resultValidation.js';
 import { resolveCaseLinkability } from './testPlanCases.js';
 import { authenticateRequest } from '../middleware/auth.js';
@@ -43,7 +43,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       const user = await authenticateRequest(req, reply, db, jwtSecret);
       if (!user) return;
       if (!user.permissions.includes('EXECUTE_RUN') && !user.permissions.includes('SYSTEM_ADMIN')) {
-        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'EXECUTE_RUN' });
+        return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: 'EXECUTE_RUN' });
       }
 
       const startTime = Date.now();
@@ -72,7 +72,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
         .executeTakeFirst();
 
       if (!buildPlanInfo) {
-        return reply.status(404).send({ error: `Build ID ${buildId} not found under Test Plan ${planId}` });
+        return sendError(reply, 404, `Build ID ${buildId} not found under Test Plan ${planId}`);
       }
 
       if (buildPlanInfo.plan_status === 'LOCKED' || buildPlanInfo.plan_status === 'ARCHIVED') {
@@ -100,7 +100,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           title: 'Bad Request',
           code: 'INVALID_RESULT',
           detail: `executions must be a list of 1 to ${MAX_BATCH_RESULTS} results`,
-          invalid_params: [{ name: 'test_results', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
+          invalid_params: [{ name: 'executions', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
           instance: req.url,
         });
       }

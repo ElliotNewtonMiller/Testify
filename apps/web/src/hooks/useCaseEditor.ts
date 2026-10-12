@@ -4,6 +4,7 @@ import { useStepsScrollPreserved } from "./useStepsScrollPreserved";
 import type { CustomFieldValueEntry, SpecCaseDetail, SpecTreeData, Step } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface CaseEditorOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -193,7 +194,7 @@ export function useCaseEditor({
         );
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.detail || data.error || "Failed to save custom field value");
+          throw new Error(errorMessage(data) || "Failed to save custom field value");
         }
         setFilterDataTick((t) => t + 1);
         // The save genuinely succeeded against requestCaseId's own data regardless -- but if
@@ -243,7 +244,7 @@ export function useCaseEditor({
             handleAuthExpiry();
             return false;
           }
-          throw new Error(data.error || data.detail || "Failed to save");
+          throw new Error(errorMessage(data) || "Failed to save");
         }
         await refreshSpecTree();
         return true;
@@ -270,7 +271,7 @@ export function useCaseEditor({
           handleAuthExpiry();
           return;
         }
-        throw new Error(data.error || data.detail || "Failed to create draft");
+        throw new Error(errorMessage(data) || "Failed to create draft");
       }
       setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       await refreshSpecTree();
@@ -296,7 +297,7 @@ export function useCaseEditor({
           handleAuthExpiry();
           return;
         }
-        throw new Error(data.error || data.detail || "Failed to approve");
+        throw new Error(errorMessage(data) || "Failed to approve");
       }
       setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       await refreshSpecTree();
@@ -326,7 +327,7 @@ export function useCaseEditor({
             handleAuthExpiry();
             return;
           }
-          throw new Error(data.detail || data.error || `Failed to ${transition}`);
+          throw new Error(errorMessage(data) || `Failed to ${transition}`);
         }
         setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
         await refreshSpecTree();
@@ -363,7 +364,7 @@ export function useCaseEditor({
             handleAuthExpiry();
             return;
           }
-          throw new Error(data.error || data.detail || "Failed to save");
+          throw new Error(errorMessage(data) || "Failed to save");
         }
         setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       } catch (err: any) {
@@ -418,7 +419,7 @@ export function useCaseEditor({
             handleAuthExpiry();
             return;
           }
-          throw new Error(data.error || data.detail || "Failed to save steps");
+          throw new Error(errorMessage(data) || "Failed to save steps");
         }
         setSpecCaseDetail((prev) => (prev ? { ...prev, version: data.version } : prev));
       } catch (err: any) {
@@ -536,7 +537,7 @@ export function useCaseEditor({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || "Failed to create case");
+      if (!res.ok) throw new Error(errorMessage(data) || "Failed to create case");
       setNewCaseTitle("");
       setIsCaseCreateFormOpen(false);
       await refreshSpecTree();
@@ -565,7 +566,7 @@ export function useCaseEditor({
         }
         if (!res.ok && res.status !== 204) {
           const data = await res.json();
-          throw new Error(data.error || "Failed to delete case");
+          throw new Error(errorMessage(data) || "Failed to delete case");
         }
         if (specSelectedCaseId === caseId) setSpecSelectedCaseId(null);
         showToast("Case deleted");
@@ -585,7 +586,7 @@ export function useCaseEditor({
       );
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to delete case");
+        throw new Error(errorMessage(data) || "Failed to delete case");
       }
       if (specSelectedCaseId === deleteCasePrompt.id) setSpecSelectedCaseId(null);
       setDeleteCasePrompt(null);

@@ -3,6 +3,7 @@ import type { UserProfile } from "../components/AuthModal";
 import type { ActionType, EntityItem, EntityType } from "../components/EntityManagementModal";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface ScopeOptions {
   currentUser: UserProfile | null;
   showToast: (msg: string) => void;
@@ -109,7 +110,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create project");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to create project");
             const created = data.project;
             setProjectsList((prev) => [...prev, { id: created.id, name: created.name, prefix: created.prefix }]);
             handleSelectProject(created.id);
@@ -129,7 +130,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update project");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to update project");
             const updated = data.project;
             setProjectsList((prev) =>
               prev.map((p) => (p.id === updated.id ? { ...p, name: updated.name, prefix: updated.prefix } : p)),
@@ -156,7 +157,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, status: item.status || "ACTIVE" }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test plan");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to create test plan");
             const created = data.plan;
             setPlansList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
             setSelectedPlanId(created.id);
@@ -174,7 +175,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test plan");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to update test plan");
             const updatedPlan = data.plan;
             setPlansList((prev) =>
               prev.map((p) => (p.id === updatedPlan.id ? { id: updatedPlan.id, name: updatedPlan.name, status: updatedPlan.status } : p)),
@@ -201,7 +202,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, status: item.status || "OPEN" }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to create test run");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to create test run");
             const created = data.build;
             setRunsList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
             setSelectedRunId(created.id);
@@ -219,7 +220,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || data.detail || "Failed to update test run");
+            if (!res.ok) throw new Error(errorMessage(data) || "Failed to update test run");
             const updatedRun = data.build;
             setRunsList((prev) =>
               prev.map((r) => (r.id === updatedRun.id ? { id: updatedRun.id, name: updatedRun.name, status: updatedRun.status } : r)),
@@ -287,7 +288,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete project");
+        throw new Error(errorMessage(data) || "Failed to delete project");
       }
       applyProjectDeletedLocally(project.id);
       showToast(`Deleted Project: ${project.name}`);
@@ -306,7 +307,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete project");
+        throw new Error(errorMessage(data) || "Failed to delete project");
       }
       applyProjectDeletedLocally(deleteProjectPrompt.id);
       showToast(`Deleted Project: ${deleteProjectPrompt.name}`);
@@ -333,7 +334,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
         }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}) as any);
-          throw new Error(data.error || "Failed to delete test plan");
+          throw new Error(errorMessage(data) || "Failed to delete test plan");
         }
         applyPlanDeletedLocally(planId);
         showToast(`Deleted Test Plan: ${planName}`);
@@ -354,7 +355,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete test plan");
+        throw new Error(errorMessage(data) || "Failed to delete test plan");
       }
       applyPlanDeletedLocally(deletePlanPrompt.id);
       const deletedName = deletePlanPrompt.name;
@@ -396,7 +397,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
         }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}) as any);
-          throw new Error(data.error || "Failed to delete test run");
+          throw new Error(errorMessage(data) || "Failed to delete test run");
         }
         applyRunDeletedLocally(runId);
         showToast(`Deleted Test Run: ${runName}`);
@@ -417,7 +418,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as any);
-        throw new Error(data.error || "Failed to delete test run");
+        throw new Error(errorMessage(data) || "Failed to delete test run");
       }
       applyRunDeletedLocally(deleteRunPrompt.id);
       const deletedName = deleteRunPrompt.name;
@@ -601,7 +602,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
           handleAuthExpiry();
           return;
         }
-        throw new Error(data.detail || data.error || "Failed to update the run");
+        throw new Error(errorMessage(data) || "Failed to update the run");
       }
       setRunsList((prev) => prev.map((r) => (r.id === selectedRunId ? { ...r, status: nextStatus } : r)));
       showToast(nextStatus === "CLOSED" ? "Run closed." : "Run opened.");

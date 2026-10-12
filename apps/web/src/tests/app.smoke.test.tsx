@@ -75,7 +75,7 @@ function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionS
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
     calls.push({ method, path: url.pathname, body });
     const p = url.pathname;
-    if (p === '/api/v1/auth/me') return opts.signedIn ? json({ user: opts.signedIn }) : json({ error: 'Unauthorized' }, 401);
+    if (p === '/api/v1/auth/me') return opts.signedIn ? json({ user: opts.signedIn }) : json({ status: 401, code: 'UNAUTHORIZED', detail: 'Unauthorized' }, 401);
     if (p === '/api/v1/projects' && method === 'GET')
       return json({ projects: [{ ...project, permissions: opts.projectPermissions ?? opts.signedIn?.permissions ?? [] }] });
     if (p === '/api/v1/projects/prj-1/plans') return json({ plans: [plan] });
@@ -91,9 +91,9 @@ function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionS
       const status = opts.executionStatus ?? 201;
       return status === 201
         ? json({ id: 'exe-1', verdict: body.verdict, status: 'COMPLETED', created_at: T, build_status: 'OPEN' }, 201)
-        : json({ error: 'Forbidden: Insufficient privileges' }, status);
+        : json({ status, code: 'FORBIDDEN', detail: 'Forbidden: Insufficient privileges' }, status);
     }
-    return json({ error: `no fixture for ${method} ${p}` }, 404);
+    return json({ status: 404, code: 'NOT_FOUND', detail: `no fixture for ${method} ${p}` }, 404);
   });
   vi.stubGlobal('fetch', fake);
   window.fetch = fake as unknown as typeof window.fetch;

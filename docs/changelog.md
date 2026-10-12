@@ -1863,3 +1863,49 @@ The decisions and the four stages are recorded in the roadmap's Decisions table.
 - Reports count it.
 
 Not yet run against real PostgreSQL (the Docker images were removed); CI's PostgreSQL job covers it once pushed.
+
+## Changed: one error format for the whole API (API consistency, stage 2 of 4) (2026-10-12)
+
+Stage 2 of making the API consistent (`docs/api_roadmap.md` step 1). Errors came in two shapes:
+- a plain `{ error, code }` from about 185 places in the server;
+- problem details from the shared helpers in `errors.ts`.
+
+Some routes even put a code in `error` and the message in `message`. The web app read messages in about 70 different ways (`data.error || data.detail || …`).
+
+- **One format** (`apps/server/src/errors.ts`): every error is RFC 7807 problem details, sent as `application/problem+json`. The fields are `type`, `title` (the standard HTTP status name), `status`, `code`, `detail` (the human message), `instance` (the request path), `timestamp`, optional `invalid_params: [{ name, reason }]`, and extension fields such as `required_permission` (was camelCase `requiredPermission`), `project_ids` and `retry_after_seconds`.
+- **The new `sendError(reply, status, detail, { code?, invalid_params?, ...extensions })`** sends it. `code` defaults from the status (`404` → `NOT_FOUND`, `403` → `FORBIDDEN`, …), and validators' `{ param, reason }` lists are normalized to `{ name, reason }` (`reportErrorParams`). `sendProblemDetails` and every `send*Error` helper now go through it.
+- **Converted:**
+  - All 186 old-format sends in 17 files, by a script that parses each error object. Where `error` held a code (`INVALID_PARAMS`, `SECRETS_KEY_REQUIRED`, …), it became `code`, and `message` became `detail`.
+  - Case search and the report routes now return their validation problems as `invalid_params`.
+  - The two hand-built 422s in the single-result route use the helper.
+- **Server-wide:**
+  - The global error handler answers Fastify's own errors (bad JSON, body too large) in the format with the standard code for the status, keeping Fastify's message.
+  - Unexpected errors keep the generic message and `request_id`.
+  - Unknown addresses get a problem-details 404, with or without a web build.
+- **Kept as they are:**
+  - The MCP endpoint's errors, which the JSON-RPC protocol defines.
+  - The health check's 503 body.
+  - A batch request's per-item results, which are data inside a normal response.
+- **Web:**
+  - New `apps/web/src/api/errors.ts` with `errorMessage(body)` (reads `detail`, then the old fields, so it also copes with anything unconverted) and `errorCode(body)`.
+  - The ~70 message reads in 15 files use it. Four components already had a state variable named `errorMessage`, so they import it as `apiErrorMessage`.
+  - The smoke test's fake API answers in the new format.
+- **Stage 1 fix:** stage 1's rename script had also changed a field name in one error message (`'executions'` → `'test_results'`, in the batch route) and a test title. Both are restored.
+
+New test: `apps/server/tests/api_conventions.test.ts` (8). It checks every kind of error for the full problem-details shape and that the old `error`/`message` fields are gone:
+- 400: invalid body, bad JSON, ids from different projects with `project_ids`;
+- 401, including an ended sign-in;
+- 403, with `required_permission`;
+- 404: an unknown item and an unknown address;
+- 409;
+- 422: a closed run;
+- 400 with `invalid_params`;
+- 413;
+- 429, with `Retry-After`;
+- 500, with a request id and no internals.
+
+About 25 existing assertions moved from `error` to `detail` or `code`.
+
+605/605 tests pass and typecheck is clean (incl. no unused code in `apps/web`). Verified live on a production build:
+- a wrong password still shows the sign-in page's own message;
+- creating a project with a taken prefix shows the server's message, "Prefix 'DEMO' is already used by another project".

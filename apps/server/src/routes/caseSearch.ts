@@ -5,6 +5,7 @@ import { ProjectRepository } from '@testify/db';
 import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { CaseFilterService } from '../services/caseFilterService.js';
 
+import { sendError, reportErrorParams } from '../errors.js';
 /**
  * Case search & filter routes. The evaluation itself lives in CaseFilterService (shared with
  * the reports, which accept the same `filter`). The web UI calls exactly these routes (it
@@ -28,7 +29,7 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {
-        return reply.status(404).send({ error: 'Project not found' });
+        return sendError(reply, 404, 'Project not found');
       }
       return { fields: await caseFilter.fieldCatalog(projectId) };
     }
@@ -40,11 +41,15 @@ export async function registerCaseSearchRoutes(app: FastifyInstance, db: Kysely<
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       if (!(await projectRepo.findById(projectId))) {
-        return reply.status(404).send({ error: 'Project not found' });
+        return sendError(reply, 404, 'Project not found');
       }
       const outcome = await caseFilter.evaluate(projectId, (request.body ?? {}) as Record<string, unknown>);
       if (!outcome.ok) {
-        return reply.status(outcome.status).send(outcome.details !== undefined ? { error: outcome.error, details: outcome.details } : { error: outcome.error });
+        // Validation failures carry a code (INVALID_FILTER) and a list of problems; lookups a message.
+        const isCode = /^[A-Z_]+$/.test(outcome.error);
+        const params = reportErrorParams(outcome.details);
+        const detail = isCode ? params.invalid_params?.map((p) => p.reason).join('; ') || outcome.error : outcome.error;
+        return sendError(reply, outcome.status, detail, { ...(isCode ? { code: outcome.error } : {}), ...params });
       }
       return { case_ids: outcome.case_ids, suite_ids: outcome.suite_ids, total_cases: outcome.total_cases };
     }

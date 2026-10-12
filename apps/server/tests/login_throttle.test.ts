@@ -49,7 +49,7 @@ describe('Sign-in limits', () => {
     expect(locked.statusCode).toBe(429);
     expect(body(locked).code).toBe('ACCOUNT_LOCKED');
     expect(Number(locked.headers['retry-after'])).toBeGreaterThan(14 * 60);
-    expect(body(locked).error).toMatch(/locked/);
+    expect(body(locked).detail).toMatch(/locked/);
 
     // The admin sees the lock, and the lock is in the Security Audit Log.
     const listed = body(await call(adminToken, 'GET', '/api/v1/admin/users')).users.find((u: any) => u.id === userId);

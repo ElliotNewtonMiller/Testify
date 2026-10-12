@@ -59,7 +59,7 @@ describe('Auth & Admin API Integration Tests', () => {
 
     expect(res.statusCode).toBe(401);
     const body = JSON.parse(res.payload);
-    expect(body.error).toBe('Invalid credentials or user account disabled');
+    expect(body.detail).toBe('Invalid credentials or user account disabled');
   });
 
   it('handles logout request cleanly', async () => {
@@ -120,7 +120,7 @@ describe('Auth & Admin API Integration Tests', () => {
     });
 
     expect(weakRes.statusCode).toBe(400);
-    expect(JSON.parse(weakRes.payload).error).toContain('PASSWORD_POLICY_VIOLATION');
+    expect(JSON.parse(weakRes.payload).detail).toContain('PASSWORD_POLICY_VIOLATION');
 
     // 2. Update with valid password (>=16 chars)
     const validRes = await app.inject({
@@ -191,7 +191,7 @@ describe('Auth & Admin API Integration Tests', () => {
     });
 
     expect(forbiddenRes.statusCode).toBe(403);
-    expect(JSON.parse(forbiddenRes.payload).error).toContain('Only administrators can change usernames');
+    expect(JSON.parse(forbiddenRes.payload).detail).toContain('Only administrators can change usernames');
   });
 
   it('allows Admin to provision users, delegate permissions, and view security audit logs', async () => {

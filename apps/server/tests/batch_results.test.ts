@@ -80,7 +80,7 @@ describe('Batch results: validation, steps and transactions', () => {
     for (const executions of [[], 'all of them', null]) {
       const res = await batch(executions);
       expect(res.statusCode).toBe(400);
-      expect(body(res).invalid_params[0].name).toBe('test_results');
+      expect(body(res).invalid_params[0].name).toBe('executions');
     }
   });
 

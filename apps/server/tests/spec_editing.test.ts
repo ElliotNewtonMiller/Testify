@@ -669,8 +669,8 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       expect((await send('PUT', `${base}/test-suites/${seed.suiteId}`, { name })).statusCode).toBe(400);
       expect((await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: name })).statusCode).toBe(400);
     }
-    expect(body(await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '' })).error).toBe("title can't be blank");
-    expect(body(await send('POST', `${base}/test-suites`, { name: tooLong })).error).toBe('name can be at most 255 characters');
+    expect(body(await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '' })).detail).toBe("title can't be blank");
+    expect(body(await send('POST', `${base}/test-suites`, { name: tooLong })).detail).toBe('name can be at most 255 characters');
 
     // Nothing was changed by the refusals; valid names are trimmed; other fields still edit alone.
     const renamed = await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '  Trimmed title  ' });

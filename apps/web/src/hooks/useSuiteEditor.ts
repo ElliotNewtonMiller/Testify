@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { CustomFieldValueEntry } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface SuiteEditorOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -110,7 +111,7 @@ export function useSuiteEditor({
         );
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.detail || data.error || "Failed to save custom field value");
+          throw new Error(errorMessage(data) || "Failed to save custom field value");
         }
         setFilterDataTick((t) => t + 1);
         if (selectedSuiteIdRef.current === requestSuiteId) {
@@ -160,7 +161,7 @@ export function useSuiteEditor({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || "Failed to save suite");
+      if (!res.ok) throw new Error(errorMessage(data) || "Failed to save suite");
       setSuiteFormState(null);
       showToast(isCreate ? "Suite created" : "Suite updated");
       await refreshSpecTree();
@@ -190,7 +191,7 @@ export function useSuiteEditor({
             handleAuthExpiry();
             return false;
           }
-          throw new Error(data.error || data.detail || "Failed to rename suite");
+          throw new Error(errorMessage(data) || "Failed to rename suite");
         }
         await refreshSpecTree();
         return true;
@@ -218,7 +219,7 @@ export function useSuiteEditor({
         }
         if (!res.ok && res.status !== 204) {
           const data = await res.json();
-          throw new Error(data.error || "Failed to delete suite");
+          throw new Error(errorMessage(data) || "Failed to delete suite");
         }
         if (selectedSuiteId === suiteId) setSelectedSuiteId(null);
         showToast("Suite deleted");
@@ -238,7 +239,7 @@ export function useSuiteEditor({
       );
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to delete suite");
+        throw new Error(errorMessage(data) || "Failed to delete suite");
       }
       if (selectedSuiteId === deleteSuitePrompt.id) setSelectedSuiteId(null);
       setDeleteSuitePrompt(null);

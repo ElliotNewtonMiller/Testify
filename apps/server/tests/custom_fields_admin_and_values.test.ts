@@ -331,7 +331,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       payload: { entity_type: 'TestCase', name: 'sev', field_label: 'Severity', field_type: 'TEXT', is_required: true },
     });
     expect(noDefault.statusCode).toBe(422);
-    expect(JSON.parse(noDefault.payload).error).toContain('default value');
+    expect(JSON.parse(noDefault.payload).detail).toContain('default value');
 
     const badNumberDefault = await app.inject({
       method: 'POST',
@@ -386,7 +386,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       payload: { entity_type: 'TestCase', name: 'tags_empty', field_label: 'Tags', field_type: 'MULTI_SELECT', is_required: true, default_value: '[]', options },
     });
     expect(emptyArrayDefault.statusCode).toBe(422);
-    expect(JSON.parse(emptyArrayDefault.payload).error).toContain('default value');
+    expect(JSON.parse(emptyArrayDefault.payload).detail).toContain('default value');
 
     const realDefault = await app.inject({
       method: 'POST',
@@ -724,7 +724,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const broken = await create('broken_pattern', '([a-z]');
     expect(broken.statusCode).toBe(400);
     expect(JSON.parse(broken.payload).code).toBe('INVALID_VALIDATION_PATTERN');
-    expect(JSON.parse(broken.payload).error).toMatch(/^The validation pattern isn't a valid regular expression/);
+    expect(JSON.parse(broken.payload).detail).toMatch(/^The validation pattern isn't a valid regular expression/);
     expect((await create('long_pattern', 'a'.repeat(501))).statusCode).toBe(400);
 
     // A pattern that compiles but backtracks catastrophically can be saved...

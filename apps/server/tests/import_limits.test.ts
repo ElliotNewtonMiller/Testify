@@ -66,21 +66,21 @@ describe('Import size and concurrency limits', () => {
     });
     expect(json.statusCode).toBe(413);
     expect(body(json).code).toBe('IMPORT_TOO_LARGE');
-    expect(body(json).error).toContain('multipart');
+    expect(body(json).detail).toContain('multipart');
 
     const tooBig = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [
       { name: 'huge.xml', content: Buffer.alloc(IMPORT_MAX_FILE_BYTES + 1, 0x20) },
     ]);
     expect(tooBig.statusCode).toBe(413);
     expect(body(tooBig).code).toBe('IMPORT_TOO_LARGE');
-    expect(body(tooBig).error).toContain('50 MB');
+    expect(body(tooBig).detail).toContain('50 MB');
 
     const two = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [
       { name: 'a.xml', content: xml() },
       { name: 'b.xml', content: xml() },
     ]);
     expect(two.statusCode).toBe(413);
-    expect(body(two).error).toBe('Send one file per import.');
+    expect(body(two).detail).toBe('Send one file per import.');
   }, 60_000);
 
   it(`runs at most ${MAX_CONCURRENT_IMPORTS} imports at once; anonymous requests take no slot`, async () => {

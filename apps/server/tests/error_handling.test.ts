@@ -35,7 +35,8 @@ describe('Server errors', () => {
   const expectGeneric500 = (res: any, ...secrets: string[]) => {
     expect(res.statusCode).toBe(500);
     const body = JSON.parse(res.payload);
-    expect(body).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR', request_id: expect.any(String) });
+    expect(res.headers['content-type']).toMatch(/application\/problem\+json/);
+    expect(body).toMatchObject({ status: 500, code: 'INTERNAL_ERROR', detail: INTERNAL_ERROR_MESSAGE, request_id: expect.any(String) });
     for (const secret of secrets) expect(res.payload).not.toContain(secret);
   };
 
@@ -62,7 +63,7 @@ describe('Server errors', () => {
       payload: '{"username": ',
     });
     expect(badJson.statusCode).toBe(400);
-    expect(JSON.parse(badJson.payload).error).toBeTruthy();
+    expect(JSON.parse(badJson.payload).detail).toBeTruthy();
 
     const weak = await app.inject({
       method: 'PUT',
@@ -71,6 +72,6 @@ describe('Server errors', () => {
       payload: { newPassword: 'weak', currentPassword: 'password' },
     });
     expect(weak.statusCode).toBe(400);
-    expect(JSON.parse(weak.payload).error).toContain('PASSWORD_POLICY_VIOLATION');
+    expect(JSON.parse(weak.payload).detail).toContain('PASSWORD_POLICY_VIOLATION');
   });
 });

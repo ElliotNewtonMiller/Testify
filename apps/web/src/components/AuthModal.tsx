@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { validatePasswordPolicy } from "../../../../packages/core/src/security/passwordPolicy";
 import { jsonHeaders } from "../utils/session";
 
+import { errorMessage as apiErrorMessage } from "../api/errors";
 export interface UserProfile {
   id: string;
   username: string;
@@ -59,7 +60,7 @@ export function AuthModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Invalid credentials");
+        throw new Error(apiErrorMessage(data) || "Invalid credentials");
       }
 
       onLoginSuccess(data.user);
@@ -105,7 +106,7 @@ export function AuthModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to update credentials");
+        throw new Error(apiErrorMessage(data) || "Failed to update credentials");
       }
 
       setSuccessMessage(

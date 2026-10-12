@@ -1,5 +1,19 @@
+import { STATUS_CODES } from 'node:http';
 import type { FastifyReply } from 'fastify';
 
+/**
+ * Every error the API returns is RFC 7807 "problem details" (`application/problem+json`):
+ *
+ *   { type, title, status, code, detail, instance, invalid_params?, timestamp, ...extensions }
+ *
+ * - `code`: a stable machine-readable code (e.g. `RUN_CLOSED`); clients branch on it.
+ * - `detail`: the human-readable message; the web app shows it as-is.
+ * - `invalid_params`: `[{ name, reason }]`, one per problem with the request's fields.
+ * - Extensions carry extra facts about a specific error (e.g. `project_ids`, `retry_after`).
+ *
+ * Routes send errors with `sendError` (or one of the specific `send*Error` helpers below);
+ * the global error handler and the not-found handler use the same format.
+ */
 export interface ProblemDetailsOptions {
   type?: string;
   title?: string;
@@ -7,25 +21,91 @@ export interface ProblemDetailsOptions {
   code: string;
   detail: string;
   instance?: string;
-  invalid_params?: Array<{ name: string; reason: string }>;
+  invalid_params?: Array<{ name?: string; param?: string; reason: string }>;
+}
+
+/** Codes for errors that don't name a more specific one. */
+const DEFAULT_CODES: Record<number, string> = {
+  400: 'INVALID_REQUEST',
+  401: 'UNAUTHORIZED',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  405: 'METHOD_NOT_ALLOWED',
+  409: 'CONFLICT',
+  413: 'PAYLOAD_TOO_LARGE',
+  415: 'UNSUPPORTED_MEDIA_TYPE',
+  422: 'UNPROCESSABLE',
+  429: 'RATE_LIMITED',
+  500: 'INTERNAL_ERROR',
+  503: 'UNAVAILABLE',
+};
+
+export function defaultErrorCode(status: number): string {
+  return DEFAULT_CODES[status] ?? (status >= 500 ? 'INTERNAL_ERROR' : 'INVALID_REQUEST');
+}
+
+/** `invalid_params` entries as `{ name, reason }` (some validators say `param`). */
+function normalizeInvalidParams(list: ProblemDetailsOptions['invalid_params']): Array<{ name: string; reason: string }> | undefined {
+  if (!Array.isArray(list)) return undefined;
+  return list.map((p) => ({ name: String(p.name ?? p.param ?? ''), reason: p.reason }));
+}
+
+/** The problem-details body for an error (without sending it). */
+export function problemBody(
+  status: number,
+  detail: string,
+  options: { code?: string; type?: string; title?: string; instance?: string; invalid_params?: ProblemDetailsOptions['invalid_params']; [extension: string]: unknown } = {}
+): Record<string, unknown> {
+  const { code: givenCode, type, title, instance, invalid_params, ...extensions } = options;
+  const code = givenCode || defaultErrorCode(status);
+  const body: Record<string, unknown> = {
+    type: type || `https://api.testify.dev/errors/${code}`,
+    title: title || STATUS_CODES[status] || 'Error',
+    status,
+    code,
+    detail,
+    ...extensions,
+    timestamp: new Date().toISOString(),
+  };
+  if (instance) body.instance = instance;
+  const params = normalizeInvalidParams(invalid_params);
+  if (params) body.invalid_params = params;
+  return body;
+}
+
+/** The path of the request a reply answers, for `instance`. */
+function requestPath(reply: FastifyReply): string | undefined {
+  const url = (reply as { request?: { url?: string } }).request?.url;
+  return url ? url.split('?')[0] : undefined;
+}
+
+/**
+ * Sends an error as problem details. `code` defaults from the status (e.g. 404 `NOT_FOUND`);
+ * any other options become extension members of the body.
+ */
+export function sendError(
+  reply: FastifyReply,
+  status: number,
+  detail: string,
+  options: { code?: string; invalid_params?: ProblemDetailsOptions['invalid_params']; [extension: string]: unknown } = {}
+) {
+  reply.header('content-type', 'application/problem+json');
+  return reply.status(status).send(problemBody(status, detail, { ...options, instance: (options.instance as string | undefined) || requestPath(reply) }));
+}
+
+/** `invalid_params` from a validator's problem list: `[{ param, reason }]` objects, or plain strings. */
+export function reportErrorParams(details: unknown): { invalid_params?: Array<{ name: string; reason: string }> } {
+  if (!Array.isArray(details) || details.length === 0) return {};
+  return {
+    invalid_params: details.map((d) =>
+      typeof d === 'string' ? { name: '', reason: d } : { name: String((d as any).name ?? (d as any).param ?? ''), reason: String((d as any).reason ?? '') }
+    ),
+  };
 }
 
 export function sendProblemDetails(reply: FastifyReply, options: ProblemDetailsOptions) {
-  const status = options.status || 422;
-  const type = options.type || `https://api.testify.dev/errors/${options.code}`;
-  const title = options.title || (status === 422 ? 'Unprocessable Entity' : 'Error');
-
-  reply.header('content-type', 'application/problem+json');
-  return reply.status(status).send({
-    type,
-    title,
-    status,
-    code: options.code,
-    detail: options.detail,
-    instance: options.instance,
-    invalid_params: options.invalid_params,
-    timestamp: new Date().toISOString(),
-  });
+  const { status = 422, code, detail, ...rest } = options;
+  return sendError(reply, status, detail, { code, ...rest });
 }
 
 export function sendPlanLockedError(reply: FastifyReply, planId: string, instance?: string) {

@@ -4,14 +4,14 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, SessionRepository, ApiTokenRepository, RoleName } from '@testify/db';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
-import { sendRoleInUseError } from '../errors.js';
+import { sendRoleInUseError, sendError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
 import { requestOrigin } from '../audit.js';
 
 /** Replies for a guard violation (see services/adminGuard.ts); returns false for any other error. */
 function sendGuardError(reply: any, err: unknown): boolean {
   if (!(err instanceof AdminGuardError)) return false;
-  reply.status(err.status).send({ error: err.message, code: err.code, ...err.details });
+  sendError(reply, err.status, err.message, { code: err.code, ...err.details });
   return true;
 }
 
@@ -71,12 +71,12 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const { username, email, password, global_role, project_roles } = (request.body as any) || {};
 
     if (!username || !email || !password) {
-      return reply.status(400).send({ error: 'Username, email, and password are required' });
+      return sendError(reply, 400, 'Username, email, and password are required');
     }
 
     const resolvedGlobalRole = (global_role as RoleName) || 'Tester';
     if (!(await roleRepo.roleExists(resolvedGlobalRole))) {
-      return reply.status(400).send({ error: `UNKNOWN_ROLE: '${resolvedGlobalRole}' is not a valid role name` });
+      return sendError(reply, 400, `UNKNOWN_ROLE: '${resolvedGlobalRole}' is not a valid role name`);
     }
 
     // A new user can't be given more than the person creating them has.
@@ -144,7 +144,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       });
     } catch (err: any) {
       if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION') || err.message?.startsWith('UNKNOWN_ROLE')) {
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
       throw err; // unexpected: the global error handler logs it and answers 500
     }
@@ -158,7 +158,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
     const user = await userRepo.findById(userId);
     if (!user) {
-      return reply.status(404).send({ error: 'User not found' });
+      return sendError(reply, 404, 'User not found');
     }
 
     const projectRoleChanges = (Array.isArray(project_roles) ? project_roles : []).filter((pr: any) => pr?.project_id);
@@ -183,7 +183,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     } catch (err: any) {
       if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_ROLE')) {
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
       throw err;
     }
@@ -229,12 +229,12 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const { status } = (request.body as { status: 'ACTIVE' | 'DISABLED' }) || {};
 
     if (!status || !['ACTIVE', 'DISABLED'].includes(status)) {
-      return reply.status(400).send({ error: 'Status must be ACTIVE or DISABLED' });
+      return sendError(reply, 400, 'Status must be ACTIVE or DISABLED');
     }
 
     const target = await userRepo.findById(userId);
     if (!target) {
-      return reply.status(404).send({ error: 'User not found' });
+      return sendError(reply, 404, 'User not found');
     }
     // Setting a user Active also clears a sign-in lock -- the Admin Panel's "Unlock".
     const wasLocked = !!target.locked_until && new Date(target.locked_until).getTime() > Date.now();
@@ -289,16 +289,13 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const { password } = ((request.body as any) || {}) as { password?: unknown };
 
     if (userId === activeUser.id) {
-      return reply.status(400).send({
-        error: 'Change your own password from your profile instead (it asks for your current one).',
-        code: 'CANNOT_RESET_OWN_PASSWORD',
-      });
+      return sendError(reply, 400, 'Change your own password from your profile instead (it asks for your current one).', { code: 'CANNOT_RESET_OWN_PASSWORD' });
     }
     if (password !== undefined && password !== null && typeof password !== 'string') {
-      return reply.status(400).send({ error: 'password must be text', code: 'INVALID_PASSWORD' });
+      return sendError(reply, 400, 'password must be text', { code: 'INVALID_PASSWORD' });
     }
     const target = await userRepo.findById(userId);
-    if (!target) return reply.status(404).send({ error: 'User not found' });
+    if (!target) return sendError(reply, 404, 'User not found');
 
     const generated = !password;
     const temporaryPassword = generated ? randomBytes(18).toString('base64url') : (password as string);
@@ -331,7 +328,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     } catch (err: any) {
       if (sendGuardError(reply, err)) return;
       if (typeof err?.message === 'string' && err.message.startsWith('PASSWORD_POLICY_VIOLATION: ')) {
-        return reply.status(400).send({ error: err.message.slice('PASSWORD_POLICY_VIOLATION: '.length), code: 'PASSWORD_POLICY_VIOLATION' });
+        return sendError(reply, 400, err.message.slice('PASSWORD_POLICY_VIOLATION: '.length), { code: 'PASSWORD_POLICY_VIOLATION' });
       }
       throw err;
     }
@@ -420,7 +417,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const { name, description, permission_keys } = (request.body as any) || {};
 
     if (!name || typeof name !== 'string' || !Array.isArray(permission_keys)) {
-      return reply.status(400).send({ error: 'name (string) and permission_keys (array) are required' });
+      return sendError(reply, 400, 'name (string) and permission_keys (array) are required');
     }
 
     try {
@@ -447,10 +444,10 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     } catch (err: any) {
       if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
       if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
-        return reply.status(409).send({ error: err.message });
+        return sendError(reply, 409, err.message);
       }
       throw err; // unexpected: the global error handler logs it and answers 500
     }
@@ -464,7 +461,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
     const existing = await roleRepo.getRole(roleId);
     if (!existing) {
-      return reply.status(404).send({ error: 'Role not found' });
+      return sendError(reply, 404, 'Role not found');
     }
 
     try {
@@ -503,10 +500,10 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     } catch (err: any) {
       if (sendGuardError(reply, err)) return;
       if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
       if (err.message?.startsWith('ROLE_NAME_TAKEN')) {
-        return reply.status(409).send({ error: err.message });
+        return sendError(reply, 409, err.message);
       }
       throw err; // unexpected: the global error handler logs it and answers 500
     }
@@ -521,7 +518,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
     const existing = await roleRepo.getRole(roleId);
     if (!existing) {
-      return reply.status(404).send({ error: 'Role not found' });
+      return sendError(reply, 404, 'Role not found');
     }
     try {
       await assertRoleWithinCeiling(activeUser, existing);
@@ -533,7 +530,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     const result = await roleRepo.deleteRole(roleId);
     if (!result.deleted) {
       if (result.blockedByUserCount === 0) {
-        return reply.status(404).send({ error: 'Role not found' });
+        return sendError(reply, 404, 'Role not found');
       }
       return sendRoleInUseError(reply, roleId, result.blockedByUserCount, request.url, result.roleName);
     }
@@ -568,7 +565,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
       const user = await userRepo.findById(userId);
       if (!user) {
-        return reply.status(404).send({ error: 'User not found' });
+        return sendError(reply, 404, 'User not found');
       }
 
       const overrides = await roleRepo.getUserOverrides(userId, projectId || null);
@@ -588,11 +585,11 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
 
       const user = await userRepo.findById(userId);
       if (!user) {
-        return reply.status(404).send({ error: 'User not found' });
+        return sendError(reply, 404, 'User not found');
       }
 
       if (!Array.isArray(overrides)) {
-        return reply.status(400).send({ error: 'overrides must be an array of {permission_key, is_granted}' });
+        return sendError(reply, 400, 'overrides must be an array of {permission_key, is_granted}');
       }
 
       try {
@@ -608,7 +605,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       } catch (err: any) {
         if (sendGuardError(reply, err)) return;
         if (err.message?.startsWith('UNKNOWN_PERMISSION_KEY')) {
-          return reply.status(400).send({ error: err.message });
+          return sendError(reply, 400, err.message);
         }
         throw err;
       }

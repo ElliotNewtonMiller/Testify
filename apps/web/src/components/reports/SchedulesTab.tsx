@@ -2,6 +2,7 @@ import React from "react";
 import { Empty, ErrorNote, InfoTip, Loading, Section, buttonStyle, fmtWhen, selectStyle } from "./shared";
 import { authHeaders, jsonHeaders } from "../../utils/session";
 
+import { errorMessage } from "../../api/errors";
 type SectionKind = "overview" | "latest_run" | "test_health" | "plan_trend";
 
 interface ScheduleSection {
@@ -47,7 +48,7 @@ async function api(method: string, url: string, body?: unknown) {
   const headers = body !== undefined ? jsonHeaders() : authHeaders();
   const res = await fetch(url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.detail || data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(errorMessage(data) || `Request failed (${res.status})`);
   return data;
 }
 

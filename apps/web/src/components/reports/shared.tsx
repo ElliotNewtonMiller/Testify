@@ -1,6 +1,7 @@
 import React from "react";
 import { jsonHeaders } from "../../utils/session";
 
+import { errorMessage } from "../../api/errors";
 /**
  * Shared pieces of the Reports view. Every number shown comes from the report API
  * (POST /api/v1/projects/:projectId/reports/:reportId) -- the same engine agents and
@@ -37,7 +38,7 @@ export async function runReport<T = any>(projectId: string, reportId: string, pa
     let message = `Request failed (${res.status})`;
     try {
       const body = await res.json();
-      message = body.message || body.detail || body.error || message;
+      message = errorMessage(body) || message;
     } catch {
       // non-JSON error body
     }

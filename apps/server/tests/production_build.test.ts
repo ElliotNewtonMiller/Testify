@@ -65,8 +65,8 @@ describe('Production: the server serves the built web app', () => {
 
     const api = await get('/api/v1/no-such-route');
     expect(api.statusCode).toBe(404);
-    expect(api.headers['content-type']).toMatch(/application\/json/);
-    expect(JSON.parse(api.payload)).toMatchObject({ error: 'Not Found', statusCode: 404 });
+    expect(api.headers['content-type']).toMatch(/application\/problem\+json/);
+    expect(JSON.parse(api.payload)).toMatchObject({ status: 404, code: 'NOT_FOUND', detail: expect.stringContaining('/api/v1/no-such-route') });
     expect((await get('/api/v1/auth/me')).statusCode).toBe(401); // real routes are untouched
     expect((await app.inject({ method: 'POST', url: '/somewhere' })).statusCode).toBe(404);
 
@@ -98,7 +98,7 @@ describe('Production: the server serves the built web app', () => {
 });
 
 describe('Production: the build runs with plain Node', () => {
-  it('test_runs dist/server.js, which starts with node and serves the API and the web app', async () => {
+  it('builds dist/server.js, which starts with node and serves the API and the web app', async () => {
     const built = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: serverDir, encoding: 'utf8', timeout: 60_000 });
     expect(built.status).toBe(0);
 

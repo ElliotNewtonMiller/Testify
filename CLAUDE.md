@@ -162,9 +162,12 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
 
 - **Routes:** nest project data under `/api/v1/projects/:projectId/...`, and verify every other id in the route belongs to that project (404 otherwise).
 - **Errors:**
-  - Use the problem-details helpers in `errors.ts`.
+  - Every error is problem details (`application/problem+json`): `type`, `title`, `status`, `code`, `detail` (the message people see), the request path as `instance`, `timestamp`, optional `invalid_params: [{ name, reason }]`, and extension fields in snake_case (e.g. `required_permission`, `project_ids`).
+  - Send errors with `sendError(reply, status, detail, { code?, invalid_params?, ...extensions })` from `errors.ts`, or one of its specific `send*Error` helpers. `code` defaults from the status (404 → `NOT_FOUND`).
   - Throw a plain `Error` only when its message is meant for users (`isPublicError`).
-  - Anything else becomes a generic 500 with a `request_id`, and the details go only to the log.
+  - Anything else becomes a generic 500 with a `request_id`, and the details go only to the log. Unknown addresses get a 404 in the same format.
+  - Exceptions: the MCP endpoint answers in JSON-RPC (the protocol requires it), and a batch request's per-item results carry their own `error` text inside a normal response.
+  - In the web app, read error messages with `errorMessage(body)` from `apps/web/src/api/errors.ts`.
 - **Audit rows:**
   - Write one for every security-relevant change, with `...requestOrigin(request)` (real address and User-Agent).
   - A new action only shows in the Admin Panel's Security Audit Log once it's added to `securityActions` in `routes/admin.ts`.

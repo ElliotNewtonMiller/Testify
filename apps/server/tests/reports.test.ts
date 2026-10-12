@@ -152,7 +152,7 @@ describe('Reports: catalog-driven report API', () => {
       const { token: restrictedToken } = await createAndLoginAs(app, adminToken, JSON.parse(createRoleRes.payload).role.name);
       const restrictedRes = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${restrictedToken}` } });
       expect(restrictedRes.statusCode).toBe(403);
-      expect(JSON.parse(restrictedRes.payload).requiredPermission).toBe('SPEC_VIEW');
+      expect(JSON.parse(restrictedRes.payload).required_permission).toBe('SPEC_VIEW');
     });
 
     it('an API token can read its own project\'s reports but is refused on any other project', async () => {
@@ -186,11 +186,11 @@ describe('Reports: catalog-driven report API', () => {
 
       const missing = await report(app, token, seed.projectId, 'run_summary', { limit: 0, extra: true });
       expect(missing.statusCode).toBe(400);
-      expect(JSON.parse(missing.payload).details).toEqual(
+      expect(JSON.parse(missing.payload).invalid_params).toEqual(
         expect.arrayContaining([
-          { param: 'run_id', reason: 'is required' },
-          { param: 'extra', reason: 'unknown parameter' },
-          { param: 'limit', reason: 'must be at least 1' },
+          { name: 'run_id', reason: 'is required' },
+          { name: 'extra', reason: 'unknown parameter' },
+          { name: 'limit', reason: 'must be at least 1' },
         ])
       );
 
@@ -201,14 +201,14 @@ describe('Reports: catalog-driven report API', () => {
       const otherRun = await addRun(db, otherPlan.id, 'X', '2099-01-01T00:00:00.000Z');
       const cross = await report(app, token, seed.projectId, 'run_summary', { run_id: otherRun });
       expect(cross.statusCode).toBe(404);
-      expect(JSON.parse(cross.payload).error).toBe('RUN_NOT_FOUND');
+      expect(JSON.parse(cross.payload).code).toBe('RUN_NOT_FOUND');
       expect((await report(app, token, seed.projectId, 'test_health', { plan_id: otherPlan.id })).statusCode).toBe(404);
 
       expect((await report(app, token, seed.projectId, 'case_history', { case_id: 'SHOP-101' }, 'markdown')).statusCode).toBe(400);
 
       const badFilter = await report(app, token, seed.projectId, 'run_summary', { run_id: seed.buildId, filter: { filters: [{ field: 'nope', op: 'is', value: 1 }] } });
       expect(badFilter.statusCode).toBe(400);
-      expect(JSON.parse(badFilter.payload).error).toBe('INVALID_FILTER');
+      expect(JSON.parse(badFilter.payload).code).toBe('INVALID_FILTER');
     });
   });
 

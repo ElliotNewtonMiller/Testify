@@ -9,6 +9,7 @@ import {
 import type { SpecTreeData, WorkspaceData } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface CaseSearchOptions {
   selectedProjectId: string;
   selectedPlanId: string;
@@ -133,7 +134,7 @@ export function useCaseSearch({
         if (seq !== caseSearchRequestSeq.current) return;
         if (!res.ok) {
           setFilterError(
-            Array.isArray(data.details) ? data.details.join("; ") : data.error || "Search failed",
+            errorMessage(data) || "Search failed",
           );
           return;
         }

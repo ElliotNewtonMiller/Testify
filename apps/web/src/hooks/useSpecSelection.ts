@@ -11,6 +11,7 @@ import {
 } from "../utils/suiteTree";
 import { jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface SpecSelectionOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -204,7 +205,7 @@ export function useSpecSelection({
           handleAuthExpiry();
           return;
         }
-        throw new Error(data.error || data.detail || "Failed to move");
+        throw new Error(errorMessage(data) || "Failed to move");
       }
       const moved = (data.moved_suite_count ?? 0) + (data.moved_case_count ?? 0);
       const noun =

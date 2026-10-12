@@ -4,7 +4,7 @@ import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, TestRunRepository } from '@testify/db';
 import { authenticateRequest, requirePermission, permissionsInProject, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
-import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
+import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
@@ -55,16 +55,14 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     async (request, reply) => {
       const { name, prefix, description } = (request.body as any) || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
-        return reply.status(400).send({ error: 'name (string) is required' });
+        return sendError(reply, 400, 'name (string) is required');
       }
       const normalizedPrefix = typeof prefix === 'string' ? prefix.trim().toUpperCase() : '';
       if (!PROJECT_PREFIX_RE.test(normalizedPrefix)) {
-        return reply.status(400).send({
-          error: 'prefix is required: a letter followed by letters or digits, at most 10 characters (e.g. SHOP)',
-        });
+        return sendError(reply, 400, 'prefix is required: a letter followed by letters or digits, at most 10 characters (e.g. SHOP)');
       }
       if (await projectRepo.findByPrefix(normalizedPrefix)) {
-        return reply.status(409).send({ error: `Prefix '${normalizedPrefix}' is already used by another project` });
+        return sendError(reply, 409, `Prefix '${normalizedPrefix}' is already used by another project`);
       }
       const project = await projectRepo.create({
         name: name.trim(),
@@ -85,32 +83,28 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     async (request, reply) => {
       const { projectId } = request.params as { projectId: string };
       const existing = await projectRepo.findById(projectId);
-      if (!existing) return reply.status(404).send({ error: 'Project not found' });
+      if (!existing) return sendError(reply, 404, 'Project not found');
 
       const { name, prefix, description } = (request.body as any) || {};
       if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
-        return reply.status(400).send({ error: 'name must be a non-empty string' });
+        return sendError(reply, 400, 'name must be a non-empty string');
       }
       let nextPrefix: string | undefined;
       if (prefix !== undefined) {
         nextPrefix = typeof prefix === 'string' ? prefix.trim().toUpperCase() : '';
         if (!PROJECT_PREFIX_RE.test(nextPrefix)) {
-          return reply.status(400).send({
-            error: 'prefix must be a letter followed by letters or digits, at most 10 characters',
-          });
+          return sendError(reply, 400, 'prefix must be a letter followed by letters or digits, at most 10 characters');
         }
         if (nextPrefix !== existing.prefix) {
           const taken = await projectRepo.findByPrefix(nextPrefix);
           if (taken && taken.id !== projectId) {
-            return reply.status(409).send({ error: `Prefix '${nextPrefix}' is already used by another project` });
+            return sendError(reply, 409, `Prefix '${nextPrefix}' is already used by another project`);
           }
           // Existing cases' external ids were built from the old prefix -- changing it would
           // leave them mismatched, so it's only allowed while the project has no cases.
           const { caseCount } = await projectRepo.getContentCounts(projectId);
           if (caseCount > 0) {
-            return reply.status(409).send({
-              error: `The prefix can't change once the project has test cases (it's part of their IDs, e.g. ${existing.prefix}-1).`,
-            });
+            return sendError(reply, 409, `The prefix can't change once the project has test cases (it's part of their IDs, e.g. ${existing.prefix}-1).`);
           }
         } else {
           nextPrefix = undefined;
@@ -137,7 +131,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       const { projectId } = request.params as { projectId: string };
       const { force } = request.query as { force?: string };
       const existing = await projectRepo.findById(projectId);
-      if (!existing) return reply.status(404).send({ error: 'Project not found' });
+      if (!existing) return sendError(reply, 404, 'Project not found');
 
       const result = await projectRepo.deleteWithForce(projectId, { force: force === 'true' });
       if (!result.deleted && 'blocked' in result) {
@@ -150,7 +144,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
           existing.name
         );
       }
-      if (!result.deleted) return reply.status(404).send({ error: 'Project not found' });
+      if (!result.deleted) return sendError(reply, 404, 'Project not found');
       await writeProjectAudit(request, 'PROJECT_DELETED', projectId, {
         name: existing.name,
         prefix: existing.prefix,
@@ -189,7 +183,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     const { projectId } = request.params as { projectId: string };
     const project = await projectRepo.findById(projectId);
     if (!project) {
-      return reply.status(404).send({ error: 'Project not found' });
+      return sendError(reply, 404, 'Project not found');
     }
 
     const plans = await planRepo.findByProject(projectId);
@@ -203,15 +197,15 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       const { projectId } = request.params as { projectId: string };
       const project = await projectRepo.findById(projectId);
       if (!project) {
-        return reply.status(404).send({ error: 'Project not found' });
+        return sendError(reply, 404, 'Project not found');
       }
 
       const { name, description, status } = (request.body as any) || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
-        return reply.status(400).send({ error: 'name (string) is required' });
+        return sendError(reply, 400, 'name (string) is required');
       }
       if (status !== undefined && !VALID_PLAN_STATUSES.has(status)) {
-        return reply.status(400).send({ error: `status must be one of ${Array.from(VALID_PLAN_STATUSES).join(', ')}` });
+        return sendError(reply, 400, `status must be one of ${Array.from(VALID_PLAN_STATUSES).join(', ')}`);
       }
 
       const plan = await planRepo.create({ project_id: projectId, name: name.trim(), description: description ?? null, status });
@@ -226,15 +220,15 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       const { projectId, planId } = request.params as { projectId: string; planId: string };
       const existing = await planRepo.findById(planId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
 
       const { name, description, status } = (request.body as any) || {};
       if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
-        return reply.status(400).send({ error: 'name must be a non-empty string' });
+        return sendError(reply, 400, 'name must be a non-empty string');
       }
       if (status !== undefined && !VALID_PLAN_STATUSES.has(status)) {
-        return reply.status(400).send({ error: `status must be one of ${Array.from(VALID_PLAN_STATUSES).join(', ')}` });
+        return sendError(reply, 400, `status must be one of ${Array.from(VALID_PLAN_STATUSES).join(', ')}`);
       }
 
       const plan = await planRepo.update(planId, {
@@ -255,7 +249,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
       const existing = await planRepo.findById(planId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
 
       const result = await planRepo.deleteWithForce(planId, { force: force === 'true' });
@@ -287,15 +281,15 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       const { projectId, planId } = request.params as { projectId: string; planId: string };
       const plan = await planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
 
       const { name, description, status, release_date } = (request.body as any) || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
-        return reply.status(400).send({ error: 'name (string) is required' });
+        return sendError(reply, 400, 'name (string) is required');
       }
       if (status !== undefined && !VALID_BUILD_STATUSES.has(status)) {
-        return reply.status(400).send({ error: `status must be one of ${Array.from(VALID_BUILD_STATUSES).join(', ')}` });
+        return sendError(reply, 400, `status must be one of ${Array.from(VALID_BUILD_STATUSES).join(', ')}`);
       }
 
       try {
@@ -310,7 +304,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       } catch (err: any) {
         // uq_build_plan_name -- a Postgres unique_violation surfaces as a raw 500 otherwise.
         if (err?.code === '23505') {
-          return reply.status(409).send({ error: `A test run named "${name.trim()}" already exists in this test plan` });
+          return sendError(reply, 409, `A test run named "${name.trim()}" already exists in this test plan`);
         }
         throw err;
       }
@@ -324,19 +318,19 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       const { projectId, planId, buildId } = request.params as { projectId: string; planId: string; buildId: string };
       const plan = await planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
       const existing = await runRepo.findById(buildId);
       if (!existing || existing.test_plan_id !== planId) {
-        return reply.status(404).send({ error: 'Test run not found in this test plan' });
+        return sendError(reply, 404, 'Test run not found in this test plan');
       }
 
       const { name, description, status, release_date } = (request.body as any) || {};
       if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
-        return reply.status(400).send({ error: 'name must be a non-empty string' });
+        return sendError(reply, 400, 'name must be a non-empty string');
       }
       if (status !== undefined && !VALID_BUILD_STATUSES.has(status)) {
-        return reply.status(400).send({ error: `status must be one of ${Array.from(VALID_BUILD_STATUSES).join(', ')}` });
+        return sendError(reply, 400, `status must be one of ${Array.from(VALID_BUILD_STATUSES).join(', ')}`);
       }
 
       try {
@@ -349,7 +343,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         return reply.status(200).send({ build });
       } catch (err: any) {
         if (err?.code === '23505') {
-          return reply.status(409).send({ error: `A test run named "${name?.trim()}" already exists in this test plan` });
+          return sendError(reply, 409, `A test run named "${name?.trim()}" already exists in this test plan`);
         }
         throw err;
       }
@@ -365,11 +359,11 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
       const plan = await planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
       const existing = await runRepo.findById(buildId);
       if (!existing || existing.test_plan_id !== planId) {
-        return reply.status(404).send({ error: 'Test run not found in this test plan' });
+        return sendError(reply, 404, 'Test run not found in this test plan');
       }
 
       const result = await runRepo.deleteWithForce(buildId, { force: force === 'true' });

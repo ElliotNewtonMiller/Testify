@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserProfile } from './AuthModal';
 import { jsonHeaders } from '../utils/session';
 
+import { errorMessage as apiErrorMessage } from "../api/errors";
 interface LoginPageProps {
   onLoginSuccess: (user: UserProfile) => void;
   /** Why you're back here, e.g. the sign-in ended while you were working. */
@@ -36,10 +37,10 @@ export function LoginPage({ onLoginSuccess, notice }: LoginPageProps) {
         const data = await res.json().catch(() => ({}));
         if (res.status === 429) {
           // Locked account or too many attempts: say so and when to retry.
-          setErrorMessage(data.error || 'Too many failed sign-in attempts. Please wait and try again.');
+          setErrorMessage(apiErrorMessage(data) || 'Too many failed sign-in attempts. Please wait and try again.');
           return;
         }
-        throw new Error(data.error || 'The email and/or password are not correct.');
+        throw new Error(apiErrorMessage(data) || 'The email and/or password are not correct.');
       }
 
       const data = await res.json();

@@ -24,7 +24,7 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
-import { sendCaseRemovedFromPlanError, sendProblemDetails, INTERNAL_ERROR_MESSAGE, logServerError } from './errors.js';
+import { sendCaseRemovedFromPlanError, sendProblemDetails, INTERNAL_ERROR_MESSAGE, logServerError, sendError } from './errors.js';
 import { validateManualResult } from './services/resultValidation.js';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from './services/resultOverwrite.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
@@ -62,10 +62,12 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   app.setErrorHandler((error: any, request, reply) => {
     const status = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     if (status >= 400 && status < 500) {
-      return reply.status(status).send({ error: error.message, code: error.code });
+      // Fastify's own codes (FST_...) are internal names; callers get the standard code for the status.
+      const code = typeof error.code === 'string' && !error.code.startsWith('FST_') ? error.code : undefined;
+      return sendError(reply, status, error.message, { code });
     }
     logServerError(error, request);
-    return reply.status(500).send({ error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR', request_id: request.id });
+    return sendError(reply, 500, INTERNAL_ERROR_MESSAGE, { code: 'INTERNAL_ERROR', request_id: request.id });
   });
 
   // Browser access from other origins only for those listed in CORS_ORIGINS (none by default);
@@ -178,7 +180,7 @@ export async function createServer(connectionString?: string, options: { db?: Ky
       .executeTakeFirst();
 
     if (!build) {
-      return reply.status(404).send({ error: 'Build not found' });
+      return sendError(reply, 404, 'Build not found');
     }
 
     // The case must be in this run's plan -- and not removed from it (a removed case keeps the
@@ -190,32 +192,18 @@ export async function createServer(connectionString?: string, options: { db?: Ky
       .where('tpc.id', '=', body.test_plan_case_id)
       .executeTakeFirst();
     if (!planCase || planCase.test_plan_id !== build.test_plan_id) {
-      return reply.status(404).send({ error: 'Test case not found in this run\'s plan' });
+      return sendError(reply, 404, 'Test case not found in this run\'s plan');
     }
     if (planCase.removed_at) {
       return sendCaseRemovedFromPlanError(reply, planCase.external_id, request.url);
     }
 
     if (build.build_status === 'CLOSED') {
-      return reply.header('content-type', 'application/problem+json').status(422).send({
-        type: 'https://api.testify.dev/errors/BUILD_CLOSED',
-        title: 'Unprocessable Entity',
-        status: 422,
-        code: 'BUILD_CLOSED',
-        detail: 'Build is closed. Executions cannot be added or modified on a closed build.',
-        instance: request.url,
-      });
+      return sendError(reply, 422, 'Build is closed. Executions cannot be added or modified on a closed build.', { code: 'BUILD_CLOSED' });
     }
 
     if (build.plan_status === 'LOCKED' || build.plan_status === 'ARCHIVED') {
-      return reply.header('content-type', 'application/problem+json').status(422).send({
-        type: 'https://api.testify.dev/errors/PLAN_LOCKED',
-        title: 'Unprocessable Entity',
-        status: 422,
-        code: 'PLAN_LOCKED',
-        detail: 'Test plan is locked. Executions are frozen.',
-        instance: request.url,
-      });
+      return sendError(reply, 422, 'Test plan is locked. Executions are frozen.', { code: 'PLAN_LOCKED' });
     }
 
     // Changing a case's existing result in this run needs EXECUTE_OVERWRITE (adding notes to
@@ -345,6 +333,9 @@ export async function createServer(connectionString?: string, options: { db?: Ky
 
   // The built web app, served for every address the API doesn't handle (webApp.ts).
   if (options.webDistDir) registerWebApp(app, options.webDistDir);
+  // Without a web build, any unknown address gets a problem-details 404 too (registerWebApp
+  // answers unknown /api and /mcp addresses the same way).
+  else app.setNotFoundHandler((request, reply) => sendError(reply, 404, `Route ${request.method}:${request.url} not found`));
 
   return { app, db, seed };
 }

@@ -30,13 +30,13 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 
 **The catalog** (`GET …/reports`) lists every report, what question it answers, its parameters as JSON Schema, and its output formats. It also returns `definitions`: exactly how every number is computed. Start there.
 
-**Running a report** (`POST …/reports/:reportId`) takes the report's parameters as a JSON body. Errors:
+**Running a report** (`POST …/reports/:reportId`) takes the report's parameters as a JSON body. Errors are problem details, like every API error: `{ status, code, detail, invalid_params? }` (with `type`, `title`, `instance` and `timestamp`). The codes:
 
 | Status | When | Body |
 |---|---|---|
-| 400 | Invalid parameters | `{ error: "INVALID_PARAMS", details: [{ param, reason }] }` |
+| 400 | Invalid parameters | `INVALID_PARAMS`, with `invalid_params: [{ name, reason }]` |
 | 404 | An unknown report, or an id from another project | `RUN_NOT_FOUND`, `PLAN_NOT_FOUND` or `CASE_NOT_FOUND` |
-| 403 | No `SPEC_VIEW` | — |
+| 403 | No `SPEC_VIEW` | `FORBIDDEN`, with `required_permission` |
 
 ## Reports
 

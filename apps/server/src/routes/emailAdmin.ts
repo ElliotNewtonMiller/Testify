@@ -10,6 +10,7 @@ import { EMAIL_SETTING_KEYS, loadEmailSettings, sendEmail } from '../services/ma
 import { getSecretBox } from '../services/secrets.js';
 import { requestOrigin } from '../audit.js';
 
+import { sendError } from '../errors.js';
 /**
  * Outgoing email settings and the last email sent (SYSTEM_ADMIN only):
  *
@@ -45,7 +46,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
 
   app.put('/api/v1/admin/email-settings', gate, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const bad = (field: string, reason: string) => reply.status(400).send({ error: 'INVALID_PARAMS', message: `${field} ${reason}`, details: [{ param: field, reason }] });
+    const bad = (field: string, reason: string) => sendError(reply, 400, `${field} ${reason}`, { code: 'INVALID_PARAMS', invalid_params: [{ name: field, reason }] });
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
     const host = str(body.smtp_host);
@@ -80,10 +81,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
       if (password) {
         const box = getSecretBox();
         if (!box) {
-          return reply.status(400).send({
-            error: 'SECRETS_KEY_REQUIRED',
-            message: "The server can't store an SMTP password securely: set SECRETS_KEY (32+ characters) in its environment and restart it.",
-          });
+          return sendError(reply, 400, "The server can't store an SMTP password securely: set SECRETS_KEY (32+ characters) in its environment and restart it.", { code: 'SECRETS_KEY_REQUIRED' });
         }
         entries[EMAIL_SETTING_KEYS.smtp_password] = box.encrypt(password);
       } else {
@@ -112,7 +110,7 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
 
   app.post('/api/v1/admin/email-settings/test', gate, async (request, reply) => {
     const to = String((request.body as any)?.to ?? '').trim().toLowerCase();
-    if (!isValidEmail(to)) return reply.status(400).send({ error: 'INVALID_PARAMS', message: 'to must be an email address', details: [{ param: 'to', reason: 'must be an email address' }] });
+    if (!isValidEmail(to)) return sendError(reply, 400, 'to must be an email address', { code: 'INVALID_PARAMS', invalid_params: [{ name: 'to', reason: 'must be an email address' }] });
     if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'emails')) return reply;
     const settings = await loadEmailSettings(db);
     const where = settings.smtp_host ? `via ${settings.smtp_host}` : 'with no SMTP server configured, so it was only captured, not sent';

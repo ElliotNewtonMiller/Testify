@@ -2,6 +2,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
+import { sendError } from './errors.js';
 /**
  * Serves the built web app (apps/web/dist, made by `npm run build`) from the API server, so a
  * production install is one process on one port: /api/... and /mcp are the API, everything
@@ -47,7 +48,7 @@ function fileAt(path: string): boolean {
 
 /** The same body Fastify sends for an unknown route. */
 const notFound = (request: FastifyRequest, reply: FastifyReply) =>
-  reply.status(404).send({ message: `Route ${request.method}:${request.url} not found`, error: 'Not Found', statusCode: 404 });
+  sendError(reply, 404, `Route ${request.method}:${request.url} not found`);
 
 export function registerWebApp(app: FastifyInstance, distDir: string): void {
   const root = resolve(distDir);

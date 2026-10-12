@@ -116,7 +116,7 @@ describe('Session cookie (web sign-in)', () => {
     const res = await app.inject({ method: 'POST', url: '/api/v1/imports/dry-run', headers: { cookie: `testify_session=${stale}`, 'x-testify-client': 'web' } });
     expect(res.statusCode).toBe(401);
     expect(body(res).code).toBe('SESSION_ENDED');
-    expect(body(res).error).toBe('Unauthorized: your sign-in has ended -- please sign in again');
+    expect(body(res).detail).toBe('Unauthorized: your sign-in has ended -- please sign in again');
     expect(body(res).reason).toBe('Invalid signature');
   });
 

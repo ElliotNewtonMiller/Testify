@@ -14,11 +14,9 @@ import {
   type TestCaseVersionWithSteps,
 } from '@testify/db';
 import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
-import {
-  sendPlanLockedError,
+import { sendPlanLockedError,
   sendCaseVersionNotApprovedError,
-  sendCaseHasResultsError,
-} from '../errors.js';
+  sendCaseHasResultsError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 export interface CaseLinkability {
@@ -127,7 +125,7 @@ export async function registerTestPlanCaseRoutes(
 
     const project = await projectRepo.findById(projectId);
     if (!project) {
-      return reply.status(404).send({ error: 'Project not found' });
+      return sendError(reply, 404, 'Project not found');
     }
 
     const [tree, allCasesWithVersions] = await Promise.all([
@@ -144,7 +142,7 @@ export async function registerTestPlanCaseRoutes(
     if (planId) {
       const plan = await planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test plan not found in this project' });
+        return sendError(reply, 404, 'Test plan not found in this project');
       }
       const pinnedCases = await planRepo.getPinnedCases(planId);
       planCaseByCaseId = new Map(pinnedCases.map((pc) => [pc.test_case_id, pc]));
@@ -213,12 +211,12 @@ export async function registerTestPlanCaseRoutes(
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
     if (!testCase) {
-      return reply.status(404).send({ error: 'Test case not found' });
+      return sendError(reply, 404, 'Test case not found');
     }
 
     const latestVersion = await versionRepo.findLatestVersion(caseId);
     if (!latestVersion) {
-      return reply.status(404).send({ error: 'Test case has no versions' });
+      return sendError(reply, 404, 'Test case has no versions');
     }
 
     return { test_case: testCase, version: latestVersion };
@@ -234,7 +232,7 @@ export async function registerTestPlanCaseRoutes(
 
     const plan = await planRepo.findById(planId);
     if (!plan) {
-      return reply.status(404).send({ error: 'Test plan not found' });
+      return sendError(reply, 404, 'Test plan not found');
     }
 
     const builds = await runRepo.findByTestPlan(planId);
@@ -298,12 +296,12 @@ export async function registerTestPlanCaseRoutes(
       const { test_case_id: testCaseId } = (request.body as { test_case_id?: string }) || {};
 
       if (!testCaseId) {
-        return reply.status(400).send({ error: 'test_case_id is required' });
+        return sendError(reply, 400, 'test_case_id is required');
       }
 
       const plan = await planRepo.findById(planId);
       if (!plan) {
-        return reply.status(404).send({ error: 'Test plan not found' });
+        return sendError(reply, 404, 'Test plan not found');
       }
       if (isPlanLockedOrArchived(plan.status)) {
         return sendPlanLockedError(reply, planId, request.url);
@@ -311,7 +309,7 @@ export async function registerTestPlanCaseRoutes(
 
       const testCase = await caseRepo.findById(testCaseId);
       if (!testCase) {
-        return reply.status(404).send({ error: 'Test case not found' });
+        return sendError(reply, 404, 'Test case not found');
       }
 
       // Idempotent: re-toggling an already-included case just returns the existing row.
@@ -322,7 +320,7 @@ export async function registerTestPlanCaseRoutes(
 
       const { linkable, latestVersion } = await resolveCaseLinkability(db, plan.project_id, testCaseId);
       if (!latestVersion) {
-        return reply.status(422).send({ error: 'Test case has no versions to link' });
+        return sendError(reply, 422, 'Test case has no versions to link');
       }
       if (!linkable) {
         return sendCaseVersionNotApprovedError(reply, testCaseId, request.url);
@@ -370,7 +368,7 @@ export async function registerTestPlanCaseRoutes(
 
       const plan = await planRepo.findById(planId);
       if (!plan) {
-        return reply.status(404).send({ error: 'Test plan not found' });
+        return sendError(reply, 404, 'Test plan not found');
       }
       if (isPlanLockedOrArchived(plan.status)) {
         return sendPlanLockedError(reply, planId, request.url);
@@ -378,7 +376,7 @@ export async function registerTestPlanCaseRoutes(
 
       const planCase = await planRepo.getPinnedCase(planId, caseId);
       if (!planCase) {
-        return reply.status(404).send({ error: 'Test case is not in this plan' });
+        return sendError(reply, 404, 'Test case is not in this plan');
       }
       const force = (request.query as { force?: string }).force === 'true';
 
@@ -423,12 +421,12 @@ export async function registerTestPlanCaseRoutes(
       const { action, force } = (request.body as { action?: 'ADD' | 'REMOVE'; force?: boolean }) || {};
 
       if (action !== 'ADD' && action !== 'REMOVE') {
-        return reply.status(400).send({ error: 'action must be ADD or REMOVE' });
+        return sendError(reply, 400, 'action must be ADD or REMOVE');
       }
 
       const plan = await planRepo.findById(planId);
       if (!plan) {
-        return reply.status(404).send({ error: 'Test plan not found' });
+        return sendError(reply, 404, 'Test plan not found');
       }
       if (isPlanLockedOrArchived(plan.status)) {
         return sendPlanLockedError(reply, planId, request.url);
@@ -436,7 +434,7 @@ export async function registerTestPlanCaseRoutes(
 
       const suite = await suiteRepo.findById(suiteId);
       if (!suite) {
-        return reply.status(404).send({ error: 'Test suite not found' });
+        return sendError(reply, 404, 'Test suite not found');
       }
 
       const descendants = await suiteRepo.findDescendants(suiteId);

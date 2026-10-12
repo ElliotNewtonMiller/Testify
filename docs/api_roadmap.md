@@ -54,7 +54,7 @@ Many tools read that format, so the one file gives:
 
 ### 1. Make the API consistent
 
-**Status:** In progress. Plan: shallow addresses, short path names, database renamed too, no aliases (Decisions below). Stage 1 of 4 (database rename) done 2026-10-11.
+**Status:** In progress. Stages 1 and 2 of 4 done (2026-10-11, 2026-10-12); see the stages below and the Decisions table.
 
 **What:** decide the conventions, then change the routes to follow them:
 - one address style (everything under `/projects/{projectId}/...`, or flat resources);
@@ -67,9 +67,34 @@ Many tools read that format, so the one file gives:
 
 **Recommendation:** do this first, and write the result into RFC 03 to replace §1-4. The web app changes along with the routes.
 
-**Open questions:**
-- Nested or flat addresses?
-- Rename `builds` in the database too, or only in the API?
+**Decided:** shallow addresses, short path names, `builds`/`executions` renamed in the database too, no aliases (see Decisions).
+
+**Stages** (each its own commit, tested by Elliot before the next):
+1. **Database rename. Done 2026-10-11.** Migration `007`: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`, with their columns, constraints and indexes. The code that talks to them was renamed to match; the API was unchanged.
+2. **One error format. Done 2026-10-12.** Every error is problem details (`application/problem+json`, with `code` and `detail`), sent through `sendError` in `apps/server/src/errors.ts`; unknown addresses and Fastify's own errors too. The web app reads messages through `errorMessage()` in `apps/web/src/api/errors.ts`. `apps/server/tests/api_conventions.test.ts` checks the format for every kind of error.
+3. **Addresses, verbs and names.** Not started. The route map below; `PATCH` for partial updates; `201`/`200`/`204` for create/update/delete; `?force=true` for "delete anyway"; snake_case bodies; id fields named after the database columns (`test_plan_id`, `test_run_id`, ...); "run" and "result" instead of "build" and "execution" in addresses, fields, error codes and new audit rows (old audit rows keep their names). The web app's addresses move into one file (`apps/web/src/api/routes.ts`). A data migration renames `plan_id` to `test_plan_id` inside stored report schedules.
+4. **Documentation.** Not started. RFC 03 §1-4 replaced with these conventions and the route map; the other docs updated.
+
+**Route map for stage 3** (all under `/api/v1`):
+
+| Area | Routes |
+| :--- | :--- |
+| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/me` (replaces `PUT /auth/credentials`; body `username`, `email`, `password`, `current_password`) |
+| Projects | `GET`/`POST /projects`, `PATCH`/`DELETE /projects/{id}` |
+| Spec | `GET /projects/{id}/spec-tree`, `POST /projects/{id}/move`, `POST /projects/{id}/suites`, `PATCH`/`DELETE /suites/{id}`, `POST /projects/{id}/cases`, `PATCH`/`DELETE /cases/{id}` |
+| Versions | `GET /cases/{id}/versions/latest`, `POST /cases/{id}/versions` (new draft), `PATCH /versions/{id}`, `POST /versions/{id}/approve`, `/deprecate`, `/restore` |
+| Custom field values | `GET /cases/{id}/custom-fields`, `PUT`/`DELETE /cases/{id}/custom-fields/{definitionId}`; the same under `/suites/{id}` |
+| Search | `POST /projects/{id}/case-search`, `GET /projects/{id}/case-search/fields` |
+| Plans | `GET`/`POST /projects/{id}/plans`, `PATCH`/`DELETE /plans/{id}`, `GET /plans/{id}/cases?test_run_id=`, `POST /plans/{id}/cases`, `DELETE /plans/{id}/cases/{caseId}`, `POST`/`DELETE /plans/{id}/suites/{suiteId}/cases` |
+| Runs and results | `GET`/`POST /plans/{id}/runs`, `PATCH`/`DELETE /runs/{id}`, `POST /runs/{id}/results` (one result), `POST /runs/{id}/results/batch` (CI) |
+| Reports | `GET /projects/{id}/reports`, `POST /projects/{id}/reports/{reportId}` |
+| Report email | `POST /projects/{id}/report-emails`, `GET`/`POST /projects/{id}/report-schedules`, `PATCH`/`DELETE /report-schedules/{id}`, `POST /report-schedules/{id}/send-now` |
+| Import and export | `POST /projects/{id}/imports/dry-run`, `/imports/execute`, `GET /projects/{id}/imports/custom-field-options`, `POST /projects/{id}/exports/definitions`, `POST /projects/{id}/exports/results` |
+| API tokens | `GET`/`POST /projects/{id}/api-tokens`, `DELETE /api-tokens/{id}` |
+| Admin | `/admin/users` (`PATCH /admin/users/{id}` for status; `PATCH …/roles`; `PUT …/permission-overrides`; `POST …/reset-password`), `PATCH /admin/roles/{id}`, `PATCH /admin/custom-fields/{id}`, `PATCH /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email`, `GET /admin/audit-logs`, `GET /admin/permissions` |
+| Unchanged | `GET /api/v1/health`, `POST /mcp` |
+
+With items addressed by their own id, the server works out the project from the item. A request that also names a project must name the same one, or it's refused (`400 PROJECTS_DIFFER`).
 
 ### 2. Version the API
 

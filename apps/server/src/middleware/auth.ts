@@ -4,13 +4,11 @@ import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
 import { UserRepository, RoleRepository, ApiTokenRepository, SessionRepository, API_TOKEN_PREFIX, hashToken } from '@testify/db';
 import { verifyJwt } from '@testify/core';
-import {
-  sendInvalidTokenError,
+import { sendInvalidTokenError,
   sendTokenRevokedError,
   sendTokenExpiredError,
   sendTokenProjectMismatchError,
-  sendTokenIssuerInactiveError,
-} from '../errors.js';
+  sendTokenIssuerInactiveError, sendError } from '../errors.js';
 import { sendRateLimitedError } from '../services/rateLimits.js';
 import { SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS } from '../sessionLifetime.js';
 
@@ -245,32 +243,25 @@ export async function authenticateRequest(
   // (see sessionCookie.ts).
   const credential = requestCredential(request);
   if (!credential) {
-    reply.status(401).send({ error: 'Unauthorized: missing Bearer token' });
+    sendError(reply, 401, 'Unauthorized: missing Bearer token');
     return null;
   }
   const token = credential.token;
   if (credential.viaCookie) {
     // The cookie only ever holds a sign-in token, never an API token.
     if (token.startsWith(API_TOKEN_PREFIX)) {
-      reply.status(401).send({ error: 'Unauthorized: invalid session cookie' });
+      sendError(reply, 401, 'Unauthorized: invalid session cookie');
       return null;
     }
     if (!passesCsrfCheck(request)) {
-      reply.status(403).send({
-        error: 'This request is missing the X-Testify-Client header that cookie-based sign-ins require.',
-        code: 'CSRF_HEADER_MISSING',
-      });
+      sendError(reply, 403, 'This request is missing the X-Testify-Client header that cookie-based sign-ins require.', { code: 'CSRF_HEADER_MISSING' });
       return null;
     }
   }
 
   const resolved = await resolveRequestProject(request, db);
   if ('conflict' in resolved) {
-    reply.status(400).send({
-      error: 'The ids in this request belong to different projects.',
-      code: 'PROJECTS_DIFFER',
-      project_ids: resolved.conflict,
-    });
+    sendError(reply, 400, 'The ids in this request belong to different projects.', { code: 'PROJECTS_DIFFER', project_ids: resolved.conflict });
     return null;
   }
   const projectId = resolved.projectId;
@@ -283,11 +274,7 @@ export async function authenticateRequest(
   if (!result.valid || !result.payload) {
     // E.g. signed with another key (a server restart without JWT_SECRET) or expired. The
     // message is shown to people, so it says what to do; `reason` keeps the detail.
-    reply.status(401).send({
-      error: 'Unauthorized: your sign-in has ended -- please sign in again',
-      code: 'SESSION_ENDED',
-      reason: result.reason || 'invalid token',
-    });
+    sendError(reply, 401, 'Unauthorized: your sign-in has ended -- please sign in again', { code: 'SESSION_ENDED', reason: result.reason || 'invalid token' });
     return null;
   }
 
@@ -301,7 +288,7 @@ export async function authenticateRequest(
   const sessionId = typeof result.payload.sid === 'string' ? result.payload.sid : null;
   const session = sessionId ? await sessionRepo.findActive(sessionId, userId) : undefined;
   if (!sessionId || !session || new Date(session.created_at).getTime() + SESSION_MAX_SECONDS * 1000 <= Date.now()) {
-    reply.status(401).send({ error: 'Unauthorized: your sign-in has ended -- please sign in again', code: 'SESSION_ENDED' });
+    sendError(reply, 401, 'Unauthorized: your sign-in has ended -- please sign in again', { code: 'SESSION_ENDED' });
     return null;
   }
   try {
@@ -312,12 +299,12 @@ export async function authenticateRequest(
 
   const user = await userRepo.findById(userId);
   if (!user || user.status === 'DISABLED') {
-    reply.status(401).send({ error: 'Unauthorized: User account is invalid or disabled' });
+    sendError(reply, 401, 'Unauthorized: User account is invalid or disabled');
     return null;
   }
 
   if (user.must_change_password && !PASSWORD_CHANGE_ALLOWED_ROUTES.has(request.url.split('?')[0])) {
-    reply.status(403).send({ error: 'You must choose a new password before continuing.', code: 'PASSWORD_CHANGE_REQUIRED' });
+    sendError(reply, 403, 'You must choose a new password before continuing.', { code: 'PASSWORD_CHANGE_REQUIRED' });
     return null;
   }
 
@@ -347,10 +334,7 @@ export function requirePermission(permissionKey: string, db: Kysely<Database>, j
     if (!user) return; // Reply 401 already sent
 
     if (!user.permissions.includes(permissionKey) && !user.permissions.includes('SYSTEM_ADMIN')) {
-      return reply.status(403).send({
-        error: 'Forbidden: Insufficient privileges',
-        requiredPermission: permissionKey,
-      });
+      return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: permissionKey });
     }
   };
 }
@@ -361,7 +345,7 @@ export function requireAnyPermission(permissionKeys: string[], db: Kysely<Databa
     const user = await authenticateRequest(request, reply, db, jwtSecret);
     if (!user) return;
     if (!permissionKeys.some((k) => user.permissions.includes(k)) && !user.permissions.includes('SYSTEM_ADMIN')) {
-      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: permissionKeys.join(' or ') });
+      return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: permissionKeys.join(' or ') });
     }
   };
 }

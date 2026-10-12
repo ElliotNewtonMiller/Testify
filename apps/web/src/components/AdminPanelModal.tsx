@@ -3,6 +3,7 @@ import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import { UserProfile } from "./AuthModal";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage as apiErrorMessage } from "../api/errors";
 /** The built-in role that grants nothing (see packages/core's DEFAULT_ROLE_PERMISSIONS). */
 const NO_ACCESS_ROLE = "No Access";
 
@@ -413,7 +414,7 @@ export function AdminPanelModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || data.error || "Failed to create token");
+        throw new Error(apiErrorMessage(data) || "Failed to create token");
       }
       setJustCreatedToken({ plaintext: data.plaintext, name: data.token.name });
       setCopyButtonLabel("Copy");
@@ -440,7 +441,7 @@ export function AdminPanelModal({
       });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to revoke token");
+        throw new Error(apiErrorMessage(data) || "Failed to revoke token");
       }
       flashSuccess("Token revoked.");
       fetchApiTokens(tokenProjectScope);
@@ -503,7 +504,7 @@ export function AdminPanelModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to create user");
+        throw new Error(apiErrorMessage(data) || "Failed to create user");
       }
 
       setNewUsername("");
@@ -533,7 +534,7 @@ export function AdminPanelModal({
       } else {
         // e.g. disabling the last admin, or a user who has more access than you.
         const data = await res.json().catch(() => ({}));
-        setErrorMessage(data.error || "Failed to change the user's status");
+        setErrorMessage(apiErrorMessage(data) || "Failed to change the user's status");
       }
     } catch {
       setErrorMessage("Unable to reach the server.");
@@ -553,7 +554,7 @@ export function AdminPanelModal({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // e.g. a user who has more access than you.
-        setErrorMessage(data.error || "Failed to reset the password");
+        setErrorMessage(apiErrorMessage(data) || "Failed to reset the password");
         setResetPrompt(null);
         return;
       }
@@ -614,7 +615,7 @@ export function AdminPanelModal({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to update user privileges");
+        throw new Error(apiErrorMessage(data) || "Failed to update user privileges");
       }
       fetchUsers();
       fetchAuditLogs();
@@ -666,7 +667,7 @@ export function AdminPanelModal({
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "Failed to update permission overrides");
+          throw new Error(apiErrorMessage(data) || "Failed to update permission overrides");
         }
         fetchUsers();
         fetchAuditLogs();
@@ -735,7 +736,7 @@ export function AdminPanelModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to save role template");
+        throw new Error(apiErrorMessage(data) || "Failed to save role template");
       }
 
       await fetchRoles();
@@ -764,7 +765,7 @@ export function AdminPanelModal({
       }
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to delete role template");
+        throw new Error(apiErrorMessage(data) || "Failed to delete role template");
       }
 
       if (selectedRoleId === roleId) {
@@ -895,7 +896,7 @@ export function AdminPanelModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to save custom field");
+        throw new Error(apiErrorMessage(data) || "Failed to save custom field");
       }
 
       await fetchCustomFields();
@@ -944,7 +945,7 @@ export function AdminPanelModal({
       }
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to delete custom field");
+        throw new Error(apiErrorMessage(data) || "Failed to delete custom field");
       }
 
       if (selectedFieldId === field.id) {
@@ -969,7 +970,7 @@ export function AdminPanelModal({
       });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to delete custom field");
+        throw new Error(apiErrorMessage(data) || "Failed to delete custom field");
       }
 
       if (selectedFieldId === deleteFieldPrompt.id) {

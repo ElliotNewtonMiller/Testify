@@ -14,6 +14,7 @@ import {
 import { requirePermission } from '../middleware/auth.js';
 import { ReportError, ReportService } from '../services/reportService.js';
 
+import { sendError, reportErrorParams } from '../errors.js';
 /**
  * Reports, driven entirely by @testify/core's REPORT_CATALOG:
  *
@@ -44,24 +45,16 @@ export async function registerReportRoutes(app: FastifyInstance, db: Kysely<Data
 
       const report = findReport(reportId);
       if (!report) {
-        return reply.status(404).send({ error: 'REPORT_NOT_FOUND', message: `Unknown report '${reportId}'. GET .../reports lists them.` });
+        return sendError(reply, 404, `Unknown report '${reportId}'. GET .../reports lists them.`, { code: 'REPORT_NOT_FOUND' });
       }
       const format = (formatRaw || 'json') as ReportFormat;
       if (!report.formats.includes(format)) {
-        return reply.status(400).send({
-          error: 'INVALID_PARAMS',
-          message: `Report '${reportId}' supports format ${report.formats.join(', ')}`,
-          details: [{ param: 'format', reason: `must be one of ${report.formats.join(', ')}` }],
-        });
+        return sendError(reply, 400, `Report '${reportId}' supports format ${report.formats.join(', ')}`, { code: 'INVALID_PARAMS', invalid_params: [{ name: 'format', reason: `must be one of ${report.formats.join(', ')}` }] });
       }
 
       const validation = validateReportParams(report, request.body);
       if (!validation.ok) {
-        return reply.status(400).send({
-          error: 'INVALID_PARAMS',
-          message: validation.errors.map((e) => `${e.param} ${e.reason}`).join('; '),
-          details: validation.errors,
-        });
+        return sendError(reply, 400, validation.errors.map((e) => `${e.param} ${e.reason}`).join('; '), { code: 'INVALID_PARAMS', invalid_params: validation.errors });
       }
 
       try {
@@ -78,7 +71,7 @@ export async function registerReportRoutes(app: FastifyInstance, db: Kysely<Data
         return reply.send(output.data);
       } catch (err) {
         if (err instanceof ReportError) {
-          return reply.status(err.status).send({ error: err.code, message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) });
+          return sendError(reply, err.status, err.message, { code: err.code, ...reportErrorParams(err.details) });
         }
         throw err;
       }

@@ -5,7 +5,7 @@ import type { Database } from '@testify/db';
 import { ApiTokenRepository, UserRepository } from '@testify/db';
 import { PERMISSION_KEYS } from '@testify/core';
 import { requirePermission, apiTokenIssuerAccess } from '../middleware/auth.js';
-import { sendCapabilityCeilingExceededError } from '../errors.js';
+import { sendCapabilityCeilingExceededError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 /**
@@ -28,15 +28,15 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
       const { name, capabilities, expires_at: expiresAt } = (request.body as any) || {};
 
       if (!name || typeof name !== 'string' || name.length < 1 || name.length > 255) {
-        return reply.status(400).send({ error: 'name (1-255 chars) is required' });
+        return sendError(reply, 400, 'name (1-255 chars) is required');
       }
       if (!Array.isArray(capabilities) || capabilities.length === 0) {
-        return reply.status(400).send({ error: 'capabilities (non-empty array) is required' });
+        return sendError(reply, 400, 'capabilities (non-empty array) is required');
       }
       if (expiresAt !== undefined && expiresAt !== null) {
         const parsed = new Date(expiresAt).getTime();
         if (Number.isNaN(parsed) || parsed <= Date.now()) {
-          return reply.status(400).send({ error: 'expires_at must be a valid future date' });
+          return sendError(reply, 400, 'expires_at must be a valid future date');
         }
       }
 
@@ -46,11 +46,11 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
       // user (see RoleRepository.evaluatePermissions), so a naive subset check would let
       // an Admin mint a token that bypasses every permission check on every route.
       if (capabilities.includes('SYSTEM_ADMIN')) {
-        return reply.status(400).send({ error: "'SYSTEM_ADMIN' can never be granted to a token" });
+        return sendError(reply, 400, "'SYSTEM_ADMIN' can never be granted to a token");
       }
       const unknownKeys = capabilities.filter((k: unknown) => typeof k !== 'string' || !PERMISSION_KEYS.includes(k));
       if (unknownKeys.length > 0) {
-        return reply.status(400).send({ error: `Unknown permission key(s): ${unknownKeys.join(', ')}` });
+        return sendError(reply, 400, `Unknown permission key(s): ${unknownKeys.join(', ')}`);
       }
 
       const allowedCeiling = actor.permissions.filter((k) => k !== 'SYSTEM_ADMIN');
@@ -122,7 +122,7 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
 
       const revoked = await tokenRepo.revoke(id, projectId);
       if (!revoked) {
-        return reply.status(404).send({ error: 'API token not found in this project' });
+        return sendError(reply, 404, 'API token not found in this project');
       }
 
       const now = new Date().toISOString();

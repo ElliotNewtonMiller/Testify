@@ -10,7 +10,7 @@ import {
   type CustomFieldType,
 } from '@testify/core';
 import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
-import { sendCustomFieldInUseError, sendProblemDetails, isPublicError } from '../errors.js';
+import { sendCustomFieldInUseError, sendProblemDetails, isPublicError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 function isEntityType(value: unknown): value is CustomFieldEntityType {
@@ -84,13 +84,13 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         (request.body as any) || {};
 
       if (!isEntityType(entityType)) {
-        return reply.status(400).send({ error: `entity_type must be one of: ${CUSTOM_FIELD_ENTITY_TYPES.join(', ')}` });
+        return sendError(reply, 400, `entity_type must be one of: ${CUSTOM_FIELD_ENTITY_TYPES.join(', ')}`);
       }
       if (!name || typeof name !== 'string' || !field_label || typeof field_label !== 'string') {
-        return reply.status(400).send({ error: 'name and field_label (strings) are required' });
+        return sendError(reply, 400, 'name and field_label (strings) are required');
       }
       if (!(CUSTOM_FIELD_TYPES as readonly string[]).includes(field_type)) {
-        return reply.status(400).send({ error: `field_type must be one of: ${CUSTOM_FIELD_TYPES.join(', ')}` });
+        return sendError(reply, 400, `field_type must be one of: ${CUSTOM_FIELD_TYPES.join(', ')}`);
       }
 
       const requiredError = requiredFieldDefaultError(
@@ -100,7 +100,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         Array.isArray(options) ? options : undefined
       );
       if (requiredError) {
-        return reply.status(422).send({ error: requiredError, code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
+        return sendError(reply, 422, requiredError, { code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
       }
 
       try {
@@ -140,10 +140,10 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       } catch (err: any) {
         if (sendInvalidPattern(reply, err)) return;
         if (err.message?.startsWith('UNKNOWN_ENTITY_TYPE') || err.message?.startsWith('UNKNOWN_FIELD_TYPE')) {
-          return reply.status(400).send({ error: err.message });
+          return sendError(reply, 400, err.message);
         }
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
-          return reply.status(409).send({ error: err.message });
+          return sendError(reply, 409, err.message);
         }
         throw err; // unexpected: the global error handler logs it and answers 500
       }
@@ -160,7 +160,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await fieldRepo.getDefinition(id);
       if (!existing) {
-        return reply.status(404).send({ error: 'Custom field not found' });
+        return sendError(reply, 404, 'Custom field not found');
       }
       const requiredError = requiredFieldDefaultError(
         is_required !== undefined ? Boolean(is_required) : existing.is_required,
@@ -169,7 +169,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         Array.isArray(options) ? options : existing.options
       );
       if (requiredError) {
-        return reply.status(422).send({ error: requiredError, code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
+        return sendError(reply, 422, requiredError, { code: 'REQUIRED_FIELD_NEEDS_DEFAULT' });
       }
 
       try {
@@ -183,7 +183,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         });
 
         if (!definition) {
-          return reply.status(404).send({ error: 'Custom field not found' });
+          return sendError(reply, 404, 'Custom field not found');
         }
 
         // If this update leaves the field required with a usable default (already
@@ -216,7 +216,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       } catch (err: any) {
         if (sendInvalidPattern(reply, err)) return;
         if (err.message?.startsWith('FIELD_NAME_TAKEN')) {
-          return reply.status(409).send({ error: err.message });
+          return sendError(reply, 409, err.message);
         }
         throw err; // unexpected: the global error handler logs it and answers 500
       }
@@ -239,7 +239,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       const result = await fieldRepo.deleteDefinition(id, { force: force === 'true' });
       if (!result.deleted) {
         if (result.blockedByValueCount === 0) {
-          return reply.status(404).send({ error: 'Custom field not found' });
+          return sendError(reply, 404, 'Custom field not found');
         }
         return sendCustomFieldInUseError(reply, id, result.blockedByValueCount, request.url, result.fieldLabel);
       }
@@ -273,7 +273,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
     if (!testCase) {
-      return reply.status(404).send({ error: 'Test case not found' });
+      return sendError(reply, 404, 'Test case not found');
     }
 
     const values = await fieldRepo.getValuesForEntity('TestCase', caseId, testCase.project_id);
@@ -289,7 +289,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
       const testCase = await caseRepo.findById(caseId);
       if (!testCase) {
-        return reply.status(404).send({ error: 'Test case not found' });
+        return sendError(reply, 404, 'Test case not found');
       }
 
       try {
@@ -297,7 +297,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         return reply.status(200).send({ value: savedValue });
       } catch (err: any) {
         if (err.message?.startsWith('UNKNOWN_FIELD')) {
-          return reply.status(404).send({ error: err.message });
+          return sendError(reply, 404, err.message);
         }
         if (!isPublicError(err)) throw err;
         return sendProblemDetails(reply, {
@@ -316,7 +316,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       const { caseId, definitionId } = request.params as { caseId: string; definitionId: string };
       const testCase = await caseRepo.findById(caseId);
       if (!testCase) {
-        return reply.status(404).send({ error: 'Test case not found' });
+        return sendError(reply, 404, 'Test case not found');
       }
       await fieldRepo.deleteValue(definitionId, 'TestCase', caseId);
       return reply.status(204).send();
@@ -328,7 +328,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
     const { suiteId } = request.params as { suiteId: string };
     const suite = await suiteRepo.findById(suiteId);
     if (!suite) {
-      return reply.status(404).send({ error: 'Test suite not found' });
+      return sendError(reply, 404, 'Test suite not found');
     }
 
     const values = await fieldRepo.getValuesForEntity('TestSuite', suiteId, suite.project_id);
@@ -344,7 +344,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 
       const suite = await suiteRepo.findById(suiteId);
       if (!suite) {
-        return reply.status(404).send({ error: 'Test suite not found' });
+        return sendError(reply, 404, 'Test suite not found');
       }
 
       try {
@@ -352,7 +352,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
         return reply.status(200).send({ value: savedValue });
       } catch (err: any) {
         if (err.message?.startsWith('UNKNOWN_FIELD')) {
-          return reply.status(404).send({ error: err.message });
+          return sendError(reply, 404, err.message);
         }
         if (!isPublicError(err)) throw err;
         return sendProblemDetails(reply, {
@@ -371,7 +371,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
       const { suiteId, definitionId } = request.params as { suiteId: string; definitionId: string };
       const suite = await suiteRepo.findById(suiteId);
       if (!suite) {
-        return reply.status(404).send({ error: 'Test suite not found' });
+        return sendError(reply, 404, 'Test suite not found');
       }
       await fieldRepo.deleteValue(definitionId, 'TestSuite', suiteId);
       return reply.status(204).send();
@@ -383,6 +383,6 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
 function sendInvalidPattern(reply: FastifyReply, err: any): boolean {
   const prefix = 'INVALID_VALIDATION_PATTERN: ';
   if (typeof err?.message !== 'string' || !err.message.startsWith(prefix)) return false;
-  reply.status(400).send({ error: err.message.slice(prefix.length), code: 'INVALID_VALIDATION_PATTERN' });
+  sendError(reply, 400, err.message.slice(prefix.length), { code: 'INVALID_VALIDATION_PATTERN' });
   return true;
 }

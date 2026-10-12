@@ -71,7 +71,7 @@ describe('Data export: definitions and execution results', () => {
         payload: { format: 'NATIVE_JSON', scope: { type: 'PROJECT' } },
       });
       expect(automationRes.statusCode).toBe(403);
-      expect(JSON.parse(automationRes.payload).requiredPermission).toBe('EXPORT_DATA');
+      expect(JSON.parse(automationRes.payload).required_permission).toBe('EXPORT_DATA');
     });
   });
 

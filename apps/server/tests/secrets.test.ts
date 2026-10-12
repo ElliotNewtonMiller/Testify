@@ -109,7 +109,7 @@ describe('Stored SMTP password', () => {
     expect(JSON.parse((await call('GET', '/api/v1/admin/email-settings')).payload).settings.can_store_password).toBe(false);
     const res = await call('PUT', '/api/v1/admin/email-settings', { smtp_host: 'smtp.example.com', smtp_password: 'hunter2' });
     expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.payload).error).toBe('SECRETS_KEY_REQUIRED');
+    expect(JSON.parse(res.payload).code).toBe('SECRETS_KEY_REQUIRED');
     expect(await storedPassword()).toBeFalsy();
   });
 });

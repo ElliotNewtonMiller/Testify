@@ -15,6 +15,7 @@ import {
 } from '../services/loginThrottle.js';
 import { requestOrigin, type RequestOrigin } from '../audit.js';
 
+import { sendError } from '../errors.js';
 /** How long a sign-in lasts (the login token and its session expire together). */
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
@@ -24,7 +25,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
   const ipLimiter = new IpFailureLimiter();
 
   const tooManyAttempts = (reply: any, seconds: number, code: string, error: string) =>
-    reply.header('Retry-After', String(seconds)).status(429).send({ error, code, retry_after_seconds: seconds });
+    sendError(reply.header('Retry-After', String(seconds)), 429, error, { code: code, retry_after_seconds: seconds });
 
   const accountLocked = (reply: any, seconds: number) =>
     tooManyAttempts(
@@ -60,17 +61,14 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     const identifier = username || email;
 
     if (!identifier || !password) {
-      return reply.status(400).send({ error: 'Username/email and password are required' });
+      return sendError(reply, 400, 'Username/email and password are required');
     }
     // `session: "cookie"` (the web app): the token goes into an HttpOnly cookie and is left out
     // of the response, so page scripts never see it. Needs the same header as other
     // cookie-authenticated changes, so another site can't sign a browser into an account.
     const useCookie = sessionMode === 'cookie';
     if (useCookie && !passesCsrfCheck(request)) {
-      return reply.status(403).send({
-        error: 'Cookie sign-in requires the X-Testify-Client header.',
-        code: 'CSRF_HEADER_MISSING',
-      });
+      return sendError(reply, 403, 'Cookie sign-in requires the X-Testify-Client header.', { code: 'CSRF_HEADER_MISSING' });
     }
 
     // Guessing limits (services/loginThrottle.ts): this address, then this account.
@@ -95,7 +93,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     if (!user) {
       ipLimiter.recordFailure(ip);
       if (account && account.status !== 'DISABLED') await recordAccountFailure(account.id, requestOrigin(request));
-      return reply.status(401).send({ error: 'Invalid credentials or user account disabled' });
+      return sendError(reply, 401, 'Invalid credentials or user account disabled');
     }
     if (user.failed_login_count > 0 || user.locked_until) await userRepo.resetLoginFailures(user.id);
 
@@ -157,14 +155,14 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     // Wrong guesses here count toward the same account lock as sign-in.
     if (newPassword) {
       if (!currentPassword) {
-        return reply.status(400).send({ error: 'Enter your current password to set a new one.', code: 'CURRENT_PASSWORD_REQUIRED' });
+        return sendError(reply, 400, 'Enter your current password to set a new one.', { code: 'CURRENT_PASSWORD_REQUIRED' });
       }
       const self = await userRepo.findById(activeUser.id);
       const lockWait = accountLockSecondsLeft(self?.locked_until);
       if (lockWait > 0) return accountLocked(reply, lockWait);
       if (!(await userRepo.isCurrentPassword(activeUser.id, currentPassword))) {
         await recordAccountFailure(activeUser.id, requestOrigin(request));
-        return reply.status(403).send({ error: 'Your current password is incorrect.', code: 'CURRENT_PASSWORD_INCORRECT' });
+        return sendError(reply, 403, 'Your current password is incorrect.', { code: 'CURRENT_PASSWORD_INCORRECT' });
       }
       if (self && self.failed_login_count > 0) await userRepo.resetLoginFailures(activeUser.id);
     }
@@ -173,10 +171,10 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     // a new, different one; that's the only change they can make until they do.
     if (activeUser.must_change_password) {
       if (!newPassword) {
-        return reply.status(400).send({ error: 'Choose a new password before continuing.', code: 'PASSWORD_CHANGE_REQUIRED' });
+        return sendError(reply, 400, 'Choose a new password before continuing.', { code: 'PASSWORD_CHANGE_REQUIRED' });
       }
       if (await userRepo.isCurrentPassword(activeUser.id, newPassword)) {
-        return reply.status(400).send({ error: 'The new password must be different from the current one.', code: 'PASSWORD_UNCHANGED' });
+        return sendError(reply, 400, 'The new password must be different from the current one.', { code: 'PASSWORD_UNCHANGED' });
       }
     }
 
@@ -189,7 +187,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
         permissions.includes('USER_MANAGE');
 
       if (!isAdmin) {
-        return reply.status(403).send({ error: 'Only administrators can change usernames.' });
+        return sendError(reply, 403, 'Only administrators can change usernames.');
       }
     }
 
@@ -236,7 +234,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
       });
     } catch (err: any) {
       if (err.message?.startsWith('PASSWORD_POLICY_VIOLATION')) {
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
       throw err; // unexpected: the global error handler logs it and answers 500
     }

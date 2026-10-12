@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 interface EmailSettings {
   smtp_host: string | null;
   smtp_port: number | null;
@@ -102,7 +103,7 @@ export function EmailSettingsPanel() {
       if (!passwordTouched) delete body.smtp_password;
       const res = await fetch("/api/v1/admin/email-settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.message || d.error || "Couldn't save");
+      if (!res.ok) throw new Error(errorMessage(d) || "Couldn't save");
       applySettings(d.settings);
       flash(true, "✓ Email settings saved.");
     } catch (e) {
@@ -117,7 +118,7 @@ export function EmailSettingsPanel() {
     try {
       const res = await fetch("/api/v1/admin/email-settings/test", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ to: testTo }) });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.message || d.detail || d.error || "Couldn't send");
+      if (!res.ok) throw new Error(errorMessage(d) || "Couldn't send");
       if (d.email.status === "FAILED") flash(false, "Sending the test email failed -- see Last email below.");
       else flash(true, d.email.status === "SENT" ? `✓ Test email sent to ${testTo}.` : "✓ Test email captured (no SMTP server set, so nothing was sent).");
       loadLastEmail();

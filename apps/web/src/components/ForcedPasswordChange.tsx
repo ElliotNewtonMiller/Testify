@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { UserProfile } from './AuthModal';
 import { jsonHeaders } from '../utils/session';
 
+import { errorMessage } from "../api/errors";
 interface ForcedPasswordChangeProps {
   user: UserProfile;
   onChanged: (user: UserProfile) => void;
@@ -62,7 +63,7 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
         return;
       }
       if (!res.ok) {
-        setError(String(data.error || 'Could not change the password.').replace(/^PASSWORD_POLICY_VIOLATION:\s*/, ''));
+        setError(String(errorMessage(data) || 'Could not change the password.').replace(/^PASSWORD_POLICY_VIOLATION:\s*/, ''));
         return;
       }
       onChanged(data.user);

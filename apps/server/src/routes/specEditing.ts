@@ -5,14 +5,12 @@ import type { Database } from '@testify/db';
 import { TestSuiteRepository, TestCaseRepository, TestCaseVersionRepository, ProjectRepository, CustomFieldRepository, TestPlanRepository } from '@testify/db';
 import { findUnsatisfiedRequiredFields } from '@testify/core';
 import { requirePermission } from '../middleware/auth.js';
-import {
-  sendCaseVersionLockedError,
+import { sendCaseVersionLockedError,
   sendSuiteInUseError,
   sendCaseInUseError,
   sendProblemDetails,
   sendRequiredCustomFieldsMissingError,
-  isPublicError,
-} from '../errors.js';
+  isPublicError, sendError } from '../errors.js';
 import { validateStepsInput } from '../services/stepValidation.js';
 import type { InvalidParam } from '../services/resultValidation.js';
 import { requestOrigin, type RequestOrigin } from '../audit.js';
@@ -74,12 +72,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       const { name, description, parent_suite_id: parentSuiteId, position } = (request.body as any) || {};
 
       const nameError = nameProblem(name, 'name');
-      if (nameError) return reply.status(400).send({ error: nameError, code: 'INVALID_NAME' });
+      if (nameError) return sendError(reply, 400, nameError, { code: 'INVALID_NAME' });
 
       if (parentSuiteId) {
         const parent = await suiteRepo.findById(parentSuiteId);
         if (!parent || parent.project_id !== projectId) {
-          return reply.status(400).send({ error: `Parent suite '${parentSuiteId}' not found in this project` });
+          return sendError(reply, 400, `Parent suite '${parentSuiteId}' not found in this project`);
         }
       }
 
@@ -115,25 +113,25 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await suiteRepo.findById(suiteId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test suite not found in this project' });
+        return sendError(reply, 404, 'Test suite not found in this project');
       }
       if (name !== undefined) {
         const nameError = nameProblem(name, 'name');
-        if (nameError) return reply.status(400).send({ error: nameError, code: 'INVALID_NAME' });
+        if (nameError) return sendError(reply, 400, nameError, { code: 'INVALID_NAME' });
       }
 
       if (parentSuiteId !== undefined && parentSuiteId !== existing.parent_suite_id) {
         if (parentSuiteId) {
           const newParent = await suiteRepo.findById(parentSuiteId);
           if (!newParent || newParent.project_id !== projectId) {
-            return reply.status(400).send({ error: `Parent suite '${parentSuiteId}' not found in this project` });
+            return sendError(reply, 400, `Parent suite '${parentSuiteId}' not found in this project`);
           }
         }
         try {
           await suiteRepo.move(suiteId, parentSuiteId ?? null);
         } catch (err: any) {
           if (!isPublicError(err)) throw err;
-          return reply.status(400).send({ error: err.message });
+          return sendError(reply, 400, err.message);
         }
       }
 
@@ -167,7 +165,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await suiteRepo.findById(suiteId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test suite not found in this project' });
+        return sendError(reply, 404, 'Test suite not found in this project');
       }
 
       const result = await suiteRepo.deleteWithForce(suiteId, { force: force === 'true' }, caseRepo);
@@ -219,22 +217,22 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       } = (request.body as any) || {};
 
       if (!testSuiteId) {
-        return reply.status(400).send({ error: 'test_suite_id is required' });
+        return sendError(reply, 400, 'test_suite_id is required');
       }
       const titleError = nameProblem(title, 'title');
-      if (titleError) return reply.status(400).send({ error: titleError, code: 'INVALID_NAME' });
+      if (titleError) return sendError(reply, 400, titleError, { code: 'INVALID_NAME' });
       // Steps are checked before anything is created (a bad step used to fail half-way, as a 500).
       const checkedSteps = steps === undefined || steps === null ? { steps: [] } : validateStepsInput(steps);
       if ('invalid' in checkedSteps) return sendInvalidSteps(reply, checkedSteps.invalid, request.url);
 
       const suite = await suiteRepo.findById(testSuiteId);
       if (!suite || suite.project_id !== projectId) {
-        return reply.status(400).send({ error: `Test suite '${testSuiteId}' not found in this project` });
+        return sendError(reply, 400, `Test suite '${testSuiteId}' not found in this project`);
       }
 
       const project = await projectRepo.findById(projectId);
       if (!project) {
-        return reply.status(404).send({ error: 'Project not found' });
+        return sendError(reply, 404, 'Project not found');
       }
 
       // SYSTEM_ADMIN isn't checked explicitly here -- evaluatePermissions already expands it
@@ -306,17 +304,17 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await caseRepo.findById(caseId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test case not found in this project' });
+        return sendError(reply, 404, 'Test case not found in this project');
       }
       if (title !== undefined) {
         const titleError = nameProblem(title, 'title');
-        if (titleError) return reply.status(400).send({ error: titleError, code: 'INVALID_NAME' });
+        if (titleError) return sendError(reply, 400, titleError, { code: 'INVALID_NAME' });
       }
 
       if (testSuiteId) {
         const suite = await suiteRepo.findById(testSuiteId);
         if (!suite || suite.project_id !== projectId) {
-          return reply.status(400).send({ error: `Test suite '${testSuiteId}' not found in this project` });
+          return sendError(reply, 400, `Test suite '${testSuiteId}' not found in this project`);
         }
       }
 
@@ -351,7 +349,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await caseRepo.findById(caseId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test case not found in this project' });
+        return sendError(reply, 404, 'Test case not found in this project');
       }
 
       const result = await caseRepo.deleteWithForce(caseId, { force: force === 'true' });
@@ -394,21 +392,21 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       const caseIds = uniqueStrings(body.case_ids);
 
       if (!('target_suite_id' in body) || (body.target_suite_id !== null && typeof body.target_suite_id !== 'string')) {
-        return reply.status(400).send({ error: 'target_suite_id is required (a suite id, or null for the top level)' });
+        return sendError(reply, 400, 'target_suite_id is required (a suite id, or null for the top level)');
       }
       const targetSuiteId: string | null = body.target_suite_id;
       if (suiteIds.length === 0 && caseIds.length === 0) {
-        return reply.status(400).send({ error: 'Nothing to move: provide suite_ids and/or case_ids' });
+        return sendError(reply, 400, 'Nothing to move: provide suite_ids and/or case_ids');
       }
       if (targetSuiteId === null && caseIds.length > 0) {
-        return reply.status(400).send({ error: 'Test cases must be moved into a suite, not to the top level' });
+        return sendError(reply, 400, 'Test cases must be moved into a suite, not to the top level');
       }
 
       const target = targetSuiteId
         ? await db.selectFrom('test_suites').selectAll().where('id', '=', targetSuiteId).executeTakeFirst()
         : null;
       if (targetSuiteId && (!target || target.project_id !== projectId)) {
-        return reply.status(400).send({ error: `Target suite '${targetSuiteId}' not found in this project` });
+        return sendError(reply, 400, `Target suite '${targetSuiteId}' not found in this project`);
       }
 
       const suites = suiteIds.length
@@ -418,10 +416,10 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         ? await db.selectFrom('test_cases').selectAll().where('id', 'in', caseIds).execute()
         : [];
       if (suites.length !== suiteIds.length || suites.some((su) => su.project_id !== projectId)) {
-        return reply.status(404).send({ error: 'One or more suites were not found in this project' });
+        return sendError(reply, 404, 'One or more suites were not found in this project');
       }
       if (cases.length !== caseIds.length || cases.some((c) => c.project_id !== projectId)) {
-        return reply.status(404).send({ error: 'One or more test cases were not found in this project' });
+        return sendError(reply, 404, 'One or more test cases were not found in this project');
       }
 
       const isWithin = (path: string, ancestorPath: string) => path === ancestorPath || path.startsWith(`${ancestorPath}/`);
@@ -431,9 +429,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       );
       for (const su of movingSuites) {
         if (target && isWithin(target.path, su.path)) {
-          return reply
-            .status(400)
-            .send({ error: `Can't move suite '${su.name}' into itself or one of its own sub-suites` });
+          return sendError(reply, 400, `Can't move suite '${su.name}' into itself or one of its own sub-suites`);
         }
       }
       // A selected case whose suite is moving stays inside that suite.
@@ -471,7 +467,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         });
       } catch (err: any) {
         if (!isPublicError(err)) throw err;
-        return reply.status(400).send({ error: err.message });
+        return sendError(reply, 400, err.message);
       }
 
       await insertAuditLog({
@@ -503,16 +499,16 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const existing = await caseRepo.findById(caseId);
       if (!existing || existing.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test case not found in this project' });
+        return sendError(reply, 404, 'Test case not found in this project');
       }
 
       const latest = await versionRepo.findLatestVersion(caseId);
       if (latest && latest.status === 'DRAFT') {
-        return reply.status(409).send({ error: 'Latest version is already a DRAFT -- nothing to fork' });
+        return sendError(reply, 409, 'Latest version is already a DRAFT -- nothing to fork');
       }
       // A new draft would silently un-deprecate the case -- it has to be restored first.
       if (latest && latest.status === 'DEPRECATED') {
-        return reply.status(409).send({ error: 'This test case is deprecated -- restore it before editing' });
+        return sendError(reply, 409, 'This test case is deprecated -- restore it before editing');
       }
 
       try {
@@ -531,7 +527,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         return reply.status(201).send({ version });
       } catch (err: any) {
         if (err.message?.startsWith('NO_EXISTING_VERSION')) {
-          return reply.status(404).send({ error: err.message });
+          return sendError(reply, 404, err.message);
         }
         throw err;
       }
@@ -548,11 +544,11 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const version = await versionRepo.findById(versionId);
       if (!version) {
-        return reply.status(404).send({ error: 'Test case version not found' });
+        return sendError(reply, 404, 'Test case version not found');
       }
       const owningCase = await caseRepo.findById(version.test_case_id);
       if (!owningCase || owningCase.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test case version not found in this project' });
+        return sendError(reply, 404, 'Test case version not found in this project');
       }
       if (version.status !== 'DRAFT') {
         return sendCaseVersionLockedError(reply, versionId, request.url);
@@ -592,11 +588,11 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
       const version = await versionRepo.findById(versionId);
       if (!version) {
-        return reply.status(404).send({ error: 'Test case version not found' });
+        return sendError(reply, 404, 'Test case version not found');
       }
       const owningCase = await caseRepo.findById(version.test_case_id);
       if (!owningCase || owningCase.project_id !== projectId) {
-        return reply.status(404).send({ error: 'Test case version not found in this project' });
+        return sendError(reply, 404, 'Test case version not found in this project');
       }
       if (version.status !== 'DRAFT') {
         return sendProblemDetails(reply, {
@@ -665,11 +661,11 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
         const version = await versionRepo.findById(versionId);
         if (!version) {
-          return reply.status(404).send({ error: 'Test case version not found' });
+          return sendError(reply, 404, 'Test case version not found');
         }
         const owningCase = await caseRepo.findById(version.test_case_id);
         if (!owningCase || owningCase.project_id !== projectId) {
-          return reply.status(404).send({ error: 'Test case version not found in this project' });
+          return sendError(reply, 404, 'Test case version not found in this project');
         }
         const latest = await versionRepo.findLatestVersion(owningCase.id);
         if (!latest || latest.id !== versionId) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SpecTreeData } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
+import { errorMessage } from "../api/errors";
 export interface SpecTreeOptions {
   selectedProjectId: string;
   selectedPlanId: string;
@@ -102,7 +103,7 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
           setRemoveFromPlanPrompt({ kind: "case", id: testCaseId, detail: body.detail || "This case has results. Remove it anyway?" });
         } else {
           const body = await res.json().catch(() => ({}) as any);
-          showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
+          showToast(`🔒 ${errorMessage(body) || "Could not update plan membership"}`);
         }
       } catch {
         showToast("Network error updating plan membership");
@@ -148,7 +149,7 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
           setRemoveFromPlanPrompt({ kind: "suite", id: suiteId, detail: body.detail || "Some cases have results. Remove them anyway?" });
         } else {
           const body = await res.json().catch(() => ({}) as any);
-          showToast(`🔒 ${body.detail || body.error || "Could not update plan membership"}`);
+          showToast(`🔒 ${errorMessage(body) || "Could not update plan membership"}`);
         }
       } catch {
         showToast("Network error updating plan membership");

@@ -24,7 +24,7 @@ import {
   type SkippedCustomFieldValueWarning,
 } from '@testify/core';
 import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
-import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage } from '../errors.js';
+import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 /**
@@ -49,16 +49,11 @@ const mb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
 function sendImportTooLarge(reply: FastifyReply, err: any): boolean {
   const code = err?.code;
   if (code === 'FST_REQ_FILE_TOO_LARGE' || code === 'FST_ERR_CTP_BODY_TOO_LARGE' || code === 'FST_FILES_LIMIT' || code === 'FST_PARTS_LIMIT' || code === 'FST_FIELDS_LIMIT') {
-    reply.status(413).send({
-      error:
-        code === 'FST_ERR_CTP_BODY_TOO_LARGE'
+    sendError(reply, 413, code === 'FST_ERR_CTP_BODY_TOO_LARGE'
           ? `A JSON import body can be at most ${mb(IMPORT_JSON_BODY_LIMIT_BYTES)}. Upload larger files as multipart/form-data (a "file" field), up to ${mb(IMPORT_MAX_FILE_BYTES)}.`
           : code === 'FST_REQ_FILE_TOO_LARGE'
             ? `The file is too large to import. The limit is ${mb(IMPORT_MAX_FILE_BYTES)}.`
-            : 'Send one file per import.',
-      code: 'IMPORT_TOO_LARGE',
-      max_file_bytes: IMPORT_MAX_FILE_BYTES,
-    });
+            : 'Send one file per import.', { code: 'IMPORT_TOO_LARGE', max_file_bytes: IMPORT_MAX_FILE_BYTES });
     return true;
   }
   return false;
@@ -87,7 +82,7 @@ function resolveImportProjectId(
   }
 
   if (!bodyProjectId) {
-    reply.status(400).send({ error: 'target_project_id is required' });
+    sendError(reply, 400, 'target_project_id is required');
     return null;
   }
   return bodyProjectId;
@@ -110,10 +105,8 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return reply;
     if (importsRunning >= MAX_CONCURRENT_IMPORTS) {
-      return reply
-        .header('Retry-After', '10')
-        .status(429)
-        .send({ error: 'Other imports are running. Try again in a moment.', code: 'IMPORT_BUSY' });
+      return sendError(reply
+        .header('Retry-After', '10'), 429, 'Other imports are running. Try again in a moment.', { code: 'IMPORT_BUSY' });
     }
     importsRunning++;
     holdsSlot.add(req);
@@ -224,7 +217,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       // upload's project field is only known once the body has been read).
       const importPerms = await permissionsInProject(user, targetProjectId, db);
       if (!importPerms.includes('IMPORT_DATA') && !importPerms.includes('SYSTEM_ADMIN')) {
-        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+        return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: 'IMPORT_DATA' });
       }
 
       // Verify project exists
@@ -235,7 +228,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
         .executeTakeFirst();
 
       if (!project) {
-        return reply.status(404).send({ error: `Project ID ${targetProjectId} not found` });
+        return sendError(reply, 404, `Project ID ${targetProjectId} not found`);
       }
 
       // Fetch existing project + global custom field definitions, through the same
@@ -430,7 +423,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       // anything else is unexpected and answered by the global error handler.
       if (sendImportTooLarge(reply, err)) return;
       if (!isPublicError(err)) throw err;
-      return reply.status(400).send({ error: err.message });
+      return sendError(reply, 400, err.message);
     }
   });
 
@@ -456,7 +449,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       // upload's project field is only known once the body has been read).
       const importPerms = await permissionsInProject(user, targetProjectId, db);
       if (!importPerms.includes('IMPORT_DATA') && !importPerms.includes('SYSTEM_ADMIN')) {
-        return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+        return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: 'IMPORT_DATA' });
       }
 
       const project = await db
@@ -466,7 +459,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
         .executeTakeFirst();
 
       if (!project) {
-        return reply.status(404).send({ error: `Project ID ${targetProjectId} not found` });
+        return sendError(reply, 404, `Project ID ${targetProjectId} not found`);
       }
 
       const now = new Date().toISOString();
@@ -886,7 +879,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       // anything else is unexpected and answered by the global error handler.
       if (sendImportTooLarge(reply, err)) return;
       if (!isPublicError(err)) throw err;
-      return reply.status(400).send({ error: err.message });
+      return sendError(reply, 400, err.message);
     }
   });
 
@@ -902,7 +895,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       !user.permissions.includes('CUSTOM_FIELD_MANAGE') &&
       !user.permissions.includes('SYSTEM_ADMIN')
     ) {
-      return reply.status(403).send({ error: 'Forbidden: Insufficient privileges', requiredPermission: 'IMPORT_DATA' });
+      return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: 'IMPORT_DATA' });
     }
 
     const { target_project_id: targetProjectId, entity_type: entityTypeRaw } = req.query as {
@@ -910,7 +903,7 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       entity_type?: string;
     };
     if (!targetProjectId) {
-      return reply.status(400).send({ error: 'target_project_id is required' });
+      return sendError(reply, 400, 'target_project_id is required');
     }
     const entityType = entityTypeRaw === 'TestSuite' ? 'TestSuite' : 'TestCase';
 
