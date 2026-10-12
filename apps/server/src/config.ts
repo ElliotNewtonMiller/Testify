@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { validatePasswordPolicy } from '@testify/core';
 import { SecretBox } from './services/secrets.js';
 
@@ -126,4 +129,24 @@ export function resolveSecretsKey({ inMemory }: { inMemory: boolean }, env: Node
     return SecretBox.fromSecret(secret);
   }
   return inMemory ? SecretBox.ephemeral() : null;
+}
+
+/** apps/web/dist: the same place whether this runs from src/ (tsx) or the dist/ bundle. */
+export const DEFAULT_WEB_DIST_DIR = fileURLToPath(new URL('../../web/dist/', import.meta.url));
+
+/**
+ * The built web app for the server to serve alongside the API (`npm run build` makes it).
+ * WEB_DIST_DIR points elsewhere and must hold an index.html. Unset, the default location is
+ * used if a build is there; otherwise the server serves only the API (in development the web
+ * app comes from Vite's dev server instead).
+ */
+export function resolveWebDistDir(env: NodeJS.ProcessEnv = process.env, defaultDir = DEFAULT_WEB_DIST_DIR): string | null {
+  const dir = env.WEB_DIST_DIR?.trim();
+  if (dir) {
+    if (!existsSync(join(dir, 'index.html'))) {
+      throw new ConfigError(`WEB_DIST_DIR (${dir}) has no index.html. Point it at the web app's build folder (apps/web/dist after \`npm run build\`).`);
+    }
+    return dir;
+  }
+  return existsSync(join(defaultDir, 'index.html')) ? defaultDir : null;
 }

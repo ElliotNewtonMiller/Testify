@@ -34,7 +34,8 @@ import { createRateLimits } from './services/rateLimits.js';
 import { runDueSchedules } from './services/reportEmailService.js';
 import { requirePermission } from './middleware/auth.js';
 import { autoCloseBuildIfComplete } from './buildAutoClose.js';
-import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, ConfigError } from './config.js';
+import { registerWebApp } from './webApp.js';
 import { setSecretBox } from './services/secrets.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
@@ -45,7 +46,7 @@ import { requestOrigin } from './audit.js';
 // works identically on every machine; tests rely on that. Pass a real connectionString to
 // connect to a real Postgres server. The startup code at the bottom of this file decides which
 // from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
-export async function createServer(connectionString?: string, options: { db?: Kysely<Database> } = {}) {
+export async function createServer(connectionString?: string, options: { db?: Kysely<Database>; webDistDir?: string | null } = {}) {
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
   const app = Fastify({ logger: false, trustProxy: process.env.TRUST_PROXY === 'true' });
@@ -344,6 +345,9 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     });
   });
 
+  // The built web app, served for every address the API doesn't handle (webApp.ts).
+  if (options.webDistDir) registerWebApp(app, options.webDistDir);
+
   return { app, db, seed };
 }
 
@@ -367,8 +371,19 @@ if (process.env.NODE_ENV !== 'test') {
         'Set DATABASE_URL to a PostgreSQL connection string to keep your data.'
     );
   }
-  const { app, db } = await createServer(dbConfig.connectionString).catch(exitOnConfigError);
+  let webDistDir: string | null;
+  try {
+    webDistDir = resolveWebDistDir();
+  } catch (err) {
+    webDistDir = exitOnConfigError(err);
+  }
+  const { app, db } = await createServer(dbConfig.connectionString, { webDistDir }).catch(exitOnConfigError);
   const port = Number(process.env.PORT) || 3001;
+  console.log(
+    webDistDir
+      ? `[testify] Serving the web app from ${webDistDir}`
+      : '[testify] No built web app found (run `npm run build`), so only the API is served.'
+  );
   app.listen({ port, host: '0.0.0.0' }, (err, address) => {
     if (err) {
       console.error(err);

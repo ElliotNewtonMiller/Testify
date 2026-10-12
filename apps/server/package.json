@@ -5,10 +5,11 @@
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
-    "build": "tsc",
-    "start": "tsx src/server.ts",
+    "build": "node scripts/build.mjs",
+    "start": "node dist/server.js",
     "dev": "tsx src/dev.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^22.13.4",
     "@types/nodemailer": "^8.0.2",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.3",
     "typescript": "^5.5.4"
   }
