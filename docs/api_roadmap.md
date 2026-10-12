@@ -19,7 +19,7 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 - **Agents:** `POST /mcp` lets them list projects, search and read cases, and run every report.
 
 **Weak:**
-1. **Documented by hand only.** RFC 03 §1-4 has the conventions, every route and the error codes, with examples; [reports_api_and_mcp.md](reports_api_and_mcp.md) covers reports, MCP and CI results in depth. Request and response fields for most routes still have to be read from the code in `apps/server/src/routes/` (step 3).
+1. ~~**Mostly undocumented.**~~ Every route is on `/docs` with its fields, allowed values and errors (step 3), with a getting-started guide ([api_getting_started.md](api_getting_started.md)), the conventions in RFC 03 §1-4 and the reports in [reports_api_and_mcp.md](reports_api_and_mcp.md).
 2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
 4. ~~**No machine-readable description.**~~ The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover every route (step 3). Report outputs are described only at the top level so far.
@@ -111,7 +111,7 @@ Many tools read that format, so the one file gives:
 
 ### 3. OpenAPI spec and docs page
 
-**Status:** In progress. Stages 1-3 of 4 done (2026-10-12): every route is in the spec.
+**Status:** Done (2026-10-12). All four stages finished.
 
 **What:**
 - Add a schema to every route (inputs, outputs, errors).
@@ -130,7 +130,7 @@ Many tools read that format, so the one file gives:
 1. **Infrastructure and the first area. Done 2026-10-12.** The packages, the page, validation, the response check; sign-in, projects, plans, runs and results (18 routes). `apps/server/tests/openapi.test.ts`.
 2. **Specification and plans. Done 2026-10-12.** Suites, cases, versions, custom-field values, search, move, the spec tree, plan membership and the Execute queue (27 routes; 45 in all). Every field limited to a set of values now lists them in its description. Found while documenting: a case's `priority` and `execution_type` were stored as sent; they're now checked (`CRITICAL`/`HIGH`/`MEDIUM`/`LOW`, `MANUAL`/`AUTOMATED`).
 3. **Everything else. Done 2026-10-12.** Reports, report email, import (multipart or JSON), export, API tokens, admin, health and `/mcp` (39 routes; 84 in all). `openapi.test.ts` checks that every route the server registers is in the spec; only `GET`/`DELETE /mcp` are hidden (they just answer 405). Report outputs are described only at the top level (`report`, `generated_at`, `project`); `POST .../reports/{reportId}` lists each report's parameters, and `reports_api_and_mcp.md` and the catalog say what each contains. Found while documenting: creating a user whose username or email was taken answered 500; it's now `409 USER_EXISTS`.
-4. **Getting-started guide and docs.** Not started. A short guide (tokens, first call, sending CI results) beside the reference; RFC 03 points to `/docs` for field-level detail.
+4. **Getting-started guide and docs. Done 2026-10-12.** [api_getting_started.md](api_getting_started.md): making a token (which capabilities for which job), the first call, finding ids, creating or reusing a run per build, sending results and checking what was saved, a GitHub Actions step, reading results back, errors and limits; every command was run against a real server. A shorter version heads the `/docs` page. RFC 03, the README and the reports doc link to it.
 
 **Allowed values:** Swagger UI's "Example Value" view shows only one value per field (e.g. `"verdict": "PASSED"`); the "Schema" view next to it shows them all. Since stage 2, every such field also lists them in its description (`oneOf()` in `openapi/schemas.ts`).
 
@@ -212,7 +212,7 @@ Many tools read that format, so the one file gives:
 
 1. **Steps 1 and 2:** consistency and versioning. Done.
 2. **Fix first:** API tokens on global admin routes. Done.
-3. **Step 3:** finish the spec and docs page (stages 2-4).
+3. **Step 3:** finish the spec and docs page (stages 2-4). Done.
 4. **Steps 8 and 4:** the missing reads and paging, together.
 5. **Step 5:** CI integration, built on the published spec.
 6. **Steps 6 and 7:** agent writes and webhooks.

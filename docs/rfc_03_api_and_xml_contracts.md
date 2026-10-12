@@ -6,7 +6,7 @@
 **Target Platform:** Testify
 **Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md), [rfc_04_rbac_security_matrix.md](rfc_04_rbac_security_matrix.md), [reports_api_and_mcp.md](reports_api_and_mcp.md), [api_roadmap.md](api_roadmap.md)
 
-> This RFC describes the API as it works today. Every running server also serves a generated OpenAPI spec at `/docs/json` and a docs page with "Try it out" at `/docs`, covering every route with its fields, allowed values and errors ([api_roadmap.md](api_roadmap.md) step 3). This document gives the conventions and the overview; the spec has the field-level detail. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
+> This RFC describes the API as it works today. Every running server also serves a generated OpenAPI spec at `/docs/json` and a docs page with "Try it out" at `/docs`, covering every route with its fields, allowed values and errors ([api_roadmap.md](api_roadmap.md) step 3). This document gives the conventions and the overview; the spec has the field-level detail, and [api_getting_started.md](api_getting_started.md) is a step-by-step guide for scripts and CI. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
 
 ---
 

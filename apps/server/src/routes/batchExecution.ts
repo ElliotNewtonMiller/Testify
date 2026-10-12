@@ -114,7 +114,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             status: 400,
             title: 'Bad Request',
             code: 'INVALID_RESULT',
-            detail: `Batch execution failed in atomic mode: ${invalid.map((p) => `${p.name} ${p.reason}`).join('; ')}`,
+            detail: `Nothing was recorded (all_or_nothing): ${invalid.map((p) => `${p.name} ${p.reason}`).join('; ')}`,
             invalid_params: invalid,
             instance: req.url,
           });
@@ -207,7 +207,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           /** Refuses item i: the whole batch in all-or-nothing mode, otherwise just this item. */
           const refuse = (i: number, status: number, code: string, reason: string, invalid_params: InvalidParam[]) => {
             if (allOrNothing) {
-              throw new AtomicRejection(status, code, `Batch execution failed in atomic mode: item at index ${i}: ${reason}`, invalid_params);
+              throw new AtomicRejection(status, code, `Nothing was recorded (all_or_nothing): results[${i}]: ${reason}`, invalid_params);
             }
             failedCount++;
             results.push({ index: i, status, code, detail: reason, invalid_params });

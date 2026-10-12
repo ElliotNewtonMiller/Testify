@@ -71,6 +71,7 @@ Schema changes always go in a new migration in `packages/db/src/migrations/`; ne
 
 ## API and integrations
 
+- **Getting started**: [docs/api_getting_started.md](docs/api_getting_started.md) takes you from making an API token to a CI pipeline that records its results (with a GitHub Actions example).
 - **REST API**: sign in with `POST /api/v1/auth/login`, or use an API token from Admin Panel → API Tokens (`Authorization: Bearer tf_ci_...`).
 - **API docs page**: open `/docs` on your server (e.g. `http://localhost:3001/docs`) to browse the routes and try them; the OpenAPI spec is at `/docs/json`. Every route is on it.
 - **Results from CI**: `POST /api/v1/runs/:runId/results/batch`.

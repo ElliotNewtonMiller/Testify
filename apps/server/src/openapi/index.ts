@@ -49,6 +49,12 @@ const SPEC_DESCRIPTION = `The Testify REST API. Everything the web app does goes
 - \`Authorization: Bearer <jwt>\`: the \`token\` from \`POST /api/v1/auth/login\`.
 - The web app's session cookie: if you're signed in to Testify in this browser, "Try it out" just works.
 
+**Getting started** (the full guide, with a CI example, is docs/api_getting_started.md in the Testify repository):
+1. In Testify, open Admin Panel → API Tokens, pick the project, tick the capabilities the job needs (for CI results: \`SPEC_VIEW\`, \`EXECUTE_RUN\`, and \`RUN_MANAGE\` to create runs) and copy the token. Here, click **Authorize** and paste it.
+2. Try \`GET /api/v1/auth/me\`, then \`GET /api/v1/projects\` and \`GET /api/v1/projects/{projectId}/plans\` for the ids you need.
+3. Create a run with \`POST /api/v1/plans/{planId}/runs\`, then send results with \`POST /api/v1/runs/{runId}/results/batch\`, naming each case by its readable id (\`{ "external_id": "SHOP-101" }\`).
+4. Read them back with the \`run_summary\` report (\`?format=markdown\` for a PR comment).
+
 **Conventions** (RFC 03 §1): lists and creation sit under the parent, each item has its own address; \`PATCH\` changes only the fields sent; creating answers 201 with the item wrapped in its name, deleting answers 204; \`?force=true\` deletes something that still contains things. Ids are named after their database columns (\`test_plan_id\`, \`test_run_id\`, …). Every error is problem details (\`application/problem+json\`) with a \`code\` and a \`detail\`.`;
 
 function ajvFor(coerce: boolean) {

@@ -2061,3 +2061,24 @@ Tests: `apps/server/tests/openapi.test.ts` +2 (the 45 routes are all in the spec
 - **Docs:** the RFC 03 header and summary, the blueprint and the README say every route is on `/docs`; CLAUDE.md's "not built" now names only the report-output schemas; roadmap stage 3 done.
 
 Tests: `openapi.test.ts` +2 (every registered `/api` and `/mcp` route is in the spec, with exactly two hidden, 84 operations, and the import's two body types; a taken username or email gets 409 three ways). The whole suite's responses still match the spec. 621 tests pass and typecheck is clean. Verified on a production build with the demo data: the page shows all 18 groups with the report ids and parameters listed, and a multipart import preview through the new schema works.
+
+## Added: a getting-started guide for the API (API roadmap step 3, stage 4) (2026-10-12)
+
+The last stage of step 3, which is now Done.
+
+- **New `docs/api_getting_started.md`**, from nothing to a CI pipeline that records its results:
+  1. what you need;
+  2. making an API token, with which capabilities each job needs;
+  3. the first call;
+  4. finding the ids you need;
+  5. creating or reusing a run for each build, sending results, checking what was saved (201 vs. 207, the reasons a result is refused, `all_or_nothing`), and a GitHub Actions step;
+  6. reading results back (a Markdown run summary for a PR comment, the queue, case history, test health, exports);
+  7. errors, with the codes you're most likely to meet;
+  8. limits;
+  9. going further (generated clients from `/docs/json`, MCP).
+- **Every command was run** against a production build with the demo data, and the outputs shown are real ones. Running the GitHub Actions step's script locally caught a bug in the draft: it treated a 207 (some results refused) as success, because 207 is below 300. It now requires 201.
+- **The top of `/docs`** has a four-step "Getting started" (make a token and Authorize, first calls, create a run and send results, read the summary back) and names the full guide.
+- **Batch error wording:** an all-or-nothing batch that's refused said "Batch execution failed in atomic mode: item at index 2: ..."; it now says "Nothing was recorded (all_or_nothing): results[2]: ...", naming the field the way `invalid_params` does.
+- **Links:** the README, RFC 03, `reports_api_and_mcp.md` and CLAUDE.md's doc map point to the guide. In the roadmap, step 3 is Done and the "mostly undocumented" weakness is struck through.
+
+621 tests pass and typecheck is clean (no test asserted the old batch wording).

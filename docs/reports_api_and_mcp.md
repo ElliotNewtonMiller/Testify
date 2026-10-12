@@ -4,6 +4,8 @@ Testify's reports are built for three audiences: QA engineers troubleshooting fa
 
 In the web app, **📊 Reports** in the header opens the same reports as a full view (Overview, Run, Trends & Breakdown, Test Health, plus a case-history drawer). Its address is a shareable link (`#/reports/<tab>?project=&plan=&run=&case=`).
 
+New to the API? Start with [api_getting_started.md](api_getting_started.md).
+
 ## Authentication
 
 Send `Authorization: Bearer <token>` with either:
