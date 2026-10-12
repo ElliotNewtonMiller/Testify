@@ -192,7 +192,7 @@ sequenceDiagram
 #### Token Security Specifications
 1. **Shown once:** the plaintext token is in the creation response only. It's never stored and can't be retrieved again; the UI shows it once with a copy button.
 2. **Stored as a digest:** `api_tokens.token_hash` is an unsalted SHA-256 digest, looked up by value. A 32-byte random token has enough entropy that a slow, salted hash isn't needed (the same approach GitHub and Stripe use).
-3. **Bound to one project:** a token used on any other project gets `403 TOKEN_PROJECT_MISMATCH`, checked centrally for every route and every MCP tool call.
+3. **Bound to one project:** a token used on any other project gets `403 TOKEN_PROJECT_MISMATCH`, checked centrally for every route and every MCP tool call. **Gap (found 2026-10-12, not yet fixed):** the check only runs when the request names a project, so the global admin routes (`/api/v1/admin/...`) accept a token that holds an admin permission, system-wide. See [api_roadmap.md](api_roadmap.md), "Fix first".
 4. **Capped by its issuer:** a token's capabilities can't exceed the issuer's permissions at creation. On every use they're intersected with the issuer's **current** permissions in the project. If the issuer is disabled or loses `API_TOKEN_MANAGE` there, the token stops working (`401 TOKEN_ISSUER_INACTIVE`), and disabling the issuer revokes their tokens for good.
 5. **`SYSTEM_ADMIN` is never grantable** to a token, even by an admin. A token holding it would be a cross-project superuser.
 6. **Expiry is optional:** no expiry by default, since a token can't outlive its issuer's access.

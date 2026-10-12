@@ -24,6 +24,8 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
 4. **Machine-readable description in progress.** The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover sign-in, projects, plans, runs and results so far (step 3).
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
+6. **Reads are coarse** (step 8): no fetching a single item by id, no dedicated list of a run's results, readable ids (SHOP-12) accepted almost nowhere, only a case's latest version.
+7. **API tokens reach global admin routes** (fix first, see below).
 
 ---
 
@@ -46,6 +48,24 @@ Many tools read that format, so the one file gives:
 **How it fits Testify:** Fastify (the server framework) has an official plugin that builds the spec from a description (a JSON schema) attached to each route, and another plugin serves the page: Swagger UI, or Scalar. No route has a schema yet; input is checked by hand-written code. Adding schemas route by route is the main work. The same schemas then also do the input checking, so documentation and behavior can't disagree.
 
 ---
+
+## Fix first: API tokens on global admin routes
+
+**Status:** Not started. Found 2026-10-12.
+
+**The problem.** An API token is bound to one project, and the docs promise that binding is "checked centrally for every route". It's only checked when the request names a project. The admin routes (users, roles, custom fields, email settings, the audit log) don't name one, so the binding doesn't apply there. A token whose capabilities include an admin permission works across the whole system. Checked with a token made for one project holding `USER_MANAGE` and `CUSTOM_FIELD_MANAGE`; it could:
+- list every user (names, emails, roles, permissions);
+- read the whole Security Audit Log, every project's entries included;
+- create users, though only with the empty No Access role, since the guard limits it to permissions it has globally (none);
+- create a global custom field, which appears in every project and is written into every existing case if it has a default.
+
+**Why it matters even though someone had to grant the permission.** The token does need the permission, granted by someone who holds it. But:
+- **Who can grant it:** a token's ceiling is its issuer's permissions *in that project*. Someone who is an admin only in one project (a project role) can therefore make a token that does these things everywhere, which they can't do themselves.
+- **Wider reach than the label:** the token is listed under one project's API Tokens and looks project-bound, so a leaked CI token can do far more than its owner expects.
+
+**Recommendation:** refuse API tokens on every route that doesn't belong to a project (`/admin/...`), and stop offering admin-only permissions (`USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, and any others that only gate global routes) as token capabilities. Admin automation, if wanted later, gets its own kind of credential.
+
+**Open question:** refuse tokens on admin routes only, or also remove those permissions from the capability list (recommended: both)?
 
 ## Steps
 
@@ -109,6 +129,8 @@ Many tools read that format, so the one file gives:
 3. **Everything else.** Not started. Reports, report email, import, export, API tokens, admin, health, and `/mcp` described. Then every route is in the spec, and a test checks that none is missing.
 4. **Getting-started guide and docs.** Not started. A short guide (tokens, first call, sending CI results) beside the reference; RFC 03 points to `/docs` for field-level detail.
 
+**To improve while doing stages 2-3:** Swagger UI's "Example Value" view shows only one value per field (e.g. `"verdict": "PASSED"`). The allowed values are in the "Schema" view next to it. List them in each field's description too, so they show in both views.
+
 **Open questions:** none.
 
 **Needs:** `@fastify/swagger` and `@fastify/swagger-ui` (installed 2026-10-12, with Elliot's OK); `ajv`, which Fastify already used, is now a direct dependency.
@@ -160,6 +182,21 @@ Many tools read that format, so the one file gives:
 
 **Recommendation:** after steps 1-3. Needs a settings screen, retries for failed deliveries, and a delivery log.
 
+### 8. Fill the read gaps
+
+**Status:** Not started. Added 2026-10-12.
+
+**What:** reads a script needs and doesn't have today:
+- **Single items by id:** `GET /projects/{id}`, `/plans/{id}`, `/runs/{id}`, `/suites/{id}`, `/cases/{id}` (the case with its latest version and steps), `/results/{id}` (with step results). Today only lists exist, or the whole project's tree.
+- **A run's results:** `GET /runs/{id}/results`, every result with its duration, notes, error, step results and who recorded it, filterable by verdict and case; paged (step 4). Today the options are the Execute queue (latest verdict only), the reports, or an export (limited to 120 an hour).
+- **Readable ids:** accept a case's external id (SHOP-12) wherever a case id is taken, or add a lookup (`GET /projects/{id}/cases?external_id=SHOP-12`). Today only CI batches and the case-history report accept them.
+- **Version history:** `GET /cases/{id}/versions` (every version, not just the latest) and `GET /versions/{id}`.
+- **Report schedule recipients:** a way to add or remove one recipient (`PATCH /report-schedules/{id}` with only `recipients`), instead of resending the whole schedule.
+
+**Why:** with these, a script can find something by its readable id, read it, and act on it in one or two calls, instead of searching, downloading whole lists and chaining lookups.
+
+**Recommendation:** after step 3 stages 2-3, so the new routes get their schemas as they're added; together with step 4 (paging) for the lists. Bulk changes (e.g. deprecating many cases in one call) belong in the same pass.
+
 ### Related gaps worth doing alongside
 
 - Plan and run create/edit/delete write no audit entry (add with step 1).
@@ -170,10 +207,12 @@ Many tools read that format, so the one file gives:
 
 ## Recommended order
 
-1. **Steps 1 and 2:** consistency and versioning. Decisions first, since they shape everything else.
-2. **Steps 3 and 4:** spec, docs page and paging, done area by area together with step 1's changes.
-3. **Step 5:** CI integration, built on the published spec.
-4. **Steps 6 and 7:** agent writes and webhooks.
+1. **Steps 1 and 2:** consistency and versioning. Done.
+2. **Fix first:** API tokens on global admin routes.
+3. **Step 3:** finish the spec and docs page (stages 2-4).
+4. **Steps 8 and 4:** the missing reads and paging, together.
+5. **Step 5:** CI integration, built on the published spec.
+6. **Steps 6 and 7:** agent writes and webhooks.
 
 ---
 

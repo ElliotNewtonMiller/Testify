@@ -1993,3 +1993,12 @@ The first stage of `docs/api_roadmap.md` step 3. Decided with Elliot: Swagger UI
 New tests: `apps/server/tests/openapi.test.ts` (4): the page and spec need no sign-in, and the page sends the CSRF header; the spec is OpenAPI 3.1, every `$ref` resolves, every operation has a summary, a tag and a success response, the 18 routes are all there, and login needs no credential; a malformed request gets `INVALID_REQUEST` naming each field (no body coercion), while the results route keeps `INVALID_RESULT`; a route whose response doesn't match its schema fails with the field named. `production_build.test.ts` +3 assertions.
 
 613 tests pass and typecheck is clean. Verified on a production build in a separate origin: the docs page loads with the demo data present; signed in through the web app, "Try it out" on `GET /api/v1/projects` returned 200 and on `POST /api/v1/projects` created a project (201) through the session cookie; the demo script (which uses the batch route) ran unchanged.
+
+## Docs: recorded the API-token admin-route gap and a "missing reads" step (2026-10-12)
+
+Found while answering Elliot's question about whether the API is enough for automation; nothing in the code changed.
+
+- **API tokens on global admin routes.** A token's project binding is only checked when the request names a project, and the admin routes don't. A probe with a token made for one project holding `USER_MANAGE` and `CUSTOM_FIELD_MANAGE` could list every user, read the whole Security Audit Log, create a No Access user (the admin guard stopped anything more) and create a global custom field. Since a token's ceiling is its issuer's permissions in that project, someone who is an admin in one project only can make such a token. Recorded as "Fix first" in `docs/api_roadmap.md`, with a gap note in RFC 04 §4.2 (which said the binding was checked for every route) and in CLAUDE.md's known gaps.
+- **Step 8, "Fill the read gaps":** single items by id, a run's results, readable ids (SHOP-12), version history, and changing one report-schedule recipient.
+- **Step 3:** a note to list each field's allowed values in its description, since Swagger UI's "Example Value" view shows only one.
+- **Recommended order:** the token fix, then step 3, then steps 8 and 4 together.

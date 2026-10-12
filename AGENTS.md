@@ -233,6 +233,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 
 ## Known gaps
 
+- **API tokens on global admin routes:** the project binding only applies when a request names a project, so a token holding an admin permission (e.g. `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`) works on `/api/v1/admin/...` system-wide. To fix first; see `docs/api_roadmap.md`.
 - Plan and run create/edit/delete write no audit entry.
 - No UI for `allow_draft_plan_linking`.
 - Imports:
