@@ -1,331 +1,210 @@
 # RFC 03: API Contracts, High-Throughput Ingestion & Multi-Format Migration Engine
 
-**Document Status:** Design document; sections 5-9 updated 2026-10-11 to match what's built
+**Document Status:** Describes the API as built (§1-4 rewritten 2026-10-12 after the API consistency work; §5-9 updated 2026-10-11)
 **Date:** September 8, 2026
 **Author:** API & Integration Architecture Team
 **Target Platform:** Testify
-**Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md)
+**Related Documents:** [00_requirements_alignment.md](00_requirements_alignment.md), [rfc_01_domain_model.md](rfc_01_domain_model.md), [rfc_04_rbac_security_matrix.md](rfc_04_rbac_security_matrix.md), [reports_api_and_mcp.md](reports_api_and_mcp.md), [api_roadmap.md](api_roadmap.md)
 
-> **Sections 1-4 (API conventions, endpoint contract, batch schema, error codes) are the original design, not the API as built.** The real API differs in paths, pagination (there's none yet; list endpoints return everything), payloads and error codes, and there's no OpenAPI spec. The API and MCP are due to be revisited, and that work will replace these sections. Until then, the routes in `apps/server/src/routes/` are the reference, along with [reports_api_and_mcp.md](reports_api_and_mcp.md) for reports, CI results and MCP. Sections 5-9 describe what's built, and say plainly what isn't.
+> This RFC describes the API as it works today. There's no OpenAPI spec yet (planned: [api_roadmap.md](api_roadmap.md) step 3), so this document and the routes in `apps/server/src/routes/` are the reference. Reports, report email and MCP are covered in more depth in [reports_api_and_mcp.md](reports_api_and_mcp.md). Where something from the original design isn't built, the section says so.
 
 ---
 
-## 1. Architectural Principles & RESTful API Standards
+## 1. Principles & Conventions
 
-The Testify API layer is built to solve two contrasting operational demands:
-1. **Real-Time Interactive UI:** Low-latency operations (< 50ms p95 response time) for browsing suite hierarchies, editing test cases, and toggling execution verdicts in the web application.
-2. **High-Throughput CI/CD Pipeline Ingestion:** Bulk result streaming capable of processing 1,000+ execution results per request from automated test runners (GitHub Actions, GitLab CI, Jenkins, Playwright, PyTest) without table locking or HTTP timeouts.
+The API serves two kinds of client:
+1. **The web app:** many small requests while people browse suites, edit cases and record verdicts with hotkeys.
+2. **CI runners and agents:** large batches of results (up to 5,000 per request) from GitHub Actions, GitLab CI, Jenkins, Playwright, PyTest and the like, plus report reads over REST and MCP.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                                 API Client Layer                                  |
+|                                 API clients                                       |
 |  +------------------------------+             +--------------------------------+  |
-|  | Modern Single-Page App (UI)  |             | Automated CI/CD Test Runners   |  |
+|  | Web app (session cookie)     |             | CI runners, scripts, agents    |  |
 |  +--------------+---------------+             +---------------+----------------+  |
 +-----------------|---------------------------------------------|-------------------+
-                  | (Low-Latency RESTful JSON)                  | (High-Throughput Batch POST)
+                  | JSON requests                               | Batch POSTs, reports, /mcp
                   v                                             v
 +-----------------------------------------------------------------------------------+
-|                             Testify API Gateway                                   |
+|                        Testify server (Fastify, one process)                      |
 |  +-----------------------------------------------------------------------------+  |
-|  | Authentication (Bearer tf_ci_... / session cookie) & Rate Limiter           |  |
+|  | Authentication (session cookie / Bearer JWT / Bearer tf_ci_...), project     |  |
+|  | resolution, permissions, rate limits (middleware/auth.ts, rateLimits.ts)     |  |
 |  +-----------------------------------------------------------------------------+  |
-|  | OpenAPI 3.1 Router & RFC 7807 Problem Details Error Handler                 |  |
+|  | Routes (apps/server/src/routes) and services; problem-details errors         |  |
 |  +-----------------------------------------------------------------------------+  |
 +-----------------|---------------------------------------------|-------------------+
                   v                                             v
 +------------------------------------+        +-------------------------------------+
-| Domain Controllers & Spec Service  |        | Bulk Batch Execution Processor      |
-| (Projects, Suites, Cases, Plans)   |        | (Stream Mapper, In-Memory Lookup)   |
+| Specification and plans            |        | Batch results: bulk lookups,        |
+| (projects, suites, cases, plans)   |        | multi-row inserts, one transaction  |
 +-----------------+------------------+        +-----------------+-------------------+
-                  |                                             |
                   +----------------------+----------------------+
-                                         |
                                          v
 +-----------------------------------------------------------------------------------+
-|                        PostgreSQL (PGlite in development and tests)               |
-|  +-----------------------------------------------------------------------------+  |
-|  | Atomic Batch Transactions / UUIDv7 Foreign Keys / Immutable Execution Logs  |  |
-|  +-----------------------------------------------------------------------------+  |
-+----------------------------------------+------------------------------------------+
-                                         | (Out-of-band attachments & raw logs)
-                                         v
-+-----------------------------------------------------------------------------------+
-|            IStorageProvider (Local File System / AWS S3) -- not built             |
+|                 PostgreSQL (PGlite in development and tests)                      |
+|        One transaction per change; results and audit rows append-only            |
 +-----------------------------------------------------------------------------------+
 ```
 
-### 1.1 Specification & Resource Conventions
-- **Contract Standard:** Native **OpenAPI 3.1.0** specification, fully typed with JSON Schema (Draft 2020-12). All endpoints strictly enforce `application/json` content types unless streaming raw binary attachments.
-- **URI Naming:** Predictable plural nouns with hierarchical nesting for sub-resources:
-  - Base Path: `/api/v1`
-  - Specification Entities: `/projects`, `/test-suites`, `/test-cases`, `/test-case-versions`
-  - Execution Entities: `/test-plans`, `/builds`, `/executions`
-  - Migration & Ingestion: `/imports/dry-run`, `/imports/execute`, `/exports/testlink`
+### 1.1 Conventions
 
-### 1.2 Cursor-Based Pagination & Filtering
-To guarantee sub-50ms query response times over millions of records, all list endpoints mandate cursor-based pagination using monotonic **UUIDv7** primary keys.
-
-- **Query Parameters:**
-  - `limit` (integer, optional): Items per page. Default `50`, maximum `250`.
-  - `starting_after` (string, optional): UUIDv7 cursor cursor indicating the last item from the previous page.
-  - `direction` (string, optional): `next` (default) or `prev`.
-- **Filtering Parameters:**
-  - `status` (string/array): Filter by execution or case version status (e.g., `PASSED,FAILED` or `APPROVED`).
-  - `priority` (string/array): Filter by importance (`HIGH`, `MEDIUM`, `LOW`).
-  - `assigned_to` (string): User UUIDv7 assigned to the test plan case.
-  - `suite_id` (string): Filter by test suite tree node.
-  - `updated_since` (string): ISO 8601 timestamp for incremental sync.
-- **Pagination Header Standards:**
-  - `X-Has-More`: Boolean indicating if subsequent pages exist.
-  - `X-Next-Cursor`: UUIDv7 string of the final item in the payload.
-  - `X-Total-Count`: Integer representing total matching records (calculated asynchronously for large datasets).
+- **Base path:** `/api/v1` for everything except the MCP endpoint (`POST /mcp`). The API is stable from here on: additions are fine, and breaking changes would go into `/api/v2` ([api_roadmap.md](api_roadmap.md) step 2).
+- **Addresses:** lists and creation sit under the parent; each item has its own short address.
+  - `GET`/`POST /projects/{projectId}/plans`, then `PATCH`/`DELETE /plans/{planId}`.
+  - Path names are short plurals: `/projects`, `/suites`, `/cases`, `/versions`, `/plans`, `/runs`, `/results`.
+- **Verbs:**
+  - `GET` reads; `POST` creates, or runs an action (`POST /versions/{id}/approve`);
+  - `PATCH` changes only the fields sent;
+  - `PUT` replaces a whole thing: a custom-field value, a user's set of permission overrides, a report schedule, the email settings;
+  - `DELETE` removes.
+- **Status codes:**
+  - create: `201` with the new item wrapped in its name, e.g. `{ "plan": { ... } }`;
+  - read and update: `200`, the item wrapped the same way, a list as `{ "plans": [ ... ] }`;
+  - delete: `204` with no body;
+  - "delete anyway" (when the item still contains things): `?force=true` in the query. Without it the server answers `409` naming what would be lost.
+  - A few actions answer `200` with a summary instead: e.g. removing a whole suite from a plan returns `{ added, removed, retired, skipped }`.
+- **Bodies:** JSON, snake_case field names. Only send `Content-Type: application/json` when there is a body; Fastify answers `400` to an empty JSON body.
+- **Ids:** UUIDs. A field holding an id is named after its database column, so each id has one name everywhere: `project_id`, `test_suite_id`, `test_case_id`, `test_case_version_id`, `test_plan_id`, `test_plan_case_id` (a case's link to a plan), `test_run_id`, `test_result_id`. Runs and results are never called "builds" or "executions".
+- **The project comes from the ids:** the server works out the project from every id a request names (in the path, query and JSON body) and checks permissions in that project. A request naming ids from two projects is refused with `400 PROJECTS_DIFFER`. An API token is refused on any project but its own (`403 TOKEN_PROJECT_MISMATCH`).
+- **Authentication:** every route except sign-in and `GET /api/v1/health` needs a credential (§7.1, RFC 04 §4).
+- **Paging:** none yet; lists return everything. The case-history report is the exception: it pages with `limit` and `cursor`, returning `next_cursor`.
+- **Validation:** input is checked before anything is written; a bad request gets a `400` naming each problem field in `invalid_params` (§4).
 
 ---
 
-## 2. OpenAPI 3.1 Endpoint Specifications
+## 2. Route Map
 
-### 2.1 Test Specification Core API (`/projects`, `/test-suites`, `/test-cases`)
+All addresses below are under `/api/v1`. The permission each route needs is in RFC 04 §2; "can read" means `SPEC_VIEW`, or `EXECUTE_RUN` for the reads Execute mode needs.
 
-#### `GET /api/v1/projects/{project_id}/test-suites`
-Retrieves the hierarchical test suite tree for a given project.
-- **Query Parameters:** `parent_id` (optional, default null for root suites), `include_cases` (boolean).
-- **Response (200 OK):**
+| Area | Routes |
+| :--- | :--- |
+| Sign-in | `POST /auth/login` (`session: "cookie"` for the web app), `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/me` (`username`, `email`, `password`, `current_password`) |
+| Projects | `GET`/`POST /projects`, `PATCH`/`DELETE /projects/{projectId}` |
+| Specification | `GET /projects/{projectId}/spec-tree?test_plan_id=&include_deprecated=`, `POST /projects/{projectId}/move`, `POST /projects/{projectId}/suites`, `PATCH`/`DELETE /suites/{suiteId}`, `POST /projects/{projectId}/cases`, `PATCH`/`DELETE /cases/{caseId}` |
+| Versions | `GET /cases/{caseId}/versions/latest`, `POST /cases/{caseId}/versions` (a new draft from the latest version), `PATCH /versions/{versionId}`, `POST /versions/{versionId}/approve`, `/deprecate`, `/restore` |
+| Custom field values | `GET /cases/{caseId}/custom-fields`, `PUT`/`DELETE /cases/{caseId}/custom-fields/{definitionId}`; the same under `/suites/{suiteId}` |
+| Search | `POST /projects/{projectId}/case-search`, `GET /projects/{projectId}/case-search/fields` |
+| Plans | `GET`/`POST /projects/{projectId}/plans`, `PATCH`/`DELETE /plans/{planId}`, `GET /plans/{planId}/cases?test_run_id=` (the plan's cases with each one's latest result in the run: Execute mode's queue), `POST /plans/{planId}/cases` (`test_case_id`), `DELETE /plans/{planId}/cases/{caseId}`, `POST`/`DELETE /plans/{planId}/suites/{suiteId}/cases` (every case in the suite's subtree) |
+| Runs and results | `GET`/`POST /plans/{planId}/runs`, `PATCH`/`DELETE /runs/{runId}`, `POST /runs/{runId}/results` (one result), `POST /runs/{runId}/results/batch` (CI, §3) |
+| Reports | `GET /projects/{projectId}/reports` (the catalog), `POST /projects/{projectId}/reports/{reportId}[?format=json\|markdown\|csv]` |
+| Report email | `POST /projects/{projectId}/report-emails`, `GET`/`POST /projects/{projectId}/report-schedules`, `PUT`/`DELETE /report-schedules/{scheduleId}`, `POST /report-schedules/{scheduleId}/send-now` |
+| Import | `POST /projects/{projectId}/imports/dry-run`, `POST /projects/{projectId}/imports/execute`, `GET /projects/{projectId}/imports/custom-field-options` (§6) |
+| Export | `POST /projects/{projectId}/exports/definitions`, `POST /projects/{projectId}/exports/results` |
+| API tokens | `GET`/`POST /projects/{projectId}/api-tokens`, `DELETE /api-tokens/{tokenId}` (revokes) |
+| Users and roles | `GET`/`POST /admin/users`, `PATCH /admin/users/{userId}` (status), `PATCH /admin/users/{userId}/roles`, `GET`/`PUT /admin/users/{userId}/permission-overrides[?project_id=]`, `POST /admin/users/{userId}/reset-password`, `GET`/`POST /admin/roles`, `PATCH`/`DELETE /admin/roles/{roleId}`, `GET /admin/permissions` |
+| Custom field definitions | `GET`/`POST /admin/custom-fields`, `PATCH`/`DELETE /admin/custom-fields/{fieldId}` |
+| Email settings | `GET`/`PUT /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email` |
+| Audit | `GET /admin/audit-logs` (the Security Audit Log) |
+| Operations | `GET /health` (no sign-in) |
+| MCP | `POST /mcp` (not under `/api/v1`; read-only tools, see [reports_api_and_mcp.md](reports_api_and_mcp.md)) |
+
+### 2.1 Example: creating a test case
+
+`POST /api/v1/projects/{projectId}/cases` creates a case and its first version. The external id is assigned by the server (`PREFIX-n`). The version starts as `DRAFT`, or `APPROVED` when the caller holds `SPEC_AUTO_APPROVE` and no required custom field is left unsatisfied.
+
 ```json
 {
-  "object": "list",
-  "data": [
-    {
-      "id": "0191c4d0-7a1a-7b3c-8e4d-1a2b3c4d5e6f",
-      "project_id": "0191c4d0-0000-7000-8000-000000000001",
-      "parent_id": null,
-      "name": "Authentication & Authorization",
-      "details": "End-to-end security and login test suites",
-      "node_order": 1,
-      "created_at": "2026-09-08T10:00:00Z",
-      "updated_at": "2026-09-08T10:00:00Z"
-    }
-  ],
-  "has_more": false
-}
-```
-
-#### `POST /api/v1/test-suites/{suite_id}/test-cases`
-Creates a new test case specification and generates its initial `v1` draft version.
-- **Request Body:**
-```json
-{
-  "title": "Verify OAuth2 Refresh Token Rotation",
-  "external_id": "TC-Auth-102",
+  "test_suite_id": "0191c4d0-7a1a-7b3c-8e4d-1a2b3c4d5e6f",
+  "title": "Refresh tokens rotate",
   "priority": "HIGH",
-  "importance": "HIGH",
   "execution_type": "AUTOMATED",
-  "summary": "Ensure that old refresh tokens are invalidated upon issuing a new pair.",
-  "preconditions": "User has an active session and valid refresh token.",
+  "summary": "Old refresh tokens stop working once a new pair is issued.",
+  "preconditions": "A signed-in user with a refresh token.",
   "steps": [
-    {
-      "step_number": 1,
-      "actions": "POST /api/v1/auth/refresh with token R1",
-      "expected_results": "Returns HTTP 200 with new token pair (A2, R2)",
-      "execution_type": "AUTOMATED"
-    },
-    {
-      "step_number": 2,
-      "actions": "POST /api/v1/auth/refresh with token R1 again",
-      "expected_results": "Returns HTTP 401 and revokes token family R2",
-      "execution_type": "AUTOMATED"
-    }
-  ],
-  "custom_fields": {
-    "cf_automation_framework": "Playwright",
-    "cf_security_tier": "Tier-1"
-  }
+    { "action": "Refresh with token R1", "expected_result": "200 with a new pair (A2, R2)" },
+    { "action": "Refresh with token R1 again", "expected_result": "401" }
+  ]
 }
 ```
-- **Response (201 Created):**
+
+Steps without `step_number` are numbered in order. The response (`201`) is `{ "test_case": { "id", "external_id", "title", ... }, "version": { "id", "version_number": 1, "status", ... } }`.
+
+### 2.2 Example: recording one result
+
+`POST /api/v1/runs/{runId}/results` is what Execute mode's verdict buttons and hotkeys call:
+
 ```json
 {
-  "id": "0191c4d0-8b2b-7c4d-9f5e-2b3c4d5e6f7a",
-  "suite_id": "0191c4d0-7a1a-7b3c-8e4d-1a2b3c4d5e6f",
-  "external_id": "TC-Auth-102",
-  "current_version_number": 1,
-  "status": "DRAFT",
-  "title": "Verify OAuth2 Refresh Token Rotation",
-  "importance": "HIGH",
-  "steps_count": 2,
-  "created_at": "2026-09-08T12:00:00Z"
+  "test_plan_case_id": "0191c4d0-aaaa-7000-8000-000000000010",
+  "verdict": "FAILED",
+  "status": "COMPLETED",
+  "notes": "Badge doesn't update",
+  "step_results": [{ "test_step_id": "0191c4d0-bbbb-7000-8000-000000000020", "verdict": "FAILED", "actual_result": "Still 0" }]
 }
 ```
+
+- `verdict`: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `RETEST_REQUIRED` or `KNOWN_ISSUE`. `status` defaults to `COMPLETED`.
+- Step results must be steps of the version the case is pinned to in the plan.
+- Manual results are never timed: any duration sent is ignored.
+- The response (`201`) is `{ "result": { "id", "test_run_id", "test_plan_case_id", "verdict", "status", "created_at" }, "run_status": "OPEN" | "CLOSED" }`. The run closes automatically the first time every case in the plan has a result.
 
 ---
 
-### 2.2 Test Plan & Build Management API (`/test-plans`, `/builds`)
+## 3. CI Results (`POST /runs/{runId}/results/batch`)
 
-#### `POST /api/v1/projects/{project_id}/test-plans`
-Creates a new Test Plan container.
-- **Request Body:**
+CI pipelines send many results at once. The batch route takes up to 5,000 per request and records them in one transaction.
+
+### 3.1 Request and Response
+
+`POST /api/v1/runs/{runId}/results/batch[?all_or_nothing=true]`, with `EXECUTE_RUN` (`EXECUTE_OVERWRITE` too, to change a case's existing result in the run).
+
+- `all_or_nothing=false` (the default): valid results are saved; refused ones are reported per item, and the response is `207 Multi-Status` if any were refused, `201` otherwise.
+- `all_or_nothing=true`: if any item is refused, nothing is saved and the whole request fails with that item's error (`400`, `403` or `422`).
+
 ```json
 {
-  "name": "Sprint 42 Regression Suite",
-  "notes": "Scope covers Core API and Payment Integration",
-  "is_active": true
-}
-```
-- **Response (201 Created):** Returns the `TestPlan` object with state `ACTIVE`.
-
-#### `PUT /api/v1/test-plans/{plan_id}/status`
-Transitions a Test Plan between `ACTIVE`, `LOCKED`, and `ARCHIVED`.
-- **Request Body:**
-```json
-{
-  "status": "LOCKED",
-  "reason": "Release v2.4.0 code freeze enforced."
-}
-```
-
-#### `POST /api/v1/test-plans/{plan_id}/builds`
-Creates a Build entry under an active Test Plan.
-- **Request Body:**
-```json
-{
-  "name": "v2.4.0-rc3",
-  "notes": "CI Build #981247",
-  "is_open": true,
-  "release_date": "2026-09-10"
-}
-```
-
----
-
-## 3. High-Throughput CI/CD Ingestion Engine (`POST /executions/batch`)
-
-Modern automated test execution streams hundreds to thousands of test results in continuous integration pipelines. To support pipeline execution without causing connection pool exhaustion or lock contention, Testify implements a specialized bulk ingestion endpoint.
-
-### 3.1 Bulk Endpoint Schema Specification
-
-`POST /api/v1/test-plans/{plan_id}/builds/{build_id}/executions/batch`
-
-#### Query Parameters:
-- `all_or_nothing` (boolean, optional, default `false`): Controls transaction boundary.
-  - `true`: Atomic mode. If any single result validation or case lookup fails, the entire batch is rejected with `HTTP 422 Unprocessable Entity` and no records are saved.
-  - `false`: Partial failure mode. Valid results are written, and invalid entries are returned in an error summary payload with `HTTP 207 Multi-Status`.
-
-#### Request Payload (`application/json`):
-```json
-{
-  "environment": "staging-us-east-1",
+  "environment": "staging",
   "runner_info": {
     "name": "GitHub Actions",
     "run_id": "98124712",
-    "job_name": "e2e-regression / chrome-suite",
-    "commit_sha": "a1b2c3d4e5f67890123456789abcdef012345678"
-  },
-  "executions": [
-    {
-      "case_identifier": {
-        "external_id": "TC-Auth-102"
-      },
-      "verdict": "PASSED",
-      "status": "COMPLETED",
-      "duration_ms": 3420,
-      "executed_at": "2026-09-08T13:15:00Z",
-      "notes": "Test executed successfully in Chrome 128 headless.",
-      "environment_tags": {
-        "browser": "chrome-128",
-        "os": "ubuntu-24.04"
-      },
-      "step_results": [
-        {
-          "step_number": 1,
-          "verdict": "PASSED",
-          "actual_result": "HTTP 200 returned with valid tokens."
-        },
-        {
-          "step_number": 2,
-          "verdict": "PASSED",
-          "actual_result": "HTTP 401 returned and token family revoked."
-        }
-      ]
-    },
-    {
-      "case_identifier": {
-        "by_path_title": {
-          "suite_path": "Payments / Checkout Gateway",
-          "title": "Verify Stripe 3DS Challenge Flow"
-        }
-      },
-      "verdict": "FAILED",
-      "status": "COMPLETED",
-      "duration_ms": 12450,
-      "executed_at": "2026-09-08T13:15:05Z",
-      "stack_trace": "TimeoutError: element ('#stripe-3ds-iframe') not visible after 10000ms\n    at Page.waitForSelector (/tests/checkout.spec.ts:45:12)",
-      "notes": "Failed during 3DS challenge frame load.",
-      "step_results": [
-        {
-          "step_number": 1,
-          "verdict": "PASSED",
-          "actual_result": "Cart initialized."
-        },
-        {
-          "step_number": 2,
-          "verdict": "FAILED",
-          "actual_result": "Iframe failed to mount within timeout."
-        }
-      ]
-    },
-    {
-      "case_identifier": {
-        "by_uuid": "0191c4d0-8b2b-7c4d-9f5e-2b3c4d5e6f7a"
-      },
-      "verdict": "SKIPPED",
-      "status": "COMPLETED",
-      "duration_ms": 0,
-      "executed_at": "2026-09-08T13:15:06Z",
-      "notes": "Skipped due to dependency flag --disable-payment-tests"
-    }
-  ]
-}
-```
-
-#### Response Payload (`207 Multi-Status` / `201 Created`):
-```json
-{
-  "object": "batch_execution_result",
-  "summary": {
-    "total_submitted": 3,
-    "successful": 3,
-    "failed": 0,
-    "duration_ms": 42
+    "job_name": "e2e / chrome",
+    "commit_sha": "a1b2c3d4e5f67890123456789abcdef012345678",
+    "url": "https://github.com/acme/shop/actions/runs/98124712"
   },
   "results": [
     {
-      "index": 0,
-      "status": 201,
-      "execution_id": "0191c4d5-1111-7000-8000-000000000001",
-      "case_id": "0191c4d0-8b2b-7c4d-9f5e-2b3c4d5e6f7a",
-      "verdict": "PASSED"
+      "case_identifier": { "external_id": "SHOP-102" },
+      "verdict": "PASSED",
+      "duration_ms": 3420,
+      "executed_at": "2026-09-08T13:15:00Z",
+      "environment_tags": { "browser": "chrome-128" },
+      "step_results": [{ "step_number": 1, "verdict": "PASSED", "actual_result": "200 returned" }]
     },
     {
-      "index": 1,
-      "status": 201,
-      "execution_id": "0191c4d5-2222-7000-8000-000000000002",
-      "case_id": "0191c4d0-9c3c-7d5e-0f6f-3c4d5e6f7a8b",
-      "verdict": "FAILED"
+      "case_identifier": { "by_path_title": { "suite_path": "Payments / Checkout", "title": "3DS challenge" } },
+      "verdict": "FAILED",
+      "duration_ms": 12450,
+      "failure_message": "3DS frame not visible after 10 s",
+      "stack_trace": "TimeoutError: ...\n    at checkout.spec.ts:45:12"
     },
-    {
-      "index": 2,
-      "status": 201,
-      "execution_id": "0191c4d5-3333-7000-8000-000000000003",
-      "case_id": "0191c4d0-8b2b-7c4d-9f5e-2b3c4d5e6f7a",
-      "verdict": "SKIPPED"
-    }
+    { "case_identifier": { "by_uuid": "0191c4d0-8b2b-7c4d-9f5e-2b3c4d5e6f7a" }, "verdict": "SKIPPED" }
   ]
 }
 ```
 
----
+- **`case_identifier`:** `external_id`, `by_uuid` (the case id), or `by_path_title`. A case that isn't in the plan yet is linked to it if it's APPROVED (or the project allows drafts); a case removed from the plan is refused.
+- **Each result:** `verdict` as in §2.2; optional `status`, `duration_ms`, `executed_at` (defaults to now), `notes`, `failure_message`, `stack_trace`, `environment_tags` (up to 50 text values), `step_results` (by `test_step_id` or `step_number`).
+- **`runner_info.run_id`** is the CI system's own run id, unrelated to Testify's `test_run_id`. Reports link back through `url`.
 
-### 3.2 Ingestion Concurrency & Write Optimization Patterns
+Response:
+
+```json
+{
+  "object": "batch_results",
+  "summary": { "total_submitted": 3, "successful": 2, "failed": 1, "duration_ms": 42 },
+  "results": [
+    { "index": 0, "status": 201, "test_result_id": "0191c4d5-1111-7000-8000-000000000001", "test_case_id": "0191c4d0-8b2b-...", "verdict": "PASSED" },
+    { "index": 1, "status": 201, "test_result_id": "0191c4d5-2222-7000-8000-000000000002", "test_case_id": "0191c4d0-9c3c-...", "verdict": "FAILED" },
+    { "index": 2, "status": 422, "code": "CASE_NOT_FOUND", "detail": "Case identifier not found in test plan", "invalid_params": [{ "name": "results[2].case_identifier", "reason": "Case identifier not found in test plan" }] }
+  ],
+  "run_status": "OPEN"
+}
+```
+
+A refused item carries `code`, `detail` and, for invalid input, `invalid_params` (e.g. `results[2].verdict`). Item codes: `INVALID_RESULT`, `CASE_NOT_FOUND`, `CASE_REMOVED_FROM_PLAN`, `RESULT_OVERWRITE_NOT_PERMITTED`, `UNKNOWN_STEP`.
+
+### 3.2 How the Batch Route Stays Fast
 
 How the batch route (`apps/server/src/routes/batchExecution.ts`) records results quickly (2,000 results in about 1.5 s in the test suite):
 
@@ -338,59 +217,61 @@ Failure messages and stack traces are stored in the `test_results` row itself (`
 
 ---
 
-## 4. Locked Plan & Closed Build HTTP 422 Standards
+## 4. Errors
 
-Per the locked system constraints in [00_requirements_alignment.md](00_requirements_alignment.md), completed execution results remain permanently viewable and exportable for audit compliance. However, **any operational attempt to create, update, or overwrite execution results against a locked Test Plan or closed Build must be strictly blocked and rejected with HTTP 422 Unprocessable Entity**.
+Every error, from every route, is **RFC 7807 problem details** (`Content-Type: application/problem+json`; `sendError` in `apps/server/src/errors.ts`):
 
-### 4.1 RFC 7807 Error Specification
-All operational error responses conform strictly to **RFC 7807 Problem Details for HTTP APIs**.
+| Field | Meaning |
+| :--- | :--- |
+| `type` | `https://api.testify.dev/errors/{code}` |
+| `title` | The HTTP status text, e.g. `Unprocessable Entity` |
+| `status` | The HTTP status |
+| `code` | A machine-readable code (§4.2); defaults from the status, e.g. `NOT_FOUND` |
+| `detail` | A message meant for people; the web app shows it as-is |
+| `instance` | The request path |
+| `timestamp` | When it happened |
+| `invalid_params` | Optional: `[{ "name", "reason" }]`, one per problem field |
+| others | Optional extension fields in snake_case, e.g. `required_permission`, `project_ids`, `request_id` |
 
-#### Error Response: Execution Submission to Closed Build
+Unexpected failures (database errors, bugs) answer `500 INTERNAL_ERROR` with a `request_id` that matches the server log; their details never reach the client. Unknown addresses answer `404 NOT_FOUND` in the same format. Three exceptions: `/mcp` answers in JSON-RPC, as the protocol requires; batch per-item results (§3.1) are data inside a normal response; and `GET /health` answers `503` with its own small status body when the database is down.
+
+### 4.1 Closed Runs and Locked Plans
+
+Results stay viewable and exportable forever, but nothing may be added to a closed run or a locked or archived plan:
+
 ```http
 HTTP/1.1 422 Unprocessable Entity
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.testify.dev/errors/BUILD_CLOSED",
+  "type": "https://api.testify.dev/errors/RUN_CLOSED",
   "title": "Unprocessable Entity",
   "status": 422,
-  "code": "BUILD_CLOSED",
-  "detail": "Build 'v2.4.0-rc1' (ID: 0191c4d0-9a9a-7000-8000-000000000099) is closed. Executions cannot be added or modified on a closed build.",
-  "instance": "/api/v1/test-plans/0191c4d0-1111-7000-8000-000000000005/builds/0191c4d0-9a9a-7000-8000-000000000099/executions/batch",
-  "invalid_params": [
-    {
-      "name": "build_id",
-      "reason": "Build status is CLOSED"
-    }
-  ],
+  "code": "RUN_CLOSED",
+  "detail": "Test run (ID: 0191c4d0-9a9a-7000-8000-000000000099) is closed. Results can't be added to a closed run; reopen it first.",
+  "instance": "/api/v1/runs/0191c4d0-9a9a-7000-8000-000000000099/results/batch",
+  "invalid_params": [{ "name": "test_run_id", "reason": "the run is CLOSED" }],
   "timestamp": "2026-09-08T13:20:00Z"
 }
 ```
 
-#### Error Response: Execution Submission to Locked Test Plan
-```http
-HTTP/1.1 422 Unprocessable Entity
-Content-Type: application/problem+json
+A locked or archived plan answers the same way with `PLAN_LOCKED`, for results and for changing which cases are in it.
 
-{
-  "type": "https://api.testify.dev/errors/PLAN_LOCKED",
-  "title": "Unprocessable Entity",
-  "status": 422,
-  "code": "PLAN_LOCKED",
-  "detail": "Test Plan 'Sprint 41 Final' (ID: 0191c4d0-1111-7000-8000-000000000005) is locked. Plan specifications and execution states are frozen.",
-  "instance": "/api/v1/test-plans/0191c4d0-1111-7000-8000-000000000005/builds/0191c4d0-9a9a-7000-8000-000000000099/executions",
-  "timestamp": "2026-09-08T13:21:00Z"
-}
-```
+### 4.2 Error Codes
 
-### 4.2 Error Code Registry
-| Error Code | HTTP Status | Trigger Condition | Remediation / Resolution |
-| :--- | :--- | :--- | :--- |
-| `BUILD_CLOSED` | `422` | Attempting to `POST` or `PUT` execution results against a `Closed` build. | Admin must re-open build or target an open build. |
-| `PLAN_LOCKED` | `422` | Attempting execution mutation or case assignment on a `Locked` or `Archived` Test Plan. | Admin must transition plan status back to `ACTIVE`. |
-| `CASE_VERSION_LOCKED` | `422` | Attempting to modify an `Approved` or frozen `TestCaseVersion`. | User must spawn a new `Draft` version (`v2`). |
-| `DRAFT_VERSION_ASSIGNMENT_DISALLOWED` | `422` | Adding a `Draft` test case to a Test Plan when project setting `allow_draft_testing = false`. | Case version must be transitioned to `APPROVED`. |
-| `VALIDATION_FAILED` | `422` | JSON Schema validation failure on request payload. | Fix schema violations detailed in `invalid_params`. |
+The codes a client is most likely to handle (the code is always in `code`; `detail` says what to do):
+
+| Status | Codes |
+| :--- | :--- |
+| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
+| `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
+| `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
+| `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |
+| `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, a taken project prefix or run name |
+| `413` | `IMPORT_TOO_LARGE`, `PAYLOAD_TOO_LARGE` |
+| `422` | `RUN_CLOSED`, `PLAN_LOCKED`, `CASE_VERSION_LOCKED` (editing an approved version), `CASE_VERSION_NOT_APPROVED` (adding a draft to a plan), `CASE_REMOVED_FROM_PLAN`, `VERSION_NOT_DRAFT`, `VERSION_NOT_APPROVED`, `VERSION_NOT_DEPRECATED`, `VERSION_NOT_LATEST`, `REQUIRED_CUSTOM_FIELDS_MISSING`, `REQUIRED_FIELD_NEEDS_DEFAULT` |
+| `429` | `RATE_LIMITED`, `ACCOUNT_LOCKED`, `TOO_MANY_ATTEMPTS`, `IMPORT_BUSY` (with `Retry-After`) |
+| `500` | `INTERNAL_ERROR` (with `request_id`) |
 
 ---
 
@@ -406,7 +287,7 @@ The plan:
 - **Attachments and large logs** go to out-of-band storage behind an `IStorageProvider` interface (`putObject`, `getObject`, `deleteObject`, `getPresignedUrl`). The database keeps only a storage key, SHA-256 checksum, size and MIME type.
 - **Two providers,** chosen by configuration, independent of the database:
   - `LocalStorageProvider` stores files on disk (`./data/attachments/{project_id}/{year}/{month}/{id}.bin`) and streams them.
-  - `S3StorageProvider` works with AWS S3, MinIO, Cloudflare R2 or Google Cloud Storage. Large uploads go straight to the bucket through pre-signed URLs (`POST /api/v1/executions/{execution_id}/attachments/presign`, then registering the key and checksum).
+  - `S3StorageProvider` works with AWS S3, MinIO, Cloudflare R2 or Google Cloud Storage. Large uploads go straight to the bucket through pre-signed URLs (e.g. `POST /api/v1/results/{resultId}/attachments/presign`, then registering the key and checksum).
 - **Retention:** an admin-configurable purge of old results and their attachments (planned default: 365 days), never touching audit logs.
 
 ---
@@ -425,12 +306,12 @@ Importing existing test repositories into Testify supports five formats through 
 +----------------------------------------+------------------------------------------+
                                          v
 +-----------------------------------------------------------------------------------+
-|  POST /api/v1/imports/dry-run: counts, warnings, unmapped custom fields           |
+|  POST /projects/{id}/imports/dry-run: counts, warnings, unmapped custom fields     |
 |  (with inferred types and distinct values), hierarchy preview. Writes nothing.    |
 +----------------------------------------+------------------------------------------+
                                          v  (user chooses field mappings + duplicate action)
 +-----------------------------------------------------------------------------------+
-|  POST /api/v1/imports/execute: the same file again, applied in one transaction    |
+|  POST /projects/{id}/imports/execute: the same file again, in one transaction     |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -522,13 +403,12 @@ New cases keep the file's id unless it's taken; otherwise they get the next free
 
 ### 6.5 Dry Run & Execute
 
-`POST /api/v1/imports/dry-run` and `POST /api/v1/imports/execute` take the same `multipart/form-data` request:
+`POST /api/v1/projects/{projectId}/imports/dry-run` and `.../imports/execute` take the same `multipart/form-data` request (the project is the one in the address):
 - `file`;
 - `format` (leave it out to detect the format automatically);
-- `target_project_id`;
 - `configuration`: JSON with the field mappings and duplicate resolution.
 
-Both need `IMPORT_DATA` in the target project. An API token may only import into its own project.
+Both need `IMPORT_DATA` in the project. An API token may only import into its own project.
 
 The dry run writes nothing and returns:
 - `dry_run_summary`: suites and cases detected, to create, to version up, to overwrite, skipped, unmapped fields, warnings;
@@ -555,9 +435,9 @@ There are no personal access tokens or separate runner-token types; a token's ca
 Limits are generous on purpose -- CI runners, scripts and MCP agents make many more calls than people -- and exist to stop runaway loops and abuse. Each is a **token bucket** per caller: the whole allowance can be used at once, and it refills evenly over the window. The counts are kept in memory per server process (`apps/server/src/services/rateLimits.ts`).
 
 - **Rate Limits:**
-  - Every request made with a machine API token (REST, `/executions/batch`, `/mcp`): **1,200 requests per minute per token**. A batch request can carry up to 5,000 results.
-  - Exports (`.../exports/definitions`, `.../exports/execution-results`): **120 per hour per user or token**.
-  - Sending report emails (`.../report-emails` without `preview`, `.../report-schedules/:id/send-now`, `/admin/email-settings/test`): **60 per hour per user or token**.
+  - Every request made with a machine API token (REST, `/runs/{id}/results/batch`, `/mcp`): **1,200 requests per minute per token**. A batch request can carry up to 5,000 results.
+  - Exports (`.../exports/definitions`, `.../exports/results`): **120 per hour per user or token**.
+  - Sending report emails (`.../report-emails` without `preview`, `/report-schedules/{id}/send-now`, `/admin/email-settings/test`): **60 per hour per user or token**.
 - **HTTP 429 Too Many Requests Payload:**
 ```http
 HTTP/1.1 429 Too Many Requests
@@ -570,7 +450,8 @@ Content-Type: application/problem+json
   "status": 429,
   "code": "RATE_LIMITED",
   "detail": "Too many requests with this API token: the limit is 1200 per minute. Try again in 1 second.",
-  "instance": "/api/v1/projects/.../plans"
+  "instance": "/api/v1/runs/0191c4d0-9a9a-7000-8000-000000000099/results/batch",
+  "timestamp": "2026-09-08T13:20:00Z"
 }
 ```
 
@@ -581,7 +462,7 @@ Content-Type: application/problem+json
 > **Not built.** Nothing pushes events out of Testify yet, except scheduled and manual report emails (see [reports_api_and_mcp.md](reports_api_and_mcp.md)).
 
 The plan:
-- **Events:** e.g. `execution.failed`, `build.completed` (a run closed), `test_case.approved`, `import.completed`.
+- **Events:** e.g. `result.failed`, `run.closed`, `test_case.approved`, `import.completed`.
 - **Signing:** each delivery is signed so receivers can verify it and reject replays. `X-Signature-Timestamp` holds the Unix time; `X-Signature-SHA256` holds an HMAC-SHA256 over `${timestamp}.${raw_json_body}` with the webhook's secret.
 
 ---
@@ -597,10 +478,10 @@ sequenceDiagram
     participant API as Testify API
     participant DB as PostgreSQL
 
-    CI->>API: POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch (Bearer tf_ci_...)
+    CI->>API: POST /api/v1/runs/{runId}/results/batch (Bearer tf_ci_...)
     API->>API: Authenticate token, check project binding, rate limit, EXECUTE_RUN
     alt Run closed or plan locked
-        API-->>CI: 422 (BUILD_CLOSED / PLAN_LOCKED)
+        API-->>CI: 422 (RUN_CLOSED / PLAN_LOCKED)
     else
         API->>API: Validate every item
         API->>DB: Load the plan's cases and steps (bulk)
@@ -620,11 +501,11 @@ sequenceDiagram
     participant API as Testify API
     participant DB as PostgreSQL
 
-    UI->>API: POST /api/v1/imports/dry-run (multipart: file, format, project, configuration)
+    UI->>API: POST /api/v1/projects/{id}/imports/dry-run (multipart: file, format, configuration)
     API->>API: Parse, detect unmapped fields and duplicates
     API-->>UI: Summary, warnings, unmapped fields (types, values), preview
     UI->>UI: User maps fields and picks the duplicate action
-    UI->>API: POST /api/v1/imports/execute (same file + configuration)
+    UI->>API: POST /api/v1/projects/{id}/imports/execute (same file + configuration)
     API->>DB: One transaction: suites, cases, versions, steps, custom fields and values, audit row
     API-->>UI: Counts and any skipped custom-field values
 ```
@@ -635,13 +516,14 @@ sequenceDiagram
 
 | Area | Design | Status |
 | :--- | :--- | :--- |
-| **REST conventions** | OpenAPI 3.1, cursor pagination, resource naming (§1-2) | Not as designed; to be replaced by the API revisit. |
+| **REST conventions** | Resource naming, verbs, status codes, one id name each (§1-2) | Built (2026-10-12). No OpenAPI spec and no paging yet ([api_roadmap.md](api_roadmap.md) steps 3-4). |
 | **CI results** | Batch endpoint with all-or-nothing mode (§3) | Built: up to 5,000 results per request, one transaction. |
-| **Closed runs, locked plans** | Writes rejected with HTTP 422 `BUILD_CLOSED` / `PLAN_LOCKED` (§4) | Built. |
+| **Errors** | Problem details for every error, with a code registry (§4) | Built. |
+| **Closed runs, locked plans** | Writes rejected with HTTP 422 `RUN_CLOSED` / `PLAN_LOCKED` (§4.1) | Built. |
 | **Attachments and retention** | `IStorageProvider`, pre-signed uploads, 365-day purge (§5) | Not built. Audit logs append-only forever: built. |
 | **Import formats** | Parser interface; TestLink XML, JSON, CSV (§6.1-6.2) | Built, plus JUnit XML and TestRail CSV. |
 | **Large files** | Streaming 100 MB+ in bounded memory (§6.3) | Not built: 50 MB cap, held in memory. |
 | **Field mapping and duplicates** | Drop / auto-create / map; create / overwrite / version up / skip (§6.4) | Built; per-case duplicate choices are API-only. |
-| **Dry run** | `POST /imports/dry-run` preview before import (§6.5) | Built. |
+| **Dry run** | `POST /projects/{id}/imports/dry-run` preview before import (§6.5) | Built. |
 | **Auth and rate limits** | Bearer tokens, 429 with `Retry-After` (§7.1-7.2) | Built (RFC 04). |
 | **Webhooks** | HMAC-SHA256 signed events (§7.3) | Not built. |

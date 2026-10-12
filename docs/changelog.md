@@ -1955,3 +1955,22 @@ Tests:
 609 tests pass and typecheck is clean. Verified on a production build in a separate origin, with the demo data loaded: Spec mode loads; removing a suite with results from the plan asks first and then removes it, and adding it back works; Edit, adding a step, and Approve; recording a result with `p`; Close Run and Open Run; creating and deleting a plan and a run; the Reports overview, run summary and case history; and in the Admin Panel adding a user, disabling them and resetting their password. MCP `list_plans_and_runs` works with a token, and `POST /api/v1/executions` now answers 404.
 
 Still to do (stage 4): RFC 03 §1-4 and `docs/reports_api_and_mcp.md` still show the old addresses.
+
+## Docs: RFC 03 now describes the API as built (API consistency, stage 4) (2026-10-12)
+
+The last stage of `docs/api_roadmap.md` step 1, which is now Done.
+
+- **`docs/rfc_03_api_and_xml_contracts.md` §1-4 rewritten.** They used to be the original design (cursor paging, `/test-suites`, `/builds`, `/executions`, an OpenAPI router), with a note saying none of it was built. They now describe the API as it works:
+  - §1: who uses the API, and the conventions: addresses, verbs, status codes, bodies, id names, how the project is worked out from the ids, authentication, paging (none yet, except case history), validation.
+  - §2: the full route map, plus two examples (creating a case, recording one result). It's the one place the map is kept; the roadmap links to it instead of repeating it.
+  - §3: the CI batch request and response as they really are (`results`, `test_result_id`, per-item `code`/`detail`/`invalid_params`, `run_status`, 207 vs. 201, `all_or_nothing`).
+  - §4: the problem-details format field by field, the closed-run example, and the error codes by status.
+  - §5-9: import, rate-limit, webhook and diagram addresses updated; the summary table marks the conventions and error format as built.
+  - Checked by script: every route registered in `apps/server/src/routes/` appears in the §2 map.
+- **`docs/reports_api_and_mcp.md`:** report parameters are `test_run_id`, `test_plan_id`, `test_case_id`; case history returns `results`; the CI and schedule addresses are the new ones; schedule sections use `test_plan_id`; an id from another project is `400 PROJECTS_DIFFER`.
+- **Other docs:** RFC 01 (table names, `RUN_CLOSED`, the batch address), RFC 02 (the result address), RFC 04 (token and result addresses, `PATCH` for roles, new audit action names with the old ones noted), the blueprint, the slices roadmap, `00_requirements_alignment.md` (both copies; "as built" notes beside the original codes and dry-run address), and the README (new CI address and a pointer to the API reference). The `.antigravity/agents/` briefs were left alone: they record what was asked for.
+- **`docs/api_roadmap.md`:** step 1 marked Done; "Where the API stands" updated (consistent now; documented by hand; still no OpenAPI spec or paging).
+- **`CLAUDE.md` / `AGENTS.md`:** the route conventions point to RFC 03 §1-4 (to be kept current when a route changes); the known gap about RFC 03 is removed.
+- **Code:** two report-parameter descriptions in the catalog said "executions"/"executed" (`case_history.limit`, `test_health.stale_days`); they now say "results".
+
+609 tests pass and typecheck is clean.

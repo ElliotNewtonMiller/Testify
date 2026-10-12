@@ -56,7 +56,7 @@ Details and diagrams are in [RFC 01 §7](./rfc_01_domain_model.md). In brief:
   - Approving re-pins ACTIVE plans to the new version. Only approved cases can join plans (unless `allow_draft_plan_linking` is on).
 - **Test plans:** ACTIVE, LOCKED or ARCHIVED.
 - **Test runs:** OPEN or CLOSED, closing themselves the first time every case has a result.
-- **Writes:** results to a closed run or a locked or archived plan are refused with HTTP 422 (`BUILD_CLOSED` / `PLAN_LOCKED`).
+- **Writes:** results to a closed run or a locked or archived plan are refused with HTTP 422 (`RUN_CLOSED` / `PLAN_LOCKED`).
 - **Results are append-only:** "untested" means no result yet, and the latest result is the verdict. Recording over an existing result needs `EXECUTE_OVERWRITE`.
 - **Hotkeys:** verdict keys only work in Execute mode. They pause while a text box has focus, and are permission-gated ([RFC 02 §5](./rfc_02_ux_density_and_hotkeys.md)).
 
@@ -92,9 +92,9 @@ See [RFC 02](./rfc_02_ux_density_and_hotkeys.md). In brief:
 
 ## 5. API, CI Results & Import
 
-- **REST API:** under `/api/v1`, project data nested under `/projects/:projectId`. The original OpenAPI design in [RFC 03 §1-4](./rfc_03_api_and_xml_contracts.md) isn't what's built; the API is due to be revisited, and there's no OpenAPI spec yet.
+- **REST API:** under `/api/v1`. Lists and creation sit under the parent and each item has its own address (`/projects/{id}/plans`, `/plans/{id}`, `/runs/{id}/results`); `PATCH` for partial updates; 201/200/204; problem-details errors. The conventions, route map and error codes are in [RFC 03 §1-4](./rfc_03_api_and_xml_contracts.md). There's no OpenAPI spec yet ([api_roadmap.md](./api_roadmap.md) step 3).
 - **Reports and MCP:** a catalog-driven reports API and a read-only MCP endpoint for agents ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).
-- **CI results:** `POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch`, up to 5,000 results per request in one transaction, with an all-or-nothing option ([RFC 03 §3.2](./rfc_03_api_and_xml_contracts.md)).
+- **CI results:** `POST /api/v1/runs/{runId}/results/batch`, up to 5,000 results per request in one transaction, with an all-or-nothing option ([RFC 03 §3](./rfc_03_api_and_xml_contracts.md)).
 - **Import:** dry run then execute, with interactive custom-field mapping and duplicate handling, up to 50 MB per file ([RFC 03 §6](./rfc_03_api_and_xml_contracts.md)).
 - **Export:** suite and case definitions, or a run's results, as JSON or CSV.
 - **Not built:** attachments and storage, the retention purge, webhooks ([RFC 03 §5, §7.3](./rfc_03_api_and_xml_contracts.md)).
@@ -122,7 +122,7 @@ See [RFC 04](./rfc_04_rbac_security_matrix.md). In brief:
 | 4 | **Suite mutability** | The suite tree can change without affecting past results. | RFC 01 §2.2 | Built. |
 | 5 | **Version pinning** | Plans pin case versions; editing a case doesn't change past results. Custom field values are not frozen (decided). | RFC 01 §2.3 | Built and tested. |
 | 6 | **Draft rule** | Only approved cases can join plans unless the project allows drafts. | RFC 01 §2.3 | Built; the setting has no UI. |
-| 7 | **Closed / locked writes** | Results refused with HTTP 422 (`BUILD_CLOSED` / `PLAN_LOCKED`). | RFC 01 §2.4 | Built and tested. |
+| 7 | **Closed / locked writes** | Results refused with HTTP 422 (`RUN_CLOSED` / `PLAN_LOCKED`). | RFC 01 §2.4 | Built and tested. |
 | 8 | **Hotkey scope** | Verdict hotkeys only in Execute mode, with a status badge. | RFC 02 §4, §6 | Built. |
 | 9 | **Input protection** | Typing in a text box never triggers a hotkey (no `Esc` needed). | RFC 02 §5.3 | Built and tested. |
 | 10 | **Hotkey permissions** | Verdict hotkeys need `EXECUTE_RUN` (and `EXECUTE_OVERWRITE` to record over a result). | RFC 02 §5.3 | Built and tested; the server checks too. |

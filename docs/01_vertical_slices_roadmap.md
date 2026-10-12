@@ -72,8 +72,8 @@ flowchart TD
 - **Read routes:**
   - `GET /api/v1/projects` (only projects you can see, with your permissions in each);
   - `GET /api/v1/projects/{projectId}/plans`;
-  - `GET /api/v1/projects/{projectId}/spec-tree?plan_id=` (the whole suite tree and case list in one request);
-  - `GET /api/v1/test-cases/{caseId}/latest-version`.
+  - `GET /api/v1/projects/{projectId}/spec-tree?test_plan_id=` (the whole suite tree and case list in one request);
+  - `GET /api/v1/cases/{caseId}/versions/latest`.
 - **Specification mode** grew beyond read-only: creating, editing, moving (drag-and-drop) and deleting suites and cases; the DRAFT → APPROVED → DEPRECATED lifecycle; plan curation; search and filters.
 - **Different from the plan:**
   - The planned per-level routes (`/test-suites`, `/test-suites/{id}/test-cases`, `/test-cases/{id}`) weren't built; `spec-tree` replaced them.
@@ -94,9 +94,9 @@ flowchart TD
 
 **Built:**
 - **Hotkeys:** `useFocusFSM` and `useHotkeyEngine` (RFC 02 §4-5), and Execute mode (`useExecution`, `ExecutionPane`) with optimistic updates that roll back on failure.
-- **Single results:** `POST /api/v1/executions`, validated, with the overwrite rule and one transaction.
-- **CI results:** `POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch`, up to 5,000 results, with an all-or-nothing option.
-- **Plans and runs:** created, edited and deleted under `/api/v1/projects/{projectId}/plans[/{planId}/builds]`. Plan status is set by editing the plan (there's no separate `/status` route), and runs are closed and reopened the same way. Runs close themselves the first time every case has a result.
+- **Single results:** `POST /api/v1/runs/{runId}/results`, validated, with the overwrite rule and one transaction.
+- **CI results:** `POST /api/v1/runs/{runId}/results/batch`, up to 5,000 results, with an all-or-nothing option.
+- **Plans and runs:** created under `/api/v1/projects/{projectId}/plans` and `/api/v1/plans/{planId}/runs`, and edited and deleted at `/api/v1/plans/{planId}` and `/api/v1/runs/{runId}`. Plan status is set by editing the plan (there's no separate `/status` route), and runs are closed and reopened the same way. Runs close themselves the first time every case has a result.
 - **Different from the plan:**
   - no xstate or mousetrap;
   - `f`/`b` record the verdict immediately instead of leaving it "in progress";
@@ -121,7 +121,7 @@ flowchart TD
 - **Sign-ins and accounts:** server-side sessions, the session cookie, lockouts and password resets.
 - **Different from the plan:**
   - Custom fields are defined globally (`/api/v1/admin/custom-fields`), not under `/projects/{id}/custom-fields`; imports can still create project-scoped ones.
-  - Role permissions are set by editing the role (`PUT /api/v1/admin/roles/{roleId}`).
+  - Role permissions are set by editing the role (`PATCH /api/v1/admin/roles/{roleId}`).
   - Projects have no settings form: `allow_draft_plan_linking` has no UI.
 
 **Verified by:**
@@ -137,7 +137,7 @@ flowchart TD
 - out-of-band storage for attachments.
 
 **Built:**
-- **Import:** five parsers (TestLink XML, JUnit XML, Testify JSON, CSV, TestRail CSV), `POST /api/v1/imports/dry-run` and `/execute` (multipart, up to 50 MB), and an import wizard with custom-field mapping and duplicate handling (RFC 03 §6).
+- **Import:** five parsers (TestLink XML, JUnit XML, Testify JSON, CSV, TestRail CSV), `POST /api/v1/projects/{projectId}/imports/dry-run` and `/execute` (multipart, up to 50 MB), and an import wizard with custom-field mapping and duplicate handling (RFC 03 §6).
 - **Export:** suite and case definitions, or a run's results, as JSON or CSV (`/api/v1/projects/{projectId}/exports/...`).
 - **API tokens:** `tf_ci_...`, created under `/api/v1/projects/{projectId}/api-tokens`, project-bound and capped by the issuer (RFC 04 §4.2).
 - **Reports:** a catalog of reports over REST (`/api/v1/projects/{projectId}/reports/...`), a Reports view in the web app, scheduled and manual report emails, and a read-only MCP endpoint (`POST /mcp`) for agents ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).

@@ -224,7 +224,7 @@ As locked in [`00_requirements_alignment.md`](00_requirements_alignment.md) and 
 - **Automatic input deactivation:** whenever an `<input>`, `<textarea>`, `<select>` or `contenteditable` element has focus, single-key hotkeys are ignored. Typing "p" in the notes box types a "p".
 - **Automatic re-engagement:** when focus leaves the input, hotkeys work again without pressing `Esc`.
 - **Recording:**
-  - Every verdict key records a result immediately (`POST /api/v1/executions`, status `COMPLETED`).
+  - Every verdict key records a result immediately (`POST /api/v1/runs/{runId}/results`, status `COMPLETED`).
   - `f` and `b` then focus the notes box. `Ctrl+Enter` records the same verdict again with the notes and moves on.
   - There's no "in progress" state.
 
@@ -254,7 +254,7 @@ To remove ambiguity about whether keypresses will record verdicts or type charac
 ### 7.1 Flows
 
 **Pass / Skip (`p` / `s`):**
-1. The queue shows the new verdict at once (optimistic update), and the result is sent (`POST /api/v1/executions`).
+1. The queue shows the new verdict at once (optimistic update), and the result is sent (`POST /api/v1/runs/{runId}/results`).
 2. The selection moves to the next case. At the end of a suite filter, it moves into the next suite.
 
 **Fail / Block (`f` / `b`):**

@@ -50,7 +50,7 @@ This RFC sets out the domain model, schema, state machines and extension model. 
                                                +-------------------------------------+
 ```
 
-Tables: `test_runs`, `test_results`, `test_step_results` (renamed from `builds`, `executions` and `execution_steps` in migration `007`). Parts of the API and code still say `build` and `execution`.
+Tables: `test_runs`, `test_results`, `test_step_results` (renamed from `builds`, `executions` and `execution_steps` in migration `007`). The API calls them runs and results too (`/runs/{runId}/results`, `test_run_id`, `test_result_id`); only audit rows written before 2026-10-12 still say `BUILD_*` / `EXECUTION_*`.
 
 ### Core Constraints & Guarantees
 
@@ -103,7 +103,7 @@ The suite tree is live and editable; it's never snapshotted per plan. Moving or 
 
 ### 2.4 Closed Runs & Locked Plans
 
-- Recording a result in a CLOSED run, or in a LOCKED or ARCHIVED plan, fails with **HTTP 422** `BUILD_CLOSED` / `PLAN_LOCKED`. Results can't be edited or deleted at all.
+- Recording a result in a CLOSED run, or in a LOCKED or ARCHIVED plan, fails with **HTTP 422** `RUN_CLOSED` / `PLAN_LOCKED`. Results can't be edited or deleted at all.
 - A run closes itself the first time every case in its plan has a result; it can be reopened, and won't auto-close again.
 
 ### 2.5 Retention & Attachments
@@ -343,10 +343,10 @@ Projects, suites, cases, plans and runs warn before deleting anything that has c
 
 ### 8.1 Batch Results
 
-CI sends results to `POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch`:
+CI sends results to `POST /api/v1/runs/{runId}/results/batch` (request and response in RFC 03 §3):
 
 ```
-[CI runner] ---> POST .../executions/batch (up to 5,000 results)
+[CI runner] ---> POST /runs/{runId}/results/batch (up to 5,000 results)
                           |
                           v
         +-----------------------------------+

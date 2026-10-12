@@ -9,22 +9,20 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 
 ---
 
-## Where the API stands (2026-10-11)
+## Where the API stands (2026-10-12)
 
 **Good:**
 - **Coverage:** about 84 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
 - **Security:** project-bound API tokens (`tf_ci_...`), permissions checked per project, rate limits and an audit log (RFC 04).
-- **CI:** results arrive in batches of up to 5,000 per request (`POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch`).
+- **CI:** results arrive in batches of up to 5,000 per request (`POST /api/v1/runs/{runId}/results/batch`).
+- **Consistent** (step 1, 2026-10-12): one address style, verbs and status codes, one error format, one name per id, "runs" and "results" throughout.
 - **Agents:** `POST /mcp` lets them list projects, search and read cases, and run every report.
 
 **Weak:**
-1. **Mostly undocumented.** Only reports, MCP and the CI results format are written up ([reports_api_and_mcp.md](reports_api_and_mcp.md)). Everything else has to be learned from the code in `apps/server/src/routes/`.
-2. **Inconsistent, because it grew feature by feature.** Fixed by step 1 (stages 1-3, 2026-10-11/12): one address style, one error format, "runs" and "results" everywhere, one name per id. Stage 4 (documentation) is still to do.
-   - Before: some addresses sat under a project (`/api/v1/projects/{projectId}/test-cases`), others didn't (`/api/v1/test-cases/{caseId}/latest-version`, `/api/v1/test-plans/{planId}/cases`).
-   - Before: errors came in two shapes, plain `{ error, code }` and problem details.
-   - Before: test runs were `builds` in addresses and fields, and the single-result route lived in `server.ts`.
+1. **Documented by hand only.** RFC 03 §1-4 has the conventions, every route and the error codes, with examples; [reports_api_and_mcp.md](reports_api_and_mcp.md) covers reports, MCP and CI results in depth. Request and response fields for most routes still have to be read from the code in `apps/server/src/routes/` (step 3).
+2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
-4. **No machine-readable description.** There's no OpenAPI spec. RFC 03 §1-4 describes an API that was never built that way.
+4. **No machine-readable description.** There's no OpenAPI spec (step 3).
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
 
 ---
@@ -53,7 +51,7 @@ Many tools read that format, so the one file gives:
 
 ### 1. Make the API consistent
 
-**Status:** In progress. Stages 1-3 of 4 done (2026-10-11, 2026-10-12, 2026-10-12); see the stages below and the Decisions table.
+**Status:** Done (2026-10-12). All four stages finished; see below and the Decisions table.
 
 **What:** decide the conventions, then change the routes to follow them:
 - one address style (everything under `/projects/{projectId}/...`, or flat resources);
@@ -64,36 +62,17 @@ Many tools read that format, so the one file gives:
 
 **Why now:** nothing outside Testify depends on the API yet. Once people write scripts against it, every change breaks them.
 
-**Recommendation:** do this first, and write the result into RFC 03 to replace §1-4. The web app changes along with the routes.
+**Recommendation (followed):** do this first, and write the result into RFC 03 to replace §1-4. The web app changes along with the routes.
 
 **Decided:** shallow addresses, short path names, `builds`/`executions` renamed in the database too, no aliases (see Decisions).
 
 **Stages** (each its own commit, tested by Elliot before the next):
 1. **Database rename. Done 2026-10-11.** Migration `007`: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`, with their columns, constraints and indexes. The code that talks to them was renamed to match; the API was unchanged.
 2. **One error format. Done 2026-10-12.** Every error is problem details (`application/problem+json`, with `code` and `detail`), sent through `sendError` in `apps/server/src/errors.ts`; unknown addresses and Fastify's own errors too. The web app reads messages through `errorMessage()` in `apps/web/src/api/errors.ts`. `apps/server/tests/api_conventions.test.ts` checks the format for every kind of error.
-3. **Addresses, verbs and names. Done 2026-10-12.** The route map below; `PATCH` for partial updates; `201`/`200`/`204` for create/update/delete; `?force=true` for "delete anyway"; snake_case bodies; id fields named after the database columns (`test_plan_id`, `test_run_id`, ...); "run" and "result" instead of "build" and "execution" in addresses, fields, error codes and new audit rows (old audit rows keep their names). The web app's addresses move into one file (`apps/web/src/api/routes.ts`). A data migration (`008`) renames `plan_id` to `test_plan_id` inside stored report schedules. Two kept `PUT`, because each replaces the whole thing: updating a report schedule and saving the email settings. Removing a whole suite from a plan answers 200 with counts (`added`, `removed`, `retired`, `skipped`) rather than 204. `api_conventions.test.ts` checks the new shapes, that no response says "build" or "execution", and that the old addresses answer 404.
-4. **Documentation.** Not started. RFC 03 §1-4 replaced with these conventions and the route map; the other docs updated.
+3. **Addresses, verbs and names. Done 2026-10-12.** The route map in RFC 03 §2; `PATCH` for partial updates; `201`/`200`/`204` for create/update/delete; `?force=true` for "delete anyway"; snake_case bodies; id fields named after the database columns (`test_plan_id`, `test_run_id`, ...); "run" and "result" instead of "build" and "execution" in addresses, fields, error codes and new audit rows (old audit rows keep their names). The web app's addresses move into one file (`apps/web/src/api/routes.ts`). A data migration (`008`) renames `plan_id` to `test_plan_id` inside stored report schedules. Two kept `PUT`, because each replaces the whole thing: updating a report schedule and saving the email settings. Removing a whole suite from a plan answers 200 with counts (`added`, `removed`, `retired`, `skipped`) rather than 204. `api_conventions.test.ts` checks the new shapes, that no response says "build" or "execution", and that the old addresses answer 404.
+4. **Documentation. Done 2026-10-12.** RFC 03 §1-4 now describes the API as built: the conventions, the full route map, the CI batch format and the error codes. The other docs use the new addresses and names.
 
-**Route map** (all under `/api/v1`):
-
-| Area | Routes |
-| :--- | :--- |
-| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/me` (replaces `PUT /auth/credentials`; body `username`, `email`, `password`, `current_password`) |
-| Projects | `GET`/`POST /projects`, `PATCH`/`DELETE /projects/{id}` |
-| Spec | `GET /projects/{id}/spec-tree`, `POST /projects/{id}/move`, `POST /projects/{id}/suites`, `PATCH`/`DELETE /suites/{id}`, `POST /projects/{id}/cases`, `PATCH`/`DELETE /cases/{id}` |
-| Versions | `GET /cases/{id}/versions/latest`, `POST /cases/{id}/versions` (new draft), `PATCH /versions/{id}`, `POST /versions/{id}/approve`, `/deprecate`, `/restore` |
-| Custom field values | `GET /cases/{id}/custom-fields`, `PUT`/`DELETE /cases/{id}/custom-fields/{definitionId}`; the same under `/suites/{id}` |
-| Search | `POST /projects/{id}/case-search`, `GET /projects/{id}/case-search/fields` |
-| Plans | `GET`/`POST /projects/{id}/plans`, `PATCH`/`DELETE /plans/{id}`, `GET /plans/{id}/cases?test_run_id=`, `POST /plans/{id}/cases`, `DELETE /plans/{id}/cases/{caseId}`, `POST`/`DELETE /plans/{id}/suites/{suiteId}/cases` |
-| Runs and results | `GET`/`POST /plans/{id}/runs`, `PATCH`/`DELETE /runs/{id}`, `POST /runs/{id}/results` (one result), `POST /runs/{id}/results/batch` (CI) |
-| Reports | `GET /projects/{id}/reports`, `POST /projects/{id}/reports/{reportId}` |
-| Report email | `POST /projects/{id}/report-emails`, `GET`/`POST /projects/{id}/report-schedules`, `PUT`/`DELETE /report-schedules/{id}`, `POST /report-schedules/{id}/send-now` |
-| Import and export | `POST /projects/{id}/imports/dry-run`, `/imports/execute`, `GET /projects/{id}/imports/custom-field-options`, `POST /projects/{id}/exports/definitions`, `POST /projects/{id}/exports/results` |
-| API tokens | `GET`/`POST /projects/{id}/api-tokens`, `DELETE /api-tokens/{id}` |
-| Admin | `/admin/users` (`PATCH /admin/users/{id}` for status; `PATCH …/roles`; `PUT …/permission-overrides`; `POST …/reset-password`), `PATCH /admin/roles/{id}`, `PATCH /admin/custom-fields/{id}`, `PUT /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email`, `GET /admin/audit-logs`, `GET /admin/permissions` |
-| Unchanged | `GET /api/v1/health`, `POST /mcp` |
-
-With items addressed by their own id, the server works out the project from the item. A request that also names a project must name the same one, or it's refused (`400 PROJECTS_DIFFER`).
+**Route map:** [RFC 03 §2](rfc_03_api_and_xml_contracts.md) (the one place it's kept). With items addressed by their own id, the server works out the project from the ids; a request naming ids from two projects is refused (`400 PROJECTS_DIFFER`).
 
 ### 2. Version the API
 

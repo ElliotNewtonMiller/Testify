@@ -83,7 +83,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       'Plus stats: pass rate, current streak, last pass and last failure. Use it to troubleshoot a specific case.',
     {
       test_case_id: { type: 'string', description: 'Test case id (UUID) or external id such as "SHOP-12".' },
-      limit: { type: 'integer', minimum: 1, maximum: 200, default: 25, description: 'Executions per page.' },
+      limit: { type: 'integer', minimum: 1, maximum: 200, default: 25, description: 'Results per page.' },
       cursor: { type: 'string', description: 'next_cursor from the previous page.' },
     },
     ['test_case_id'],
@@ -109,7 +109,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     {
       test_plan_id: { type: 'string', description: 'The test plan.' },
       runs: { type: 'integer', minimum: 2, maximum: 50, default: 10, description: 'How many recent runs to analyse.' },
-      stale_days: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'A case not executed for this many days is stale.' },
+      stale_days: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'A case with no result for this many days is stale.' },
       filter: FILTER_PARAM,
       limit: { type: 'integer', minimum: 1, maximum: 500, default: 20, description: 'Max cases per list.' },
     },

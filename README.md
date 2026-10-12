@@ -72,7 +72,8 @@ Schema changes always go in a new migration in `packages/db/src/migrations/`; ne
 ## API and integrations
 
 - **REST API**: sign in with `POST /api/v1/auth/login`, or use an API token from Admin Panel → API Tokens (`Authorization: Bearer tf_ci_...`).
-- **Results from CI**: `POST /api/v1/test-plans/:planId/builds/:buildId/executions/batch`.
+- **Results from CI**: `POST /api/v1/runs/:runId/results/batch`.
+- **API reference**: [docs/rfc_03_api_and_xml_contracts.md](docs/rfc_03_api_and_xml_contracts.md) §1-4 has the conventions, every route and the error codes.
 - **Reports and MCP**: [docs/reports_api_and_mcp.md](docs/reports_api_and_mcp.md) describes every report, how to send results that make good reports, and how to connect an AI agent to `/mcp`.
 - **Health check**: `GET /api/v1/health`.
 

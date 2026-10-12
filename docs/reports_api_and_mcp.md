@@ -35,7 +35,8 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 | Status | When | Body |
 |---|---|---|
 | 400 | Invalid parameters | `INVALID_PARAMS`, with `invalid_params: [{ name, reason }]` |
-| 404 | An unknown report, or an id from another project | `RUN_NOT_FOUND`, `PLAN_NOT_FOUND` or `CASE_NOT_FOUND` |
+| 400 | An id from another project | `PROJECTS_DIFFER`, with `project_ids` |
+| 404 | An unknown report, run, plan or case | `REPORT_NOT_FOUND`, `RUN_NOT_FOUND`, `PLAN_NOT_FOUND` or `CASE_NOT_FOUND` |
 | 403 | No `SPEC_VIEW` | `FORBIDDEN`, with `required_permission` |
 
 ## Reports
@@ -43,17 +44,17 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 | id | Params | What it answers |
 |---|---|---|
 | `overview` | `days` | Status at a glance: each active plan's latest run (pass rate, completion, new failures vs. the run before), spec health (cases by status, drafts awaiting approval, never-executed cases), and results per day split by people (UI) vs. automation (API). |
-| `run_summary` | `run_id`, `compare_to?`, `filter?`, `limit?` | What happened in a run, and what changed since the previous run of the plan (or `compare_to`; `null` = no comparison): new failures, fixed, still failing, not run. Lists every failure with its error, how long it's been failing and a flaky flag. Formats: `json`, `markdown`, `csv`. |
-| `case_history` | `case_id` (id or external id like `SHOP-12`), `limit`, `cursor` | Every result the case ever got across plans and runs, newest first. Each result includes error, stack trace, environment and CI runner, plus stats (pass rate, streak, last pass/fail). Paginate with `next_cursor`. |
-| `plan_trend` | `plan_id`, `runs`, `filter?` | Counts, pass rate, completion and new failures per run, oldest first. |
-| `test_health` | `plan_id`, `runs`, `stale_days`, `filter?`, `limit?` | Five lists: flaky, slowest, getting slower, always failing, and stale cases. |
-| `breakdown` | `plan_id`, `run_id?`, `group_by`, `filter?` | Compares groups of cases. Group by `suite`, `priority`, `execution_type`, `version_status`, `tester` or a custom field (`cf:<id>` / `suite_cf:<id>`). Without `run_id` it shows plan coverage; with it, verdicts per group. |
+| `run_summary` | `test_run_id`, `compare_to?`, `filter?`, `limit?` | What happened in a run, and what changed since the previous run of the plan (or `compare_to`; `null` = no comparison): new failures, fixed, still failing, not run. Lists every failure with its error, how long it's been failing and a flaky flag. Formats: `json`, `markdown`, `csv`. |
+| `case_history` | `test_case_id` (id or external id like `SHOP-12`), `limit`, `cursor` | Every result the case ever got across plans and runs, newest first, as `results` (each with `test_result_id`). Each result includes error, stack trace, environment and CI runner, plus stats (pass rate, streak, last pass/fail). Paginate with `next_cursor`. |
+| `plan_trend` | `test_plan_id`, `runs`, `filter?` | Counts, pass rate, completion and new failures per run, oldest first. |
+| `test_health` | `test_plan_id`, `runs`, `stale_days`, `filter?`, `limit?` | Five lists: flaky, slowest, getting slower, always failing, and stale cases. |
+| `breakdown` | `test_plan_id`, `test_run_id?`, `group_by`, `filter?` | Compares groups of cases. Group by `suite`, `priority`, `execution_type`, `version_status`, `tester` or a custom field (`cf:<id>` / `suite_cf:<id>`). Without `test_run_id` it shows plan coverage; with it, verdicts per group. |
 
 **`filter`** has the same shape as the case-search API (`q` matches a case's external id, title, or the name of any suite it's in): `{ "q": "login", "filters": [{ "field": "priority", "op": "any_of", "value": ["HIGH"] }] }`. Field keys and operators come from `GET /api/v1/projects/:projectId/case-search/fields`.
 
 ## Definitions (short version — the catalog has the full text)
 
-- **Final result:** a case's latest execution in a run. Re-running adds an execution; nothing is overwritten.
+- **Final result:** a case's latest result in a run. Re-running adds a result; nothing is overwritten.
 - **Pass rate:** passed ÷ (total − untested − skipped). **Completion:** (total − untested) ÷ total. Rates are fractions from 0 to 1.
 - **Failing:** FAILED or BLOCKED. Batch results can also be RETEST_REQUIRED or KNOWN_ISSUE, which count as OTHER.
 - **Flaky:** either of these:
@@ -63,7 +64,7 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 
 ## Sending results that make good reports
 
-`POST /api/v1/test-plans/:planId/builds/:runId/executions/batch` (needs `EXECUTE_RUN`) stores, per result:
+`POST /api/v1/runs/:runId/results/batch` (needs `EXECUTE_RUN`), with the results in a `results` list, stores per result:
 
 - `verdict`
 - `duration_ms`
@@ -72,7 +73,7 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 - `notes`
 - `environment_tags`
 
-Per submission, it also stores `environment` and `runner_info`: `{ name, run_id, job_name, commit_sha, url }`. The failure message and stack trace show up in run summaries and case history, and the commit shows up in run summaries.
+Per submission, it also stores `environment` and `runner_info`: `{ name, run_id, job_name, commit_sha, url }` (`run_id` is your CI system's run id, not Testify's). The full request and response are in [RFC 03 §3](rfc_03_api_and_xml_contracts.md). The failure message and stack trace show up in run summaries and case history, and the commit shows up in run summaries.
 
 ## MCP (for AI agents)
 
@@ -108,16 +109,16 @@ API:
 |---|---|
 | `POST /api/v1/projects/:projectId/report-emails` | Send now. Body: `{ "sections": [{ "report_id", "params" }], "recipients": "a@x.com, b@y.com", "message"?, "preview"? }`. `preview: true` returns `{ subject, html }` without sending. |
 | `GET` / `POST /api/v1/projects/:projectId/report-schedules` | List or create schedules. |
-| `PUT` / `DELETE /api/v1/projects/:projectId/report-schedules/:id` | Change or remove a schedule. |
-| `POST /api/v1/projects/:projectId/report-schedules/:id/send-now` | Send a schedule now. |
+| `PUT` / `DELETE /api/v1/report-schedules/:scheduleId` | Replace or remove a schedule. `PUT` takes the whole schedule, like create. |
+| `POST /api/v1/report-schedules/:scheduleId/send-now` | Send a schedule now. |
 
 A schedule's fields:
 - `name` (used as the email subject).
 - `sections`, each one of:
   - `{ kind: "overview" }`
-  - `{ kind: "latest_run", plan_id }` (the plan's newest run when it's sent)
-  - `{ kind: "test_health", plan_id }`
-  - `{ kind: "plan_trend", plan_id }`
+  - `{ kind: "latest_run", test_plan_id }` (the plan's newest run when it's sent)
+  - `{ kind: "test_health", test_plan_id }`
+  - `{ kind: "plan_trend", test_plan_id }`
 - `recipients`, `message`.
 - Timing: `frequency` (`DAILY` | `WEEKLY`), `weekday` (0 = Sunday), `time_of_day` (`HH:MM`), `timezone` (IANA, e.g. `Europe/London`).
 - `only_when_new_run`, `enabled`.
@@ -127,11 +128,11 @@ A schedule's fields:
 ```bash
 curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT/reports/run_summary?format=markdown" \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d "{\"run_id\": \"$RUN\"}"
+  -d "{\"test_run_id\": \"$RUN\"}"
 
 curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT/reports/case_history" \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"case_id": "SHOP-12", "limit": 10}'
+  -d '{"test_case_id": "SHOP-12", "limit": 10}'
 ```
 
 To try it with realistic data, fill a running dev server with a demo project (8 runs with regressions, flaky and slow cases):

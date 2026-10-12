@@ -182,7 +182,7 @@ sequenceDiagram
     System-->>Admin: Return the plaintext token ONCE
     Note over Admin: Admin stores it as a CI secret
 
-    Runner->>System: POST /api/v1/test-plans/{planId}/builds/{buildId}/executions/batch (Bearer tf_ci_...)
+    Runner->>System: POST /api/v1/runs/{runId}/results/batch (Bearer tf_ci_...)
     System->>DB: Look the token up by digest
     System->>System: Check revoked, expired, issuer still active and allowed, project matches, rate limit
     System->>DB: Update last_used_at
@@ -196,7 +196,7 @@ sequenceDiagram
 4. **Capped by its issuer:** a token's capabilities can't exceed the issuer's permissions at creation. On every use they're intersected with the issuer's **current** permissions in the project. If the issuer is disabled or loses `API_TOKEN_MANAGE` there, the token stops working (`401 TOKEN_ISSUER_INACTIVE`), and disabling the issuer revokes their tokens for good.
 5. **`SYSTEM_ADMIN` is never grantable** to a token, even by an admin. A token holding it would be a cross-project superuser.
 6. **Expiry is optional:** no expiry by default, since a token can't outlive its issuer's access.
-7. **Revocation:** anyone with `API_TOKEN_MANAGE` on the project can revoke a token at once (`DELETE /api/v1/projects/{projectId}/api-tokens/{id}`). Revoked tokens are kept, greyed out, with their last-used time, for investigation.
+7. **Revocation:** anyone with `API_TOKEN_MANAGE` on the project can revoke a token at once (`DELETE /api/v1/api-tokens/{tokenId}`). Revoked tokens are kept, greyed out, with their last-used time, for investigation.
 8. **Rate limit:** 1,200 requests per minute per token.
 
 ---
@@ -274,7 +274,7 @@ Actions written today, by area. The Admin Panel's Security Audit Log shows those
 | Projects | `PROJECT_CREATED`, `PROJECT_UPDATED`, `PROJECT_DELETED` |
 | Specifications | `SUITE_CREATED`, `SUITE_UPDATED`, `SUITE_DELETED`, `CASE_CREATED`, `CASE_UPDATED`, `CASE_DELETED`, `CASE_DRAFT_CREATED`, `CASE_VERSION_UPDATED`, `CASE_VERSION_APPROVED`, `CASE_VERSION_DEPRECATED`, `CASE_VERSION_RESTORED`, `SPEC_ITEMS_MOVED` |
 | Plan membership | `PLAN_CASE_ADDED`, `PLAN_CASE_REMOVED`, `PLAN_CASE_RETIRED`, `PLAN_CASE_CASCADE_ADD`, `PLAN_CASE_CASCADE_REMOVE` |
-| Results | `EXECUTION_RECORDED`, `BATCH_EXECUTION_RECORDED`, `BUILD_AUTO_CLOSED` |
+| Results | `RESULT_RECORDED`, `RESULTS_BATCH_RECORDED`, `RUN_AUTO_CLOSED` (rows written before 2026-10-12 say `EXECUTION_RECORDED`, `BATCH_EXECUTION_RECORDED`, `BUILD_AUTO_CLOSED`; audit rows can't be changed) |
 | Custom fields | `CUSTOM_FIELD_DEFINITION_CREATED`, `CUSTOM_FIELD_DEFINITION_UPDATED`, `CUSTOM_FIELD_DEFINITION_DELETED` |
 | Data and email | `IMPORT_EXECUTED`, `DATA_EXPORTED`, `REPORT_EMAILED`, `REPORT_SCHEDULE_CREATED`, `REPORT_SCHEDULE_UPDATED`, `REPORT_SCHEDULE_DELETED`, `EMAIL_SETTINGS_UPDATED` |
 
@@ -320,7 +320,7 @@ graph TD
 - **Risk:** A compromised CI pipeline or user submits false `PASSED` results, or changes earlier results.
 - **Mitigation:**
   - API tokens are bound to one project and to their issuer's current permissions.
-  - Results to a closed run or a locked plan are refused with **HTTP 422** (`BUILD_CLOSED` / `PLAN_LOCKED`).
+  - Results to a closed run or a locked plan are refused with **HTTP 422** (`RUN_CLOSED` / `PLAN_LOCKED`).
   - Results are never edited. Recording a new result for a case that already has one in the run needs `EXECUTE_OVERWRITE`.
   - Results record the real user or token as tester (never a client-supplied name), and are validated (known verdicts, steps that belong to the case).
   - Every result is audit-logged.
@@ -334,7 +334,7 @@ graph TD
 
 #### 4. Privilege Escalation
 - **Risk:** A user with `USER_MANAGE` grants themselves admin rights, demotes the real admins, or takes over an admin's account.
-- **Mitigation:** the `AdminGuard` rules in §3.3 (ceiling, rank, last admin). They apply to role assignments (`PUT /api/v1/admin/users/{userId}/roles`), overrides, role templates, enabling and disabling users, and password resets. Every change is audit-logged.
+- **Mitigation:** the `AdminGuard` rules in §3.3 (ceiling, rank, last admin). They apply to role assignments (`PATCH /api/v1/admin/users/{userId}/roles`), overrides, role templates, enabling and disabling users, and password resets. Every change is audit-logged.
 
 #### 5. API Token Leakage
 - **Risk:** A token ends up in CI logs or a leaked environment.
@@ -381,9 +381,9 @@ Mitigations:
 The server test suite (`apps/server/tests/`) checks these properties, among others:
 
 1. **Permission isolation:**
-   - A `Tester` gets `403` approving a version (`POST /api/v1/projects/{projectId}/test-case-versions/{versionId}/approve`).
-   - A `Viewer` gets `403` recording a result (`POST /api/v1/executions`).
-   - A token or a per-project role for one project gets `403` on another project's routes (`project_scoping.test.ts`).
+   - A `Tester` gets `403` approving a version (`POST /api/v1/versions/{versionId}/approve`).
+   - A `Viewer` gets `403` recording a result (`POST /api/v1/runs/{runId}/results`).
+   - A token or a per-project role for one project gets `403` on another project's routes, and a request naming ids from two projects gets `400 PROJECTS_DIFFER` (`project_scoping.test.ts`, `api_conventions.test.ts`).
    - `USER_MANAGE` can't be used to escalate (`admin_privilege_guard.test.ts`).
 2. **Tokens:**
    - Plaintext tokens never reach the database or the token list.

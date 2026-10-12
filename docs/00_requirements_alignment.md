@@ -38,7 +38,7 @@
   - Admin settings provide a toggle to override this constraint per project if draft testing is explicitly permitted.
 - **Locked Plan Operational Restrictions:**
   - **Read-Only Lock:** Completed execution results remain fully viewable and exportable.
-  - Any attempt to POST/PUT new execution results or modify verdicts against a closed build/plan returns **HTTP 422 Unprocessable Entity** (`BUILD_CLOSED` / `PLAN_LOCKED`).
+  - Any attempt to POST/PUT new execution results or modify verdicts against a closed build/plan returns **HTTP 422 Unprocessable Entity** (`BUILD_CLOSED` / `PLAN_LOCKED`; as built, the codes are `RUN_CLOSED` / `PLAN_LOCKED`).
 - **As built:**
   - Each plan pins every case to a version; past results keep the version they ran against.
   - Approving a new version moves the pin in ACTIVE plans only; LOCKED and ARCHIVED plans keep theirs.
@@ -86,7 +86,7 @@
     - `Route to Existing Custom Field` (map incoming key to existing field)
 - **Large File Ingestion Pipeline:**
   - Stream-parsed background job with real-time progress bar.
-  - Includes a mandatory **Dry-Run Inspection Diff** (`POST /api/v1/imports/dry-run`) prior to applying mutations.
+  - Includes a mandatory **Dry-Run Inspection Diff** (`POST /api/v1/imports/dry-run`; as built, `POST /api/v1/projects/{projectId}/imports/dry-run`) prior to applying mutations.
 - **As built:**
   - The import wizard has the dry run, custom-field mapping (drop, create, or map to an existing field) and duplicate handling.
   - Duplicates take one action for the whole import; per-case choices are possible through the API only, and the "apply to all future duplicates" toggle has no effect.

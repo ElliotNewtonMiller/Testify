@@ -160,7 +160,7 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
 
 ## Server conventions
 
-- **Routes** (the full map is in `docs/api_roadmap.md` step 1):
+- **Routes** (conventions, the full route map and the error codes are in `docs/rfc_03_api_and_xml_contracts.md` §1-4; keep it current when a route changes):
   - Lists and creation sit under the parent (`/projects/:projectId/plans`); each item has its own address (`/plans/:planId`, `/runs/:runId`, `/cases/:caseId`, ...).
   - `authenticateRequest` works out the project from every id the request names (path, query and JSON body) and stores it as `request.projectId`; ids from two projects get `400 PROJECTS_DIFFER`. Routes still check that other ids in the request belong to that project.
   - Verbs: `PATCH` for a partial update; `PUT` only to replace a whole thing (a custom-field value, a user's override set, a report schedule, the email settings); `?force=true` for "delete anyway".
@@ -241,7 +241,6 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - A custom-field change made by another admin shows only after the next case or suite switch or a reload; nothing is pushed.
 - `AuditLogRepository` is used only by tests; routes insert audit rows directly.
 - Recharts 2 is deprecated upstream; the Recharts 3 upgrade hasn't been done.
-- RFC 03 §1-4 (API conventions, endpoint contract, error codes) is still the original design, not the API as built; the API revisit will replace it. The routes in `apps/server/src/routes/` are the reference until then.
 
 ## Testing and verification
 
@@ -270,9 +269,9 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 2. `docs/changelog.md`: the history and reasoning behind everything.
 3. `docs/reports_api_and_mcp.md`: reports, the results API, MCP.
 4. `docs/api_roadmap.md`: where the API stands, and the planned next steps for the API and MCP, with their status.
-5. Design documents, updated 2026-10-11 to match the code (each says plainly what isn't built):
+5. Design documents, updated 2026-10-11 (RFC 03 §1-4 on 2026-10-12) to match the code (each says plainly what isn't built):
    - `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`: the overview, linking to the RFCs.
-   - `docs/rfc_01_domain_model.md` (domain, schema, state machines), `rfc_02` (layout, hotkeys), `rfc_03` (CI results, import; §1-4 are still the original API design), `rfc_04` (permissions, tokens, audit, threat model).
+   - `docs/rfc_01_domain_model.md` (domain, schema, state machines), `rfc_02` (layout, hotkeys), `rfc_03` (the API: conventions, route map, CI results, errors, import), `rfc_04` (permissions, tokens, audit, threat model).
    - `docs/01_vertical_slices_roadmap.md`: what each build slice planned and delivered.
    - `docs/00_requirements_alignment.md` (identical to `.antigravity/requirements_alignment.md`): the locked intake decisions, with "As built" notes.
    - `.antigravity/agents/*.md`: the original planning briefs; they record what was asked for, not what was built.
