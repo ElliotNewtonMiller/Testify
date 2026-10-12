@@ -112,6 +112,8 @@ API:
 | `POST /api/v1/projects/:projectId/report-emails` | Send now. Body: `{ "sections": [{ "report_id", "params" }], "recipients": "a@x.com, b@y.com", "message"?, "preview"? }`. `preview: true` returns `{ subject, html }` without sending. |
 | `GET` / `POST /api/v1/projects/:projectId/report-schedules` | List or create schedules. |
 | `PUT` / `DELETE /api/v1/report-schedules/:scheduleId` | Replace or remove a schedule. `PUT` takes the whole schedule, like create. |
+| `POST /api/v1/report-schedules/:scheduleId/recipients` | Add one recipient: `{ "email": "a@x.com" }`. Answers the schedule. |
+| `DELETE /api/v1/report-schedules/:scheduleId/recipients/:email` | Remove one recipient (not the last: `409 LAST_RECIPIENT`). |
 | `POST /api/v1/report-schedules/:scheduleId/send-now` | Send a schedule now. |
 
 A schedule's fields:

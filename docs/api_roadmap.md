@@ -12,7 +12,7 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 ## Where the API stands (2026-10-12)
 
 **Good:**
-- **Coverage:** about 84 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
+- **Coverage:** 96 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
 - **Security:** project-bound API tokens (`tf_ci_...`), permissions checked per project, rate limits and an audit log (RFC 04).
 - **CI:** results arrive in batches of up to 5,000 per request (`POST /api/v1/runs/{runId}/results/batch`).
 - **Consistent** (step 1, 2026-10-12): one address style, verbs and status codes, one error format, one name per id, "runs" and "results" throughout.
@@ -187,18 +187,29 @@ Many tools read that format, so the one file gives:
 
 ### 8. Fill the read gaps
 
-**Status:** In progress (with step 4). Parts 1-2 of 3 done (2026-10-12): single items by id, version history, readable ids everywhere; a run's results and a project's cases (paged). Left: changing one report-schedule recipient.
+**Status:** Done (2026-10-12, with step 4), in three parts: single items by id, version history and readable ids everywhere; a run's results and a project's cases (paged); adding and removing one report-schedule recipient.
 
-**What:** reads a script needs and doesn't have today:
+**What** (as planned; each is built): reads a script needed and didn't have:
 - **Single items by id:** `GET /projects/{id}`, `/plans/{id}`, `/runs/{id}`, `/suites/{id}`, `/cases/{id}` (the case with its latest version and steps), `/results/{id}` (with step results). Today only lists exist, or the whole project's tree.
 - **A run's results:** `GET /runs/{id}/results`, every result with its duration, notes, error, step results and who recorded it, filterable by verdict and case; paged (step 4). Today the options are the Execute queue (latest verdict only), the reports, or an export (limited to 120 an hour).
 - **Readable ids:** accept a case's external id (SHOP-12) wherever a case id is taken, or add a lookup (`GET /projects/{id}/cases?external_id=SHOP-12`). Today only CI batches and the case-history report accept them.
 - **Version history:** `GET /cases/{id}/versions` (every version, not just the latest) and `GET /versions/{id}`.
-- **Report schedule recipients:** a way to add or remove one recipient (`PATCH /report-schedules/{id}` with only `recipients`), instead of resending the whole schedule.
+- **Report schedule recipients:** a way to add or remove one recipient, instead of resending the whole schedule. Built as `POST /report-schedules/{id}/recipients` (`email`) and `DELETE /report-schedules/{id}/recipients/{email}`; the last recipient can't be removed (`409 LAST_RECIPIENT`).
 
 **Why:** with these, a script can find something by its readable id, read it, and act on it in one or two calls, instead of searching, downloading whole lists and chaining lookups.
 
-**Recommendation:** after step 3 stages 2-3, so the new routes get their schemas as they're added; together with step 4 (paging) for the lists. Bulk changes (e.g. deprecating many cases in one call) belong in the same pass.
+**Recommendation:** after step 3 stages 2-3, so the new routes get their schemas as they're added; together with step 4 (paging) for the lists. Bulk changes became step 9.
+
+### 9. Bulk changes
+
+**Status:** Not started
+
+**What:** changing many things in one call, where a script would otherwise loop: deprecating, approving or restoring many cases; changing priority or a custom field on many cases; adding or removing many cases from a plan (partly exists: a whole suite, or `case_ids` for moves).
+
+**Recommendation:**
+- Take readable ids (they already work in `case_ids`) and answer per item, like the CI batch (`207` when some are refused), with an `all_or_nothing` option.
+- One audit row per change, as today.
+- Split from step 8 on 2026-10-12, to keep that pass to reads and paging.
 
 ### Related gaps worth doing alongside
 
@@ -213,9 +224,10 @@ Many tools read that format, so the one file gives:
 1. **Steps 1 and 2:** consistency and versioning. Done.
 2. **Fix first:** API tokens on global admin routes. Done.
 3. **Step 3:** finish the spec and docs page (stages 2-4). Done.
-4. **Steps 8 and 4:** the missing reads and paging, together.
+4. **Steps 8 and 4:** the missing reads and paging, together. Done.
 5. **Step 5:** CI integration, built on the published spec.
-6. **Steps 6 and 7:** agent writes and webhooks.
+6. **Step 9:** bulk changes.
+7. **Steps 6 and 7:** agent writes and webhooks.
 
 ---
 
@@ -239,3 +251,4 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | Readable case ids (SHOP-12) are accepted wherever a case id is, not only through a lookup route. | Imported cases can share a readable id across projects: the request's project decides, otherwise `400 AMBIGUOUS_CASE_ID`. |
 | 2026-10-12 | Paging only for lists that grow (cases, a run's results, the audit log, case history); short lists stay whole. | The web app is unchanged. |
 | 2026-10-12 | Bulk changes (e.g. deprecating many cases) become their own roadmap step. | Keeps this pass to reads and paging. |
+| 2026-10-12 | One recipient at a time: `POST /report-schedules/{id}/recipients` and `DELETE /report-schedules/{id}/recipients/{email}`, rather than a partial `PATCH`. | `PUT` stays for replacing a whole schedule. A schedule keeps at least one recipient (`409 LAST_RECIPIENT`); adding one already there changes nothing. |

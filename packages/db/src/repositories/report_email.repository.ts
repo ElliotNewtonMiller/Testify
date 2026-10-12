@@ -138,6 +138,28 @@ export class ReportScheduleRepository {
     return this.findById(id);
   }
 
+  /**
+   * Changes the recipient list under a row lock, so two changes at once can't lose one.
+   * `change` gets the current list and returns the new one, or a reason to leave it alone.
+   */
+  async changeRecipients<R extends { refused: string }>(
+    id: string,
+    change: (current: string[]) => string[] | R
+  ): Promise<{ schedule: ReportSchedule; changed: boolean } | R | undefined> {
+    return this.db.transaction().execute(async (trx) => {
+      const row = await trx.selectFrom('report_schedules').selectAll().where('id', '=', id).forUpdate().executeTakeFirst();
+      if (!row) return undefined;
+      const current = parseList<string>(row.recipients);
+      const next = change(current);
+      if (!Array.isArray(next)) return next;
+      const changed = next.length !== current.length || next.some((r, i) => r !== current[i]);
+      if (!changed) return { schedule: toSchedule(row), changed };
+      const updated_at = new Date().toISOString();
+      await trx.updateTable('report_schedules').set({ recipients: JSON.stringify(next), updated_at }).where('id', '=', id).execute();
+      return { schedule: toSchedule({ ...row, recipients: JSON.stringify(next), updated_at }), changed };
+    });
+  }
+
   async delete(id: string): Promise<boolean> {
     const result = await this.db.deleteFrom('report_schedules').where('id', '=', id).executeTakeFirst();
     return (result.numDeletedRows ?? 0n) > 0n;

@@ -2134,3 +2134,22 @@ Tests:
   - audit log: pages of 2, newest first; `action`, `actor_id`, `since`; a bad `since` and cursor;
   - the case-history report refuses a made-up cursor.
 - `openapi.test.ts` now expects 94 routes; the response check covers every new response.
+
+## Added: adding and removing one report-email recipient; steps 8 and 4 done (API roadmap steps 8 and 4, part 3) (2026-10-12)
+
+Changing who gets a scheduled report meant resending the whole schedule with `PUT`. Now one address can be added or removed on its own.
+
+- **`POST /api/v1/report-schedules/{scheduleId}/recipients`** with `{ "email": "..." }` (`REPORT_EMAIL`): adds it, lower-cased, and answers 200 with the schedule. Adding an address already there changes nothing and writes no audit row. More than 50 recipients, or anything other than one address, is a `400` naming the field.
+- **`DELETE /api/v1/report-schedules/{scheduleId}/recipients/{email}`**: removes it (any letter case) and answers 204. An address that isn't a recipient gets 404. The last recipient can't be removed (`409 LAST_RECIPIENT`): add another first, or delete the schedule.
+- Both write a `REPORT_SCHEDULE_UPDATED` audit row (name, recipient count, which change; no addresses, as before). The change happens under a row lock (`ReportScheduleRepository.changeRecipients`), so two changes at once can't lose one. Nothing else about the schedule changes, including when it next goes out.
+- **Fix to part 2:** a run's result list now orders by `executed_at`, then `created_at`, then id. Results from one CI batch share `executed_at`, and the random id put them in no particular order, so a case sent twice in one batch could list its earlier result as the newer one, unlike `latest_only` and the reports. The cursor carries the second time (`<ts>|<ts2>|<id>`; `decodeCursor` reads both forms). `api_lists.test.ts` now checks the order.
+- **Decided with Elliot:** bulk changes (e.g. deprecating many cases at once) are their own roadmap step, step 9.
+- **Docs:**
+  - the getting-started guide: readable ids anywhere, one case by readable id, the case list, a paging loop, and a run's results;
+  - RFC 03's route map and `LAST_RECIPIENT`;
+  - reports_api_and_mcp.md's report-email table;
+  - the roadmap: steps 8 and 4 Done, new step 9, the recommended order, the endpoint count, and a decision on the recipient routes.
+
+Tests: `report_email.test.ts` +1, covering adding (letter case, spaces, adding twice), a bad address, removing, removing an unknown address, the last recipient, an unknown schedule, and that the rest of the schedule is untouched. `openapi.test.ts` now expects 96 routes.
+
+631 tests pass and typecheck is clean. Checked live on a production build: case-list paging and a bad cursor, the paged audit log, a run's results (filters, latest_only, one result, three results from one batch paged in order), and adding and removing recipients down to the last; `/docs/json` lists 96 operations.

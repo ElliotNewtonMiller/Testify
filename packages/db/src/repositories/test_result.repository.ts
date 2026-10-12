@@ -392,7 +392,8 @@ export class TestResultRepository {
   /**
    * A run's results, newest first, a page at a time, each with its step results and its case.
    * Filters: verdicts, one case, the source (UI / API), and `latestOnly` (each case's latest result
-   * in the run, i.e. what reports count). Keyset paging on (executed_at, id).
+   * in the run, i.e. what reports count). Keyset paging on (executed_at, created_at, id), the order
+   * `rn` uses.
    */
   async listForRun(
     runId: string,
@@ -406,14 +407,18 @@ export class TestResultRepository {
     if (filters.verdicts?.length) query = query.where('r.verdict', 'in', filters.verdicts);
     if (filters.testCaseId) query = query.where('r.test_case_id', '=', filters.testCaseId);
     if (filters.source) query = query.where('r.source', '=', filters.source);
+    // Results sent in one CI batch share executed_at; created_at keeps them in the order sent.
     const cursor = decodeCursor(page.cursor);
     if (cursor) {
-      query = query.where((eb) =>
-        eb.or([eb('r.executed_at', '<', cursor.ts), eb.and([eb('r.executed_at', '=', cursor.ts), eb('r.test_result_id', '<', cursor.id)])])
-      );
+      query = query.where(sql<boolean>`(r.executed_at, r.created_at, r.test_result_id) < (${cursor.ts}, ${cursor.ts2 ?? ''}, ${cursor.id})`);
     }
-    const rows = await query.orderBy('r.executed_at', 'desc').orderBy('r.test_result_id', 'desc').limit(page.limit + 1).execute();
-    const paged = toPage(rows, page.limit, (r) => ({ ts: r.executed_at, id: r.test_result_id }));
+    const rows = await query
+      .orderBy('r.executed_at', 'desc')
+      .orderBy('r.created_at', 'desc')
+      .orderBy('r.test_result_id', 'desc')
+      .limit(page.limit + 1)
+      .execute();
+    const paged = toPage(rows, page.limit, (r) => ({ ts: r.executed_at, ts2: r.created_at, id: r.test_result_id }));
     return { next_cursor: paged.next_cursor, rows: await this.withSteps(paged.rows) };
   }
 

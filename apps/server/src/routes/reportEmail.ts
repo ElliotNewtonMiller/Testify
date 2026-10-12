@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database, ReportScheduleInput } from '@testify/db';
 import { ProjectRepository, ReportScheduleRepository } from '@testify/db';
-import { MAX_RECIPIENTS, nextRunAt, parseRecipients, validateScheduleTiming } from '@testify/core';
+import { MAX_RECIPIENTS, isValidEmail, nextRunAt, parseRecipients, validateScheduleTiming } from '@testify/core';
 import { requirePermission, type AuthenticatedUser } from '../middleware/auth.js';
 import { ReportError } from '../services/reportService.js';
 import { ReportEmailService, parseScheduleSections, type EmailReportRequest } from '../services/reportEmailService.js';
@@ -187,6 +187,55 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
       enabled: parsed.input.enabled,
     });
     return { schedule };
+  });
+
+  // One recipient at a time, without resending the whole schedule.
+
+  app.post('/api/v1/report-schedules/:scheduleId/recipients', { schema: O.addRecipientSchema, ...gate }, async (request, reply) => {
+    const { scheduleId: id } = request.params as { scheduleId: string };
+    const projectId = request.projectId ?? '';
+    if (!(await scheduleInProject(projectId, id))) return sendError(reply, 404, 'Schedule not found in this project');
+    const email = String((request.body as { email?: unknown })?.email ?? '').trim().toLowerCase();
+    if (!isValidEmail(email)) return badRequest(reply, 'email', 'must be one email address');
+    const result = await scheduleRepo.changeRecipients(id, (current) => {
+      if (current.includes(email)) return current;
+      if (current.length >= MAX_RECIPIENTS) return { refused: `can have at most ${MAX_RECIPIENTS} addresses` };
+      return [...current, email];
+    });
+    if (!result) return sendError(reply, 404, 'Schedule not found in this project');
+    if ('refused' in result) return badRequest(reply, 'recipients', result.refused);
+    if (result.changed) {
+      await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_UPDATED', 'report_schedule', id, projectId, {
+        name: result.schedule.name,
+        recipient_count: result.schedule.recipients.length,
+        change: 'recipient_added',
+      });
+    }
+    return { schedule: result.schedule };
+  });
+
+  app.delete('/api/v1/report-schedules/:scheduleId/recipients/:email', { schema: O.removeRecipientSchema, ...gate }, async (request, reply) => {
+    const { scheduleId: id, email: rawEmail } = request.params as { scheduleId: string; email: string };
+    const projectId = request.projectId ?? '';
+    if (!(await scheduleInProject(projectId, id))) return sendError(reply, 404, 'Schedule not found in this project');
+    const email = rawEmail.trim().toLowerCase();
+    const result = await scheduleRepo.changeRecipients(id, (current) => {
+      if (!current.includes(email)) return { refused: 'NOT_A_RECIPIENT' };
+      if (current.length === 1) return { refused: 'LAST_RECIPIENT' };
+      return current.filter((r) => r !== email);
+    });
+    if (!result) return sendError(reply, 404, 'Schedule not found in this project');
+    if ('refused' in result) {
+      return result.refused === 'NOT_A_RECIPIENT'
+        ? sendError(reply, 404, `${email} isn't a recipient of this schedule`)
+        : sendError(reply, 409, "This is the schedule's only recipient. Add another first, or delete the schedule.", { code: 'LAST_RECIPIENT' });
+    }
+    await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_UPDATED', 'report_schedule', id, projectId, {
+      name: result.schedule.name,
+      recipient_count: result.schedule.recipients.length,
+      change: 'recipient_removed',
+    });
+    return reply.status(204).send();
   });
 
   app.delete('/api/v1/report-schedules/:scheduleId', { schema: O.deleteScheduleSchema, ...gate }, async (request, reply) => {

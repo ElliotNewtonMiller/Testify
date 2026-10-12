@@ -195,6 +195,33 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       expect(JSON.parse((await call(app, admin, 'GET', base)).payload).schedules).toHaveLength(0);
     });
 
+    it('adds and removes one recipient at a time', async () => {
+      const { app, seed } = serverInstance;
+      const admin = await loginAsAdmin(app);
+      const schedule = JSON.parse((await call(app, admin, 'POST', `/api/v1/projects/${seed.projectId}/report-schedules`, scheduleBody(seed.planId))).payload).schedule;
+      const recipients = `/api/v1/report-schedules/${schedule.id}/recipients`;
+      const read = async () => JSON.parse((await call(app, admin, 'GET', `/api/v1/projects/${seed.projectId}/report-schedules`)).payload).schedules[0];
+
+      const added = await call(app, admin, 'POST', recipients, { email: ' New@Example.com ' });
+      expect(added.statusCode).toBe(200);
+      expect(JSON.parse(added.payload).schedule.recipients).toEqual(['boss@example.com', 'qa@example.com', 'new@example.com']);
+      // Adding it again changes nothing.
+      expect(JSON.parse((await call(app, admin, 'POST', recipients, { email: 'new@example.com' })).payload).schedule.recipients).toHaveLength(3);
+      // Everything else about the schedule is untouched.
+      expect(await read()).toMatchObject({ name: 'Weekly digest', frequency: 'WEEKLY', next_run_at: schedule.next_run_at });
+
+      const bad = await call(app, admin, 'POST', recipients, { email: 'a@b.com, c@d.com' });
+      expect([bad.statusCode, JSON.parse(bad.payload).invalid_params[0].name]).toEqual([400, 'email']);
+
+      expect((await call(app, admin, 'DELETE', `${recipients}/QA@example.com`)).statusCode).toBe(204);
+      expect((await call(app, admin, 'DELETE', `${recipients}/nobody@example.com`)).statusCode).toBe(404);
+      expect((await call(app, admin, 'DELETE', `${recipients}/new@example.com`)).statusCode).toBe(204);
+      const last = await call(app, admin, 'DELETE', `${recipients}/boss@example.com`);
+      expect([last.statusCode, JSON.parse(last.payload).code]).toEqual([409, 'LAST_RECIPIENT']);
+      expect((await read()).recipients).toEqual(['boss@example.com']);
+      expect((await call(app, admin, 'POST', '/api/v1/report-schedules/00000000-0000-0000-0000-000000000000/recipients', { email: 'x@y.com' })).statusCode).toBe(404);
+    });
+
     it('runDueSchedules sends due schedules once and advances them; claims are exclusive', async () => {
       const { app, db, seed } = serverInstance;
       const admin = await loginAsAdmin(app);

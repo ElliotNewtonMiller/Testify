@@ -56,7 +56,7 @@ curl -s "$TESTIFY/api/v1/auth/me" -H "Authorization: Bearer $TESTIFY_TOKEN" \
 
 ## 4. Find the ids you need
 
-Testify identifies everything by id (a UUID). Test cases also have a readable id like `SHOP-101`, which CI results can use directly.
+Testify identifies everything by id (a UUID). Test cases also have a readable id like `SHOP-101`, which works anywhere a case id does: `GET /api/v1/cases/SHOP-101`, `"test_case_id": "SHOP-101"`, CI results.
 
 ```bash
 # Your project (a token sees only its own)
@@ -68,11 +68,31 @@ curl -s "$TESTIFY/api/v1/projects/$PROJECT_ID/plans" -H "Authorization: Bearer $
 # A plan's test runs, newest first
 curl -s "$TESTIFY/api/v1/plans/$PLAN_ID/runs" -H "Authorization: Bearer $TESTIFY_TOKEN" | jq '.runs[] | {id, name, status}'
 
-# A case's id from its readable id, title or suite name
+# One case, with its latest version and steps
+curl -s "$TESTIFY/api/v1/cases/SHOP-101" -H "Authorization: Bearer $TESTIFY_TOKEN" | jq '{case: .test_case.title, version: .latest_version.version_number}'
+
+# The project's cases, a page at a time
+curl -s "$TESTIFY/api/v1/projects/$PROJECT_ID/cases?version_status=APPROVED&limit=100" -H "Authorization: Bearer $TESTIFY_TOKEN" | jq '.cases[].external_id, .next_cursor'
+
+# Cases matching words in their title or suite name
 curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT_ID/case-search" \
   -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/json' \
-  -d '{"q": "SHOP-101"}' | jq .case_ids
+  -d '{"q": "checkout"}' | jq .case_ids
 ```
+
+**Long lists come a page at a time.** A project's cases, a run's results and the audit log answer `next_cursor`; pass it back as `cursor` for the next page, until it is `null`. `limit` sets the page size.
+
+```bash
+CURSOR=""
+while :; do
+  PAGE=$(curl -s "$TESTIFY/api/v1/projects/$PROJECT_ID/cases?limit=500${CURSOR:+&cursor=$CURSOR}" -H "Authorization: Bearer $TESTIFY_TOKEN")
+  echo "$PAGE" | jq -r '.cases[].external_id'
+  CURSOR=$(echo "$PAGE" | jq -r '.next_cursor // empty')
+  [ -z "$CURSOR" ] && break
+done
+```
+
+A readable id is unique within its project. Imported cases keep the ids from their file, so two projects can share one; then the request's project decides (an API token's own project, or the project its other ids name). Without one, the answer is `400 AMBIGUOUS_CASE_ID`; use the case's id instead.
 
 In the web app, the Reports view's address shows the ids of the project, plan and run you're looking at (`#/reports/run?project=…&plan=…&run=…`).
 
@@ -197,7 +217,8 @@ Compared with "Run 1.0.8": **0 new failures** · 0 fixed · 1 still failing · 8
 ```
 
 Other ways to read results:
-- **Each case's latest result in a run:** `GET /api/v1/plans/{planId}/cases?test_run_id={runId}`.
+- **Every result in a run**, with notes, durations, errors, step results and who recorded them: `GET /api/v1/runs/{runId}/results`. Filter with `verdict=FAILED,BLOCKED`, `test_case_id=SHOP-101`, `source=API` (CI results only), and `latest_only=true` (each case's latest result, which is what reports count). One result: `GET /api/v1/results/{resultId}`.
+- **Each case's latest result in a run, untested cases included:** `GET /api/v1/plans/{planId}/cases?test_run_id={runId}`.
 - **One case's whole history:** the `case_history` report, with `{"test_case_id": "SHOP-101"}`.
 - **Health over many runs:** the `test_health` report lists flaky, slow and always-failing cases.
 - **Everything in a run as a file:** `POST /api/v1/projects/{projectId}/exports/results` with `{"test_run_id": "..."}` (needs `EXPORT_DATA`).

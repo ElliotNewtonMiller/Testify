@@ -88,6 +88,8 @@ describe('API lists: paging and filters', () => {
     const { items, pages } = await all(`${run}/results`, 'results', 1);
     expect(pages).toBe(4);
     expect(new Set(items.map((r) => r.id)).size).toBe(4);
+    // Newest first; results from one batch share executed_at and keep the order they were sent in.
+    expect(items.map((r) => `${r.external_id} ${r.verdict}`)).toEqual(['SHOP-103 FAILED', 'SHOP-102 PASSED', 'SHOP-101 PASSED', 'SHOP-101 FAILED']);
     const failed101 = items.find((r) => r.external_id === 'SHOP-101' && r.verdict === 'FAILED');
     expect(failed101).toMatchObject({ notes: 'broken', source: 'UI', tested_by: 'admin', duration_ms: null, test_run_id: seed.buildId });
     const failed103 = items.find((r) => r.external_id === 'SHOP-103');

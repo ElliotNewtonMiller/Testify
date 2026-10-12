@@ -247,7 +247,7 @@ export const replaceScheduleSchema = {
   tags: REPORT_EMAIL,
   summary: 'Replace a scheduled report email',
   description:
-    'Replaces the whole schedule (send every field, as when creating it); to add one recipient, send the current list plus the new address. Needs `REPORT_EMAIL`.',
+    'Replaces the whole schedule (send every field, as when creating it). To add or remove one recipient, use `POST`/`DELETE /api/v1/report-schedules/{scheduleId}/recipients`. Needs `REPORT_EMAIL`.',
   params: idParams('scheduleId'),
   body: scheduleBody,
   response: { 200: wrapped('schedule', 'ReportSchedule', 'Replaced'), ...authedErrors([400, '`INVALID_PARAMS`'], 404) },
@@ -259,6 +259,27 @@ export const deleteScheduleSchema = {
   description: 'Needs `REPORT_EMAIL`.',
   params: idParams('scheduleId'),
   response: { 204: NO_CONTENT, ...authedErrors(404) },
+};
+
+export const addRecipientSchema = {
+  tags: REPORT_EMAIL,
+  summary: 'Add one recipient to a scheduled report email',
+  description: 'Adds the address (lower-cased) to the schedule\'s recipients; adding one already there changes nothing. At most 50 recipients. Needs `REPORT_EMAIL`.',
+  params: idParams('scheduleId'),
+  body: { type: 'object', required: ['email'], properties: { email: { type: 'string', description: 'One email address' } } },
+  response: { 200: wrapped('schedule', 'ReportSchedule', 'The schedule with its recipients'), ...authedErrors([400, '`INVALID_PARAMS`: not one email address, or already 50 recipients'], 404) },
+};
+
+export const removeRecipientSchema = {
+  tags: REPORT_EMAIL,
+  summary: 'Remove one recipient from a scheduled report email',
+  description: "A schedule keeps at least one recipient: removing the last is refused (`409 LAST_RECIPIENT`); delete the schedule instead. Needs `REPORT_EMAIL`.",
+  params: {
+    type: 'object',
+    required: ['scheduleId', 'email'],
+    properties: { scheduleId: { type: 'string' }, email: { type: 'string', description: 'The address to remove (any letter case)' } },
+  },
+  response: { 204: NO_CONTENT, ...authedErrors([404, 'No such schedule, or the address isn\'t one of its recipients'], [409, '`LAST_RECIPIENT`']) },
 };
 
 export const sendScheduleNowSchema = {
