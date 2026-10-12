@@ -10,6 +10,7 @@ import { sendTokenNotAllowedError, sendInvalidTokenError,
   sendTokenProjectMismatchError,
   sendTokenIssuerInactiveError, sendError } from '../errors.js';
 import { sendRateLimitedError } from '../services/rateLimits.js';
+import { isInternalRequest } from '../internalRequests.js';
 import { SESSION_IDLE_SECONDS, SESSION_MAX_SECONDS } from '../sessionLifetime.js';
 import { applyCaseRefs, resolveCaseRef } from '../caseRefs.js';
 
@@ -228,7 +229,9 @@ async function authenticateApiToken(
   // Every request made with a token counts against that token's allowance
   // (services/rateLimits.ts) -- once, even when a route authenticates twice (imports do).
   const limiter = request.server.rateLimits?.apiToken;
-  if (limiter && !rateCountedRequests.has(request)) {
+  // A request the server makes to itself for a bulk change or an MCP tool was counted as the
+  // caller's one request already (internalRequests.ts).
+  if (limiter && !rateCountedRequests.has(request) && !isInternalRequest(request)) {
     rateCountedRequests.add(request);
     const limited = limiter.take(`token:${token.id}`);
     if (!limited.allowed) {

@@ -63,15 +63,16 @@ apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createSer
   src/routes/      One file per area: auth, admin, projects (projects/plans/runs), specEditing (suites/cases/versions/move),
                    testPlanCases (spec tree, plan membership, Execute queue), customFields, caseSearch, ingestion (import),
                    exports, results (one result), batchExecution (CI results as JSON), junitResults (CI results as JUnit XML),
-                   reports, reportEmail, emailAdmin, apiTokens.
+                   bulkChanges (many cases in one call), reports, reportEmail, emailAdmin, apiTokens.
   src/services/    Logic shared by routes: adminGuard, caseFilterService, reportService, reportEmailService, mailer,
                    rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets,
                    batchResults (recording a CI batch, JSON or JUnit), runByName (CI's run per build).
   src/middleware/auth.ts   Authentication and permission checks (see "Auth and permissions").
-  src/mcp/mcpServer.ts     POST /mcp: read-only MCP tools over the same services.
+  src/mcp/          mcpServer.ts: POST /mcp, read tools over the same services; writeTools.ts: write tools that call
+                   the REST routes as the caller (internalRequests.ts).
   src/openapi/     The OpenAPI spec and /docs page: index.ts (setup, validation, test-time response check),
                    schemas.ts (shared schemas, helpers), areas/ (route schemas per area).
-  src/{config,errors,audit,observability,webApp,sessionCookie,sessionLifetime,runAutoClose}.ts
+  src/{config,errors,audit,observability,webApp,sessionCookie,sessionLifetime,runAutoClose,internalRequests}.ts
   scripts/build.mjs        esbuild bundle (workspace packages bundled, other dependencies external).
 apps/web/          React + Vite. src/App.tsx (~680 lines) calls the hooks, provides the context, lays out panes and modals, wires hotkeys.
   src/hooks/       One hook per feature: useSession, useScope (project/plan/run), useExecutionWorkspace, useSpecTree,
@@ -173,6 +174,7 @@ docs/              changelog.md, api_roadmap.md, api_getting_started.md, deploym
   - Lists that grow (a project's cases, a run's results, the audit log, case history) are paged: `limit` and `cursor` in, `next_cursor` out (null on the last page). Keyset helpers are in `packages/db/src/paging.ts`; routes read the page with `readPage` (`apps/server/src/paging.ts`), which answers `400 INVALID_CURSOR`. Short lists stay whole.
   - Fields are snake_case, and ids are named after their database columns (`test_plan_id`, `test_run_id`, `test_case_id`, ...). Never "build" or "execution" in a new address, field or code.
   - A case may be named by its readable id (SHOP-12) wherever a case id is taken: `authenticateRequest` replaces `:caseId`, `test_case_id` and `case_ids` with internal ids once the caller is known (`caseRefs.ts`). A readable id shared by several projects is settled by the request's project or an API token's, otherwise `400 AMBIGUOUS_CASE_ID`.
+  - Bulk changes (`routes/bulkChanges.ts`) and MCP write tools run each change through its ordinary route in-process (`innerRequest` in `internalRequests.ts`, as the caller), so they need no rules of their own. Such requests carry a per-process secret: they aren't rate-limited twice, and `internalVia(request)` says `bulk` or `mcp` (`mcp` makes new cases DRAFT and marks audit User-Agents "(via Testify MCP)").
   - In the web app, take addresses from `apps/web/src/api/routes.ts`.
 - **Route schemas (OpenAPI):**
   - A documented route has `schema` (tags, summary, params, query, body, responses) from `apps/server/src/openapi/areas/<area>.ts`; shared schemas and helpers (`wrapped`, `list`, `authedErrors`, `NO_CONTENT`, `FORCE_QUERY`, `handlerValidated`, and `oneOf` for any field limited to a set of values, which also lists them in the description) are in `openapi/schemas.ts`. Routes without a tag stay out of the spec, and `openapi.test.ts` fails if any `/api` or `/mcp` route is missing (or mark it `hide: true`).
@@ -186,7 +188,7 @@ docs/              changelog.md, api_roadmap.md, api_getting_started.md, deploym
   - Exceptions: the MCP endpoint answers in JSON-RPC (the protocol requires it), and a batch request's per-item results carry their own `detail`/`code` inside a normal response.
   - In the web app, read error messages with `errorMessage(body)` from `apps/web/src/api/errors.ts`.
 - **Audit rows:**
-  - Write one for every security-relevant change, with `...requestOrigin(request)` (real address and User-Agent).
+  - Write one for every security-relevant change, with `...requestOrigin(request)` (real address and User-Agent) and `actor_type: actorType(user)` (`SERVICE_ACCOUNT` for an API token).
   - A new action only shows in the Admin Panel's Security Audit Log once it's added to `securityActions` in `routes/admin.ts`.
   - Plan and run create/edit/delete currently write none.
 - **Validate input up front** (`resultValidation.ts`, `stepValidation.ts`, `nameProblem` in `specEditing.ts`), so bad input gets a 400 naming each field instead of a database error.
@@ -235,6 +237,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - **Sign-ins:** 8 hours idle and 7 days at most.
 - **The Execute-mode suite filter** (`execSuiteFilterId`) is separate from Spec-mode suite selection.
 - **Pane widths aren't persisted.**
+- **AI agents (MCP):** cases they create are always DRAFT, editing an approved case makes a new DRAFT, and there are no MCP tools to approve, deprecate, restore or delete. Write tools act only as the caller, through the REST routes.
 
 ## Known gaps
 

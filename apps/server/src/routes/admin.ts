@@ -389,6 +389,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'PLAN_CASE_RETIRED',
       'ACCOUNT_LOCKED',
       'ACCOUNT_UNLOCKED',
+      'MCP_WRITE',
     ];
 
     const query = request.query as { action?: string; actor_id?: string; since?: string };

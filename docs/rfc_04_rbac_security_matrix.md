@@ -302,7 +302,7 @@ graph TD
     E --> E1[AdminGuard ceiling, rank and last-admin rules]
     F --> F1[Shown once, SHA-256 digest, issuer binding, revocation]
     G --> G1[Account lockout + per-address limit + token rate limit]
-    H --> H1[SPEC_VIEW per project + central token binding + read-only MCP]
+    H --> H1[SPEC_VIEW per project + central token binding + MCP writes as the caller, drafts only]
 ```
 
 ### 6.1 Attack Vectors & Controls
@@ -357,8 +357,10 @@ graph TD
 - **Mitigation:**
   - Every report and MCP tool requires `SPEC_VIEW` on the specific project, evaluated per call: project roles and overrides for users, the issuer-capped capabilities for tokens.
   - A token is refused on any project other than its own, centrally for every route and per tool call on `/mcp`.
-  - Every report and MCP tool is read-only, and MCP tools carry `readOnlyHint`. There are no write tools yet, so injected instructions can't change data through MCP.
-  - Agents should use a dedicated token with only `SPEC_VIEW`, revocable on its own.
+  - MCP write tools (`apps/server/src/mcp/writeTools.ts`) call the REST routes as the caller (`apps/server/src/internalRequests.ts`): no permission or rule of their own, and an API token is offered only the tools its capabilities allow. Read tools carry `readOnlyHint: true`, write tools `readOnlyHint: false` (and `destructiveHint` for removing cases from a plan), so MCP clients can ask the user before a write.
+  - What injected instructions could do through MCP is limited: cases an agent creates are always DRAFT (even with `SPEC_AUTO_APPROVE`), editing an approved case's content creates a new DRAFT, and there are no tools to approve, deprecate, restore or delete. Results go only to approved cases in open runs.
+  - Every write is traceable: its usual audit row has "(via Testify MCP)" in its User-Agent and the token as a `SERVICE_ACCOUNT` actor, and each write-tool call adds an `MCP_WRITE` row to the Security Audit Log.
+  - Agents should use a dedicated token with only the capabilities they need (`SPEC_VIEW` alone to read), revocable on its own.
 - **Gaps:**
   - Report and MCP calls made with an API token count against that token's 1,200 requests per minute, but report reads by signed-in users aren't rate limited.
   - Report reads aren't audit-logged; only exports are.

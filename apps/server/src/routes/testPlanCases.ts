@@ -17,7 +17,7 @@ import { authenticateRequest, requirePermission, requireAnyPermission, EXECUTION
 import { sendPlanLockedError,
   sendCaseVersionNotApprovedError,
   sendCaseHasResultsError, sendError } from '../errors.js';
-import { requestOrigin } from '../audit.js';
+import { actorType, requestOrigin } from '../audit.js';
 import * as S from '../openapi/areas/spec.js';
 
 export interface CaseLinkability {
@@ -341,7 +341,7 @@ export async function registerTestPlanCaseRoutes(
         .values({
           id: uuidv4(),
           actor_id: actor.id,
-          actor_type: 'USER',
+          actor_type: actorType(actor),
           action: 'PLAN_CASE_ADDED',
           resource_type: 'test_plan_case',
           resource_id: planCase.id,
@@ -393,7 +393,7 @@ export async function registerTestPlanCaseRoutes(
         .values({
           id: uuidv4(),
           actor_id: actor.id,
-          actor_type: 'USER',
+          actor_type: actorType(actor),
           action: outcome.retired ? 'PLAN_CASE_RETIRED' : 'PLAN_CASE_REMOVED',
           resource_type: 'test_plan_case',
           resource_id: planCase.id,
@@ -475,7 +475,7 @@ export async function registerTestPlanCaseRoutes(
         .values({
           id: uuidv4(),
           actor_id: actor.id,
-          actor_type: 'USER',
+          actor_type: actorType(actor),
           action: action === 'ADD' ? 'PLAN_CASE_CASCADE_ADD' : 'PLAN_CASE_CASCADE_REMOVE',
           resource_type: 'test_suite',
           resource_id: suiteId,

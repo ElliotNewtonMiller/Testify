@@ -13,6 +13,7 @@ import type { Kysely } from 'kysely';
 import { registerIngestionRoutes, IMPORT_FIELD_LIMIT_BYTES, IMPORT_MAX_FILE_BYTES } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerJUnitResultRoutes } from './routes/junitResults.js';
+import { registerBulkChangeRoutes } from './routes/bulkChanges.js';
 import { registerResultRoutes } from './routes/results.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -153,6 +154,7 @@ export async function createServer(
   await registerIngestionRoutes(app, db, jwtSecret);
   await registerBatchExecutionRoutes(app, db, jwtSecret);
   await registerJUnitResultRoutes(app, db, jwtSecret);
+  await registerBulkChangeRoutes(app, db, jwtSecret);
   await registerAuthRoutes(app, db, jwtSecret);
   await registerAdminRoutes(app, db, jwtSecret);
   await registerTestPlanCaseRoutes(app, db, jwtSecret);

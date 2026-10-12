@@ -79,24 +79,47 @@ Per submission, it also stores `environment` and `runner_info`: `{ name, run_id,
 
 ## MCP (for AI agents)
 
-The API server also serves the reports as an MCP server, built in at `POST /mcp`. It uses the Streamable HTTP transport, stateless, with JSON responses. It authenticates exactly like the REST API, so the best credential is an API token with just `SPEC_VIEW`:
+The API server also serves the reports, and tools to change test cases, plans and results, as an MCP server, built in at `POST /mcp`. It uses the Streamable HTTP transport, stateless, with JSON responses. It authenticates exactly like the REST API, so the best credential is an API token made for the agent, with just the capabilities it should have: `SPEC_VIEW` alone for an agent that only reads.
 
 ```bash
 claude mcp add --transport http testify http://localhost:3001/mcp --header "Authorization: Bearer tf_ci_..."
 ```
 
-Every tool is read-only and checks `SPEC_VIEW` on the project it's asked about. A token only ever sees its own project.
+Every tool checks `SPEC_VIEW` on the project it's asked about. A token only ever sees its own project.
+
+**Reading** (`readOnlyHint: true`):
 
 | Tool | What it does |
 |---|---|
 | `list_projects` | Projects you can read |
 | `list_plans_and_runs` | Plans with their recent runs |
+| `list_suites` | The suite tree: ids, paths, case counts |
 | `search_cases` | Text and property search; same filters as the UI |
 | `get_case` | A case's content: steps, expected results, custom fields |
 | `list_report_fields` | Filter and group-by keys, with their operators |
 | `report_overview`, `report_run_summary`, `report_case_history`, `report_plan_trend`, `report_test_health`, `report_breakdown` | The reports above, generated from the catalog. List sizes default to 25. `report_run_summary` also takes `format: "markdown"`. |
 
-Ask, for example: *"What broke in the latest run of the Release Regression plan, and is any of it flaky?"*
+**Changing** (`readOnlyHint: false`):
+
+| Tool | What it does | Needs |
+|---|---|---|
+| `create_suite` | A new suite | `SPEC_CREATE` |
+| `create_case` | A new case with steps, always as a **DRAFT** | `SPEC_CREATE` |
+| `update_case` | Title, priority, execution type, custom fields; summary, preconditions and steps on the DRAFT (an approved case gets a **new DRAFT version**) | `SPEC_EDIT` (`PLAN_MANAGE` for custom fields) |
+| `update_cases` | Priority, execution type, suite or custom fields of up to 500 cases | as above |
+| `create_run` | A run of a plan | `RUN_MANAGE` |
+| `record_results` | Up to 500 results in a run | `EXECUTE_RUN` (`EXECUTE_OVERWRITE` to change others' results) |
+| `update_plan_cases` | Add or remove up to 500 cases in a plan; cases with results are retired only with `retire_if_has_results` | `PLAN_MANAGE` |
+
+How the write tools are kept safe:
+- **They act as the caller.** Each one calls the REST routes with the caller's credential, so an agent can do exactly what its token or user may, with the same rules and errors. An API token is offered only the tools its capabilities allow.
+- **A person approves agents' cases.** Cases an agent creates start as DRAFT even if the token holds `SPEC_AUTO_APPROVE`, and editing an approved case's content creates a new DRAFT version. Only approved cases can join a plan or get results. There are no tools to approve, deprecate, restore or delete; people do that in the web app, or scripts through the REST API.
+- **Everything is audit-logged.** Each change writes its usual audit row (e.g. `CASE_CREATED`), with "(via Testify MCP)" added to its User-Agent, and each write-tool call writes an `MCP_WRITE` row (tool, success or error) to the Security Audit Log in the Admin Panel.
+
+Ask, for example:
+- *"What broke in the latest run of the Release Regression plan, and is any of it flaky?"*
+- *"Write test cases for the new coupon feature in the Checkout suite, from this spec: …"* (they arrive as DRAFTs to review)
+- *"Mark SHOP-12 and SHOP-14 as failed in run 'RC 2', with the error from this log."*
 
 ## Emailing reports
 

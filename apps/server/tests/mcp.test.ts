@@ -58,7 +58,7 @@ describe('MCP endpoint (POST /mcp)', () => {
     expect((await app.inject({ method: 'GET', url: '/mcp' })).statusCode).toBe(405);
   });
 
-  it('initializes and lists read-only tools generated from the report catalog', async () => {
+  it('initializes and lists the tools: read-only ones (reports from the catalog) and the write tools', async () => {
     const { app } = serverInstance;
     const token = await loginAsAdmin(app);
 
@@ -77,7 +77,9 @@ describe('MCP endpoint (POST /mcp)', () => {
     expect(runSummary.inputSchema.required).toEqual(['project_id', 'test_run_id']);
     expect(runSummary.inputSchema.properties.compare_to.type).toEqual(['string', 'null']);
     expect(runSummary.inputSchema.properties.format.enum).toEqual(['json', 'markdown']);
-    expect(list.result.tools.every((t: any) => t.annotations?.readOnlyHint === true)).toBe(true);
+    const WRITES = ['create_suite', 'create_case', 'update_case', 'update_cases', 'create_run', 'record_results', 'update_plan_cases'];
+    for (const t of list.result.tools) expect([t.name, t.annotations?.readOnlyHint]).toEqual([t.name, !WRITES.includes(t.name)]);
+    expect(names).toEqual(expect.arrayContaining([...WRITES, 'list_suites']));
   });
 
   it('an API token sees and reads only its own project; reports match the REST API', async () => {

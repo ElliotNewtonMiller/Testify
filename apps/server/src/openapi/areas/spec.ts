@@ -645,3 +645,103 @@ export const listCasesSchema = {
     ...authedErrors([400, '`INVALID_CURSOR`, or an invalid filter (`invalid_params` names it)'], 404),
   },
 };
+
+// ---- Bulk changes ----
+
+const caseIdList = {
+  type: 'array',
+  minItems: 1,
+  maxItems: 500,
+  items: { type: 'string' },
+  description: 'Up to 500 cases, by id or readable id (SHOP-12), each once',
+};
+
+const bulkResults = (description: string) => ({
+  description,
+  type: 'object',
+  required: ['object', 'summary', 'results'],
+  properties: {
+    object: { type: 'string', enum: ['bulk_results'] },
+    summary: {
+      type: 'object',
+      required: ['total', 'succeeded', 'failed'],
+      properties: { total: { type: 'integer' }, succeeded: { type: 'integer' }, failed: { type: 'integer' } },
+    },
+    results: {
+      type: 'array',
+      description: 'One per listed case, in order',
+      items: {
+        type: 'object',
+        required: ['index', 'test_case_id', 'external_id', 'status'],
+        properties: {
+          index: { type: 'integer' },
+          test_case_id: { type: 'string', description: 'The case id (or the reference given, when no case matched)' },
+          external_id: { type: ['string', 'null'] },
+          status: { type: 'integer', description: 'The status the single-item route answered: 2xx done; otherwise why not' },
+          code: { type: 'string', description: "For a failed item: the single route's error code, e.g. VERSION_NOT_DRAFT, CASE_HAS_RESULTS, NOT_FOUND" },
+          detail: { type: 'string' },
+          test_case_version_id: { type: 'string', description: 'approve, deprecate, restore: the version acted on' },
+          test_plan_case_id: { type: 'string', description: "add: the case's link to the plan" },
+        },
+      },
+    },
+  },
+});
+
+const bulkResponses = (errors: Array<number | [number, string]>) => ({
+  200: bulkResults('Every case was changed'),
+  207: bulkResults('Some cases were not changed; see `results[].status`'),
+  ...authedErrors(...errors),
+});
+
+export const bulkCasesSchema = {
+  tags: SPEC,
+  summary: 'Change many test cases',
+  description:
+    'One call for many cases. Each case goes through the same rules as its single-item route, and succeeds or fails on its own: the answer lists every case (200, or 207 when some failed). ' +
+    '`update` sets `changes` on each (`priority`, `execution_type`, `test_suite_id` to move them, and `custom_fields` by field id, name or label; null clears a value): needs `SPEC_EDIT`, and `PLAN_MANAGE` for custom fields. ' +
+    '`approve` approves each case\'s latest version (a DRAFT), `deprecate` deprecates it (APPROVED), `restore` restores it (DEPRECATED): needs `SPEC_APPROVE`.',
+  params: idParams('projectId'),
+  body: {
+    type: 'object',
+    required: ['action', 'case_ids'],
+    properties: {
+      action: oneOf(['update', 'approve', 'deprecate', 'restore']),
+      case_ids: caseIdList,
+      changes: {
+        type: 'object',
+        description: 'For `update`',
+        properties: {
+          priority: oneOf(PRIORITIES),
+          execution_type: oneOf(EXECUTION_TYPES),
+          test_suite_id: { type: 'string', description: 'Move the cases into this suite' },
+          custom_fields: { type: 'object', additionalProperties: true, description: 'Field id, name or label → value (shaped by the field type); null clears it' },
+        },
+      },
+    },
+  },
+  response: bulkResponses([
+    [400, 'Nothing to change, a case listed twice, `UNKNOWN_FIELD`, or `AMBIGUOUS_CASE_ID`'],
+    [403, 'Missing `SPEC_EDIT`, `PLAN_MANAGE` (custom fields) or `SPEC_APPROVE`'],
+    404,
+  ]),
+};
+
+export const bulkPlanCasesSchema = {
+  tags: PLANS,
+  summary: 'Add or remove many cases in a plan',
+  description:
+    'One call for many cases, each through the same rules as `POST /api/v1/plans/{planId}/cases` and `DELETE /api/v1/plans/{planId}/cases/{caseId}`; the answer lists every case (200, or 207 when some failed). ' +
+    '`add` links approved cases (one already in the plan answers 200). `remove` unlinks them; a case that has results is refused (`CASE_HAS_RESULTS`) unless `retire_if_has_results` is true, which retires it instead: its results stay in the runs that have them. Needs `PLAN_MANAGE`.',
+  params: idParams('planId'),
+  body: {
+    type: 'object',
+    required: ['action', 'case_ids'],
+    properties: {
+      action: oneOf(['add', 'remove']),
+      case_ids: caseIdList,
+      retire_if_has_results: { type: 'boolean', description: 'For `remove`: retire cases that have results instead of refusing them' },
+    },
+  },
+  response: bulkResponses([[400, 'A case listed twice, or `AMBIGUOUS_CASE_ID`'], 404, [422, '`PLAN_LOCKED`']]),
+};

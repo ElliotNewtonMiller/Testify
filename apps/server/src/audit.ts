@@ -23,3 +23,8 @@ export function requestOrigin(request: FastifyRequest): RequestOrigin {
     user_agent: typeof agent === 'string' && agent.trim() ? agent.trim().slice(0, MAX_USER_AGENT_LENGTH) : null,
   };
 }
+
+/** An audit row's actor_type: SERVICE_ACCOUNT for an API token, USER for a person. */
+export function actorType(actor: { api_token?: unknown }): 'USER' | 'SERVICE_ACCOUNT' {
+  return actor.api_token ? 'SERVICE_ACCOUNT' : 'USER';
+}

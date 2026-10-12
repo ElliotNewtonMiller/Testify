@@ -140,7 +140,7 @@ flowchart TD
 - **Import:** five parsers (TestLink XML, JUnit XML, Testify JSON, CSV, TestRail CSV), `POST /api/v1/projects/{projectId}/imports/dry-run` and `/execute` (multipart, up to 50 MB), and an import wizard with custom-field mapping and duplicate handling (RFC 03 §6).
 - **Export:** suite and case definitions, or a run's results, as JSON or CSV (`/api/v1/projects/{projectId}/exports/...`).
 - **API tokens:** `tf_ci_...`, created under `/api/v1/projects/{projectId}/api-tokens`, project-bound and capped by the issuer (RFC 04 §4.2).
-- **Reports:** a catalog of reports over REST (`/api/v1/projects/{projectId}/reports/...`), a Reports view in the web app, scheduled and manual report emails, and a read-only MCP endpoint (`POST /mcp`) for agents ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).
+- **Reports:** a catalog of reports over REST (`/api/v1/projects/{projectId}/reports/...`), a Reports view in the web app, scheduled and manual report emails, and an MCP endpoint (`POST /mcp`) for agents, read-only at first (write tools came with API roadmap step 6) ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).
 - **Not built:**
   - attachments and `IStorageProvider`, including the pre-signed upload route;
   - streaming 100 MB+ imports in bounded memory;

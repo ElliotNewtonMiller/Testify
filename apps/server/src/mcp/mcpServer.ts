@@ -1,7 +1,8 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { TestRunRepository, CustomFieldRepository, ProjectRepository, TestCaseVersionRepository, TestPlanRepository } from '@testify/db';
+import { TestRunRepository, CustomFieldRepository, ProjectRepository, TestCaseVersionRepository, TestPlanRepository, TestSuiteRepository } from '@testify/db';
 import { REPORT_CATALOG, REPORT_DEFINITIONS, renderRunSummaryMarkdown, validateReportParams, type ReportDefinition, type RunSummaryReport } from '@testify/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -10,16 +11,18 @@ import { authenticateRequest, canViewProject, type AuthenticatedUser } from '../
 import { ReportError, ReportService } from '../services/reportService.js';
 import { CaseFilterService } from '../services/caseFilterService.js';
 import { mcpSchema } from '../openapi/areas/other.js';
+import { requestOrigin } from '../audit.js';
+import { ToolError, json, type JsonSchema, type ToolDef } from './toolTypes.js';
+import { writeTools } from './writeTools.js';
 
 /** Smaller list sizes than the REST defaults, to keep agent context small. */
 const MCP_DEFAULT_LIMIT = 25;
 
 const INSTRUCTIONS = `Testify is a test case management system: projects contain test suites and test cases; a test plan selects cases to run; each test run of a plan records a result per case (PASSED, FAILED, BLOCKED, SKIPPED).
-Every tool is read-only. Typical flow: list_projects -> list_plans_and_runs -> report_run_summary (what broke in a run, compared with the previous run, with error messages and how long each failure has been failing) -> report_case_history for a specific case -> report_test_health for flaky/slow/always-failing/stale cases.
-Use search_cases / list_report_fields to find cases; most reports take the same "filter" to limit them to matching cases. report_run_summary accepts format "markdown" for a ready-to-post summary.
-Rates are fractions between 0 and 1. ${REPORT_DEFINITIONS.flaky}`;
-
-type JsonSchema = Record<string, unknown>;
+Reading: list_projects -> list_plans_and_runs -> report_run_summary (what broke in a run, compared with the previous run, with error messages and how long each failure has been failing) -> report_case_history for a specific case -> report_test_health for flaky/slow/always-failing/stale cases.
+Use search_cases / list_report_fields to find cases, and list_suites for the suite tree; most reports take the same "filter" to limit them to matching cases. report_run_summary accepts format "markdown" for a ready-to-post summary.
+Rates are fractions between 0 and 1. ${REPORT_DEFINITIONS.flaky}
+Changing (the tools with readOnlyHint false, offered when the caller may use them): create_suite, create_case, update_case, update_cases, create_run, record_results, update_plan_cases. They act as the caller, with the caller's permissions, and every change is audit-logged as made through MCP. Cases you create start as DRAFT, and editing an approved case's summary, preconditions or steps makes a new DRAFT version: a person reviews and approves them in Testify, so tell the user what you created or changed (readable ids). There are no tools to approve, deprecate or delete. Prefer update_cases and update_plan_cases over one call per case.`;
 
 /** The catalog's param schema as plain JSON Schema (nullable -> type: [t, "null"]). */
 function toJsonSchema(report: ReportDefinition): JsonSchema {
@@ -37,22 +40,15 @@ function toJsonSchema(report: ReportDefinition): JsonSchema {
   return { type: 'object', properties, required: ['project_id', ...report.params.required], additionalProperties: false };
 }
 
-interface ToolDef {
-  name: string;
-  description: string;
-  inputSchema: JsonSchema;
-  run: (args: Record<string, any>, user: AuthenticatedUser) => Promise<string>;
-}
-
-class ToolError extends Error {}
-
 /**
  * MCP endpoint (Streamable HTTP, stateless, JSON responses) at POST /mcp.
  *
  * Authenticates exactly like the REST API (login JWT or tf_ci_ machine token), and every
  * tool checks SPEC_VIEW for the project it's asked about -- a token only ever sees its own
  * project. Report tools are generated from @testify/core's REPORT_CATALOG and call the same
- * ReportService as the REST routes, so agents get exactly the numbers people see.
+ * ReportService as the REST routes, so agents get exactly the numbers people see. The write
+ * tools (writeTools.ts) call the REST routes as the caller; an API token is offered only the
+ * ones its capabilities allow.
  *
  * Connect from Claude Code:
  *   claude mcp add --transport http testify http://localhost:3001/mcp --header "Authorization: Bearer tf_ci_..."
@@ -65,6 +61,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
   const runRepo = new TestRunRepository(db);
   const versionRepo = new TestCaseVersionRepository(db);
   const customFieldRepo = new CustomFieldRepository(db);
+  const suiteRepo = new TestSuiteRepository(db);
 
   const canView = (user: AuthenticatedUser, projectId: string) => canViewProject(user, projectId, db);
 
@@ -77,8 +74,6 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
     if (!(await canView(user, projectId))) throw new ToolError(`You don't have SPEC_VIEW on project '${projectId}'.`);
     return projectId;
   }
-
-  const json = (value: unknown) => JSON.stringify(value);
 
   const baseTools: ToolDef[] = [
     {
@@ -121,6 +116,28 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
           });
         }
         return json({ plans: out });
+      },
+    },
+    {
+      name: 'list_suites',
+      description: "A project's test suites (folders of cases): id, name, full path (e.g. \"Payments / Checkout\"), parent and how many cases each holds directly.",
+      inputSchema: { type: 'object', properties: { project_id: { type: 'string' } }, required: ['project_id'], additionalProperties: false },
+      run: async (args, user) => {
+        const projectId = await requireProject(user, args.project_id);
+        const suites = await suiteRepo.findByProject(projectId);
+        const byId = new Map(suites.map((s) => [s.id, s]));
+        const pathOf = (s: (typeof suites)[number]): string => {
+          const names: string[] = [];
+          for (let cur: (typeof suites)[number] | undefined = s; cur; cur = cur.parent_suite_id ? byId.get(cur.parent_suite_id) : undefined) names.unshift(cur.name);
+          return names.join(' / ');
+        };
+        const counts = await db.selectFrom('test_cases').select(['test_suite_id', db.fn.countAll<number>().as('n')]).where('project_id', '=', projectId).groupBy('test_suite_id').execute();
+        const countBy = new Map(counts.map((c) => [c.test_suite_id, Number(c.n)]));
+        return json({
+          suites: suites
+            .map((s) => ({ id: s.id, name: s.name, path: pathOf(s), parent_suite_id: s.parent_suite_id, case_count: countBy.get(s.id) ?? 0 }))
+            .sort((a, b) => a.path.localeCompare(b.path)),
+        });
       },
     },
     {
@@ -224,22 +241,65 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
     },
   }));
 
-  const tools = [...baseTools, ...reportTools];
+  const tools = [
+    ...baseTools,
+    ...reportTools,
+    ...writeTools({ db, requireProject, findCase: (projectId, ref) => reports.findCase(projectId, ref) }),
+  ];
   const toolByName = new Map(tools.map((t) => [t.name, t]));
 
-  function buildServer(user: AuthenticatedUser): Server {
+  /** An API token sees only the write tools its capabilities allow (a user's permissions differ per project, so they see all). */
+  const offered = (user: AuthenticatedUser, tool: ToolDef) =>
+    !tool.write || !user.api_token || tool.write.permissions.every((k) => user.permissions.includes(k) || user.permissions.includes('SYSTEM_ADMIN'));
+
+  /** One Security Audit Log row per write tool call, so what agents did is easy to find. */
+  async function auditWrite(request: FastifyRequest, user: AuthenticatedUser, tool: ToolDef, args: Record<string, any>, outcome: { ok: boolean; error?: string }) {
+    const project = typeof args.project_id === 'string' && (await projectRepo.findById(args.project_id)) ? args.project_id : null;
+    await db
+      .insertInto('audit_logs')
+      .values({
+        id: uuidv4(),
+        actor_id: user.id,
+        actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
+        action: 'MCP_WRITE',
+        resource_type: 'mcp_tool',
+        resource_id: tool.name,
+        project_id: project,
+        diff: JSON.stringify({ tool: tool.name, ok: outcome.ok, ...(outcome.error ? { error: outcome.error.slice(0, 500) } : {}) }),
+        ...requestOrigin(request),
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+  }
+
+  function buildServer(user: AuthenticatedUser, request: FastifyRequest): Server {
     const server = new Server({ name: 'testify', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema as any, annotations: { readOnlyHint: true } })),
+      tools: tools
+        .filter((t) => offered(user, t))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema as any,
+          annotations: t.write
+            ? { readOnlyHint: false, destructiveHint: Boolean(t.write.destructive), idempotentHint: Boolean(t.write.idempotent), openWorldHint: false }
+            : { readOnlyHint: true },
+        })),
     }));
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const tool = toolByName.get(req.params.name);
-      if (!tool) return { isError: true, content: [{ type: 'text', text: `Unknown tool '${req.params.name}'` }] };
+      if (!tool || !offered(user, tool)) {
+        const why = tool ? ` (this API token lacks ${tool.write!.permissions.join(', ')})` : '';
+        return { isError: true, content: [{ type: 'text', text: `Unknown tool '${req.params.name}'${why}` }] };
+      }
+      const args = (req.params.arguments ?? {}) as Record<string, any>;
       try {
-        const text = await tool.run((req.params.arguments ?? {}) as Record<string, any>, user);
+        const text = await tool.run(args, user, request);
+        if (tool.write) await auditWrite(request, user, tool, args, { ok: true });
         return { content: [{ type: 'text', text }] };
       } catch (err) {
         if (err instanceof ToolError || err instanceof ReportError) {
+          if (tool.write) await auditWrite(request, user, tool, args, { ok: false, error: err.message });
           return { isError: true, content: [{ type: 'text', text: err.message }] };
         }
         throw err;
@@ -253,7 +313,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
     if (!user) return; // 401 already sent
 
     // Stateless: a fresh server + transport per request, bound to this caller.
-    const server = buildServer(user);
+    const server = buildServer(user, request);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on('close', () => {

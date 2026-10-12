@@ -2216,3 +2216,71 @@ Verified live on a production build:
 - Ran a Jenkins-style loop over two Surefire-style files into one new run, with `close_run` on the last: stored verdicts, durations and CI links, and the run closed.
 - `/docs/json` shows `application/xml` bodies.
 - The guide's four YAML/Groovy examples parse, and their shell passes `bash -n`.
+
+## Added: bulk changes and MCP write tools (API roadmap steps 9 and 6) (2026-10-12)
+
+Scripts had to loop to change many cases, and agents could only read. Done together, since what agents are typically asked to do ("deprecate these 30 cases", "add everything for checkout to the plan") is a bulk change.
+
+**Decided with Elliot:**
+- Steps 9 and 6 are done together.
+- Agents get: create suites and cases, edit cases (one or many), create runs, record results, add and remove plan cases. They get no tools to approve, deprecate, restore or delete.
+- Cases an agent creates always start as DRAFT, even with `SPEC_AUTO_APPROVE`, for a person to approve.
+
+**Bulk changes (step 9):**
+- **`POST /api/v1/projects/{projectId}/cases/bulk`**, with up to 500 `case_ids` (readable ids work):
+  - `update`: `changes` sets `priority`, `execution_type`, `test_suite_id` (moves them) and `custom_fields` (by id, name or label; null clears). Needs `SPEC_EDIT`, and `PLAN_MANAGE` for custom fields, as in the single routes.
+  - `approve`, `deprecate`, `restore`: act on each case's latest version. Needs `SPEC_APPROVE`.
+- **`POST /api/v1/plans/{planId}/cases/bulk`**: `add` or `remove`. A case with results is refused (`CASE_HAS_RESULTS`) unless `retire_if_has_results` is true. Needs `PLAN_MANAGE`.
+- **How it works:** each case goes through its single-item route in-process (`innerRequest` in the new `apps/server/src/internalRequests.ts`), as the caller. Rules, errors and audit rows are therefore exactly the single routes'. The answer is 200 or 207, with `bulk_results`: a summary, and per case its `status`, `code` and `detail`.
+  - **Refused up front:** a repeated case, nothing to change, an unknown custom field (`400 UNKNOWN_FIELD`), a missing permission (403), a locked plan.
+  - **Other projects:** a case from another project is "not found" here.
+  - **No all-or-nothing mode:** each case is its own change, as one at a time.
+  - **Rate limits:** in-process requests carry a per-process secret header, so they aren't counted again against a token's rate limit.
+
+**MCP write tools (step 6), `apps/server/src/mcp/writeTools.ts`:**
+- **The tools:**
+  - `create_suite`, `create_case` (always DRAFT).
+  - `update_case`: unversioned fields at once; summary, preconditions and steps on the DRAFT, where an approved case first gets a new DRAFT version and a deprecated one is refused; custom fields.
+  - `update_cases`, via the bulk route.
+  - `create_run`, `record_results` (via the CI batch, up to 500).
+  - `update_plan_cases`, via the bulk plan route.
+  - Also a read tool, `list_suites` (the tree with paths and case counts).
+- **They act as the caller:** each one calls the REST routes with the caller's credential. An API token is offered only the tools its capabilities allow. Tools carry `readOnlyHint: false`, and `destructiveHint` for `update_plan_cases`. Ids from another project are refused.
+- **Audit:**
+  - Changes keep their usual audit rows, with "(via Testify MCP)" added to the User-Agent.
+  - Every write-tool call (success or error) writes an `MCP_WRITE` row, which is in the Admin Panel's Security Audit Log.
+- **The server's instructions to agents** describe the write tools and the DRAFT rule, and ask the agent to tell the user what it created.
+
+**Fixed along the way:** audit rows for spec edits (`CASE_CREATED`, `CASE_UPDATED`, versions, moves...), plan membership (`PLAN_CASE_ADDED`/`REMOVED`/`RETIRED`/cascades) and single results (`RESULT_RECORDED`) said `actor_type: USER` even when an API token made the change. They now use `actorType()` (new, `audit.ts`), like projects, exports and imports already did. Found by the live check below.
+
+**Docs:**
+- `reports_api_and_mcp.md`: the write tools, what keeps them safe, example asks.
+- RFC 03: bulk-change convention, route map, `UNKNOWN_FIELD`.
+- RFC 04: threat vector 7 (MCP writes, prompt injection limits, traceability).
+- The getting-started guide: bulk examples and agent tokens.
+- Blueprint, slices roadmap, README.
+- Roadmap: steps 6 and 9 Done, five decisions, open questions answered.
+- CLAUDE.md/AGENTS.md: layout, conventions, the agent decision.
+
+Tests:
+- `apps/server/tests/bulk_changes.test.ts` (4):
+  - update with priority, suite and custom fields, including an unknown case, one audit row per change, and refusals;
+  - deprecate, restore and approve, with wrong states failing per case;
+  - permissions per action, and another project's case;
+  - plan add and remove, including DRAFTs, re-adding, a case with results refused then retired, and a locked plan.
+- `apps/server/tests/mcp_write.test.ts` (3):
+  - DRAFTs despite `SPEC_AUTO_APPROVE`, editing a DRAFT in place versus a new DRAFT for an approved case, tool errors, User-Agent and `SERVICE_ACCOUNT` attribution, and `MCP_WRITE` rows for successes and failures;
+  - runs, results, `update_cases` and plan changes with retiring;
+  - which tools a read-only, an editor and a signed-in user are offered.
+- `mcp.test.ts`: the tool list check now expects the write tools to say `readOnlyHint: false`.
+- `openapi.test.ts` now expects 101 routes.
+
+Verified live on a production build, with the MCP SDK's HTTP client (as Claude Code connects):
+- The bulk routes over HTTP: add to a plan, and a priority change including an unknown case.
+- A token with write capabilities: the instructions, the 7 write tools listed, `list_suites`.
+- `create_case`: DRAFT despite `SPEC_AUTO_APPROVE`.
+- `update_case` on an approved case: a new DRAFT version 2.
+- `create_run`, then `record_results`: a DRAFT case was correctly refused.
+- `update_plan_cases`: a DRAFT can't join a plan.
+- A duplicate run name came back as a tool error.
+- The `MCP_WRITE` rows and the marked `CASE_CREATED` row were checked; this is where the `actor_type` bug showed.

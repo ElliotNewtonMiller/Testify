@@ -7,7 +7,7 @@ import { validateManualResult } from '../services/resultValidation.js';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
 import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { autoCloseRunIfComplete } from '../runAutoClose.js';
-import { requestOrigin } from '../audit.js';
+import { actorType, requestOrigin } from '../audit.js';
 import { recordResultSchema, listRunResultsSchema, getResultSchema, RESULT_PAGE } from '../openapi/areas/projects.js';
 import { actorNames } from '../services/actorNames.js';
 import { commaList, readPage } from '../paging.js';
@@ -166,7 +166,7 @@ export async function registerResultRoutes(app: FastifyInstance, db: Kysely<Data
         .values({
           id: uuidv4(),
           actor_id: actorId,
-          actor_type: 'USER',
+          actor_type: actorType(request.user!),
           action: 'RESULT_RECORDED',
           resource_type: 'result',
           resource_id: execId,

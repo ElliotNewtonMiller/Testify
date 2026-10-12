@@ -345,4 +345,19 @@ The full list is in [RFC 03 §4.2](rfc_03_api_and_xml_contracts.md). An unexpect
 
 - **Everything else** (suites, cases, versions, plans, custom fields, imports, reports, report emails): see `/docs`.
 - **Generated client libraries:** tools that read OpenAPI 3.1 (for example OpenAPI Generator) can build a typed client for Python, TypeScript and other languages from `/docs/json`.
-- **AI agents:** connect them to the MCP endpoint at `/mcp` with a `SPEC_VIEW` token; see [reports_api_and_mcp.md](reports_api_and_mcp.md).
+- **Changing many cases at once:** one call instead of a loop, up to 500 cases (readable ids work), each reported on its own (200, or 207 when some failed):
+
+  ```bash
+  # Deprecate three cases (needs SPEC_APPROVE); also: approve, restore, and update with "changes"
+  curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT_ID/cases/bulk" -H "Authorization: Bearer $TESTIFY_TOKEN" \
+    -H 'content-type: application/json' -d '{"action": "deprecate", "case_ids": ["SHOP-12", "SHOP-14", "SHOP-15"]}' | jq -c '.summary'
+
+  # Raise priority and set a custom field (by name or label) on many cases
+  curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT_ID/cases/bulk" -H "Authorization: Bearer $TESTIFY_TOKEN" \
+    -H 'content-type: application/json' -d '{"action": "update", "case_ids": ["SHOP-12", "SHOP-14"], "changes": {"priority": "HIGH", "custom_fields": {"Component": "checkout"}}}'
+
+  # Add many cases to a plan (or "remove"; add "retire_if_has_results": true to retire cases that have results)
+  curl -s -X POST "$TESTIFY/api/v1/plans/$PLAN_ID/cases/bulk" -H "Authorization: Bearer $TESTIFY_TOKEN" \
+    -H 'content-type: application/json' -d '{"action": "add", "case_ids": ["SHOP-12", "SHOP-14"]}'
+  ```
+- **AI agents:** connect them to the MCP endpoint at `/mcp` with a token made for the agent. With `SPEC_VIEW` alone it can read and run reports; add `SPEC_CREATE`, `SPEC_EDIT`, `PLAN_MANAGE`, `RUN_MANAGE` or `EXECUTE_RUN` to let it write cases (always as DRAFTs for you to approve), manage plans, start runs and record results. See [reports_api_and_mcp.md](reports_api_and_mcp.md).

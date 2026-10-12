@@ -13,8 +13,9 @@ import { sendCaseVersionLockedError,
   isPublicError, sendError } from '../errors.js';
 import { validateStepsInput } from '../services/stepValidation.js';
 import type { InvalidParam } from '../services/resultValidation.js';
-import { requestOrigin, type RequestOrigin } from '../audit.js';
+import { actorType, requestOrigin, type RequestOrigin } from '../audit.js';
 import * as S from '../openapi/areas/spec.js';
+import { internalVia } from '../internalRequests.js';
 import { PRIORITIES, VERSION_STATUSES } from '../openapi/schemas.js';
 import { commaList, readPage } from '../paging.js';
 
@@ -40,6 +41,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
 
   async function insertAuditLog(params: {
     actorId: string;
+    actorType: 'USER' | 'SERVICE_ACCOUNT';
     action: string;
     resourceType: string;
     resourceId: string;
@@ -52,7 +54,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       .values({
         id: uuidv4(),
         actor_id: params.actorId,
-        actor_type: 'USER',
+        actor_type: params.actorType,
         action: params.action,
         resource_type: params.resourceType,
         resource_id: params.resourceId,
@@ -95,6 +97,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'SUITE_CREATED',
         resourceType: 'test_suite',
         resourceId: suite.id,
@@ -148,6 +151,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'SUITE_UPDATED',
         resourceType: 'test_suite',
         resourceId: suiteId,
@@ -192,6 +196,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'SUITE_DELETED',
         resourceType: 'test_suite',
         resourceId: suiteId,
@@ -302,7 +307,8 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       // SYSTEM_ADMIN isn't checked explicitly here -- evaluatePermissions already expands it
       // to the full registry (see CLAUDE.md's "machine API tokens" entry), so any SYSTEM_ADMIN
       // holder's permissions array already contains this key.
-      let autoApprove = actor.permissions.includes('SPEC_AUTO_APPROVE');
+      // Cases an AI agent creates through MCP always start as DRAFT, for a person to approve.
+      let autoApprove = actor.permissions.includes('SPEC_AUTO_APPROVE') && internalVia(request) !== 'mcp';
       if (autoApprove) {
         // A brand-new case has no custom field values yet, so any required TestCase field
         // with no default_value is unconditionally unsatisfied -- don't auto-approve past a
@@ -347,6 +353,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'CASE_CREATED',
         resourceType: 'test_case',
         resourceId: testCase.id,
@@ -395,6 +402,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'CASE_UPDATED',
         resourceType: 'test_case',
         resourceId: caseId,
@@ -433,6 +441,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'CASE_DELETED',
         resourceType: 'test_case',
         resourceId: caseId,
@@ -541,6 +550,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'SPEC_ITEMS_MOVED',
         resourceType: 'test_suite',
         resourceId: targetSuiteId ?? 'TOP_LEVEL',
@@ -586,6 +596,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         await insertAuditLog({
         origin: requestOrigin(request),
           actorId: actor.id,
+        actorType: actorType(actor),
           action: 'CASE_DRAFT_CREATED',
           resourceType: 'test_case_version',
           resourceId: version.id,
@@ -638,6 +649,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'CASE_VERSION_UPDATED',
         resourceType: 'test_case_version',
         resourceId: versionId,
@@ -703,6 +715,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
       await insertAuditLog({
         origin: requestOrigin(request),
         actorId: actor.id,
+        actorType: actorType(actor),
         action: 'CASE_VERSION_APPROVED',
         resourceType: 'test_case_version',
         resourceId: versionId,
@@ -770,6 +783,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         await insertAuditLog({
         origin: requestOrigin(request),
           actorId: actor.id,
+        actorType: actorType(actor),
           action: transition.action,
           resourceType: 'test_case_version',
           resourceId: versionId,

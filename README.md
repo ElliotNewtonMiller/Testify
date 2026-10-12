@@ -5,6 +5,7 @@ Testify is an open-source, self-hosted test case management app: a faster, more 
 - **Specification**: projects, nested test suites and versioned test cases with steps. Each case goes through draft, approved and deprecated, and you can add custom fields of six types.
 - **Execution**: test plans and test runs, with a keyboard-driven queue (`j`/`k` to move, `p`/`f`/`b`/`s` to record a verdict). CI systems send their JUnit XML reports, or results as JSON, through the API.
 - **Reports**: run summaries compared with the previous run, plan trends, flaky and slow tests, case history and breakdowns. They're available in the app, over the REST API, by email and over MCP for AI agents.
+- **AI agents**: over MCP, an agent can also write test cases (as drafts for a person to approve), change many cases at once, manage plans and record results, with only the permissions its token has.
 - **Import and export**: TestLink XML, JUnit XML, TestRail CSV, CSV and JSON.
 - **Access control**: roles you can edit, per-project roles and overrides, and project-scoped API tokens for CI.
 
@@ -76,7 +77,7 @@ Schema changes always go in a new migration in `packages/db/src/migrations/`; ne
 - **API docs page**: open `/docs` on your server (e.g. `http://localhost:3001/docs`) to browse the routes and try them; the OpenAPI spec is at `/docs/json`. Every route is on it.
 - **Results from CI**: upload the JUnit XML report your tests already write (`POST /api/v1/plans/:planId/results/junit?run_name=...`), or send JSON (`POST /api/v1/runs/:runId/results/batch`).
 - **API reference**: [docs/rfc_03_api_and_xml_contracts.md](docs/rfc_03_api_and_xml_contracts.md) §1-4 has the conventions, every route and the error codes.
-- **Reports and MCP**: [docs/reports_api_and_mcp.md](docs/reports_api_and_mcp.md) describes every report, how to send results that make good reports, and how to connect an AI agent to `/mcp`.
+- **Reports and MCP**: [docs/reports_api_and_mcp.md](docs/reports_api_and_mcp.md) describes every report, how to send results that make good reports, and how to connect an AI agent to `/mcp`, and what agents may change.
 - **Health check**: `GET /api/v1/health`.
 
 ## License

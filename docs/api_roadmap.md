@@ -12,18 +12,18 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 ## Where the API stands (2026-10-12)
 
 **Good:**
-- **Coverage:** 99 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
+- **Coverage:** 101 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
 - **Security:** project-bound API tokens (`tf_ci_...`), permissions checked per project, rate limits and an audit log (RFC 04).
 - **CI:** a build uploads its JUnit XML report as it is (up to 20,000 tests), or sends JSON batches of up to 5,000 results, into a run named after the build (step 5).
 - **Consistent** (step 1, 2026-10-12): one address style, verbs and status codes, one error format, one name per id, "runs" and "results" throughout.
-- **Agents:** `POST /mcp` lets them list projects, search and read cases, and run every report.
+- **Agents:** `POST /mcp` lets them list projects, search and read cases, run every report, and (with the right token) write cases as DRAFTs, manage plans and record results.
 
 **Weak:**
 1. ~~**Mostly undocumented.**~~ Every route is on `/docs` with its fields, allowed values and errors (step 3), with a getting-started guide ([api_getting_started.md](api_getting_started.md)), the conventions in RFC 03 §1-4 and the reports in [reports_api_and_mcp.md](reports_api_and_mcp.md).
 2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
 3. ~~**No paging.**~~ The lists that grow (a project's cases, a run's results, the audit log, case history) are paged with `limit`/`cursor` (step 4, 2026-10-12). Short lists stay whole.
 4. ~~**No machine-readable description.**~~ The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover every route (step 3). Report outputs are described only at the top level so far.
-5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
+5. ~~**Agents can only read.**~~ MCP write tools create and edit cases (as DRAFTs), manage plans, start runs and record results, as the caller (step 6, 2026-10-12).
 6. ~~**Reads are coarse.**~~ Single items by id, a run's results, a project's cases, version history, and readable ids (SHOP-12) wherever a case id is taken (step 8, 2026-10-12).
 7. ~~**API tokens reach global admin routes.**~~ Fixed 2026-10-12 (see below).
 
@@ -168,7 +168,11 @@ Many tools read that format, so the one file gives:
 
 ### 6. Write tools for MCP agents
 
-**Status:** Not started
+**Status:** Done (2026-10-12, with step 9).
+- **Tools:** `create_suite`, `create_case`, `update_case`, `update_cases`, `create_run`, `record_results`, `update_plan_cases`, plus `list_suites` for reading.
+- **As the caller:** each calls the REST routes with the caller's credential, so the token's capabilities decide, and a token is offered only the tools it may use.
+- **People approve:** agent-made cases are always DRAFT, and editing an approved case makes a new DRAFT. There are no approve, deprecate or delete tools.
+- **Audit:** changes are marked "via Testify MCP" in their audit rows, and every call writes an `MCP_WRITE` row to the Security Audit Log.
 
 **What:** MCP tools that change things, such as creating and editing test cases, recording results, creating plans and runs, and adding cases to plans.
 
@@ -177,9 +181,9 @@ Many tools read that format, so the one file gives:
 - Use a safe default: agents create drafts, and a person approves them. That fits the existing DRAFT → APPROVED lifecycle.
 - Mark write tools clearly, and audit-log every agent change. RFC 04 threat vector 7 covers prompt injection risks.
 
-**Open questions:**
-- Which actions should agents be allowed first?
-- Should agent-created cases always need human approval?
+**Open questions** (answered 2026-10-12, see Decisions):
+- Which actions should agents be allowed first? Creating suites and cases, editing cases, creating runs, recording results, and adding and removing plan cases; not approving, deprecating or deleting.
+- Should agent-created cases always need human approval? Yes: they always start as DRAFT.
 
 ### 7. Webhooks
 
@@ -206,7 +210,7 @@ Many tools read that format, so the one file gives:
 
 ### 9. Bulk changes
 
-**Status:** Not started
+**Status:** Done (2026-10-12, with step 6). `POST /projects/{id}/cases/bulk` (update priority, execution type, suite or custom fields; approve, deprecate, restore) and `POST /plans/{id}/cases/bulk` (add, remove, with optional retiring), up to 500 cases. Each case goes through its single-item route and is reported on its own (200/207). There is no all-or-nothing mode: each item is its own transaction, as in the single routes.
 
 **What:** changing many things in one call, where a script would otherwise loop: deprecating, approving or restoring many cases; changing priority or a custom field on many cases; adding or removing many cases from a plan (partly exists: a whole suite, or `case_ids` for moves).
 
@@ -230,8 +234,8 @@ Many tools read that format, so the one file gives:
 3. **Step 3:** finish the spec and docs page (stages 2-4). Done.
 4. **Steps 8 and 4:** the missing reads and paging, together. Done.
 5. **Step 5:** CI integration, built on the published spec. Done.
-6. **Step 9:** bulk changes.
-7. **Steps 6 and 7:** agent writes and webhooks.
+6. **Steps 9 and 6:** bulk changes and agent writes, together. Done.
+7. **Step 7:** webhooks.
 
 ---
 
@@ -261,3 +265,8 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | One call creates or reuses a build's run by name (`run_name` on `POST /plans/{id}/results/junit` and `/results/batch`). | Creating needs `RUN_MANAGE`; reusing only `EXECUTE_RUN`. Concurrent jobs end up in one run. |
 | 2026-10-12 | Guide examples for GitHub Actions, GitLab CI, Jenkins and Azure DevOps. | |
 | 2026-10-12 | CI results (JSON batches and JUnit uploads) never auto-close a run; `close_run=true` closes it on purpose. | Found while checking the guide live: with auto-linking, the first file of a build filled the plan and closed the run, refusing the build's other files and any re-run. Manual results still auto-close, once. |
+| 2026-10-12 | Steps 9 and 6 together; MCP write tools are thin wrappers over the REST routes (including the new bulk ones). | Agents' typical asks ("deprecate these 30", "add everything tagged checkout to the plan") are bulk changes. |
+| 2026-10-12 | Bulk changes run each item through its single-item route in-process (`app.inject`), with per-item outcomes (200/207) and no all-or-nothing mode. | Same rules, errors and audit rows as one-at-a-time, with no second copy of the logic. |
+| 2026-10-12 | Agents get: create suites and cases, edit cases (one or many), create runs, record results, add and remove plan cases. Not: approve, deprecate, restore, delete. | Decided with Elliot. |
+| 2026-10-12 | Cases an agent creates always start as DRAFT, even with `SPEC_AUTO_APPROVE`; editing an approved case's content makes a new DRAFT. | Decided with Elliot: a person approves agents' work, which also limits what prompt injection could do. |
+| 2026-10-12 | Every MCP write-tool call writes an `MCP_WRITE` row to the Security Audit Log, and its changes say "(via Testify MCP)" in their User-Agent. | The changes keep their usual audit rows too. |
