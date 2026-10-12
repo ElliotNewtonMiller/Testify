@@ -12,9 +12,9 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 ## Where the API stands (2026-10-12)
 
 **Good:**
-- **Coverage:** 96 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
+- **Coverage:** 99 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
 - **Security:** project-bound API tokens (`tf_ci_...`), permissions checked per project, rate limits and an audit log (RFC 04).
-- **CI:** results arrive in batches of up to 5,000 per request (`POST /api/v1/runs/{runId}/results/batch`).
+- **CI:** a build uploads its JUnit XML report as it is (up to 20,000 tests), or sends JSON batches of up to 5,000 results, into a run named after the build (step 5).
 - **Consistent** (step 1, 2026-10-12): one address style, verbs and status codes, one error format, one name per id, "runs" and "results" throughout.
 - **Agents:** `POST /mcp` lets them list projects, search and read cases, and run every report.
 
@@ -153,9 +153,13 @@ Many tools read that format, so the one file gives:
 
 ### 5. Make CI integration easy
 
-**Status:** Not started
+**Status:** Done (2026-10-12).
+- **JUnit XML upload:** `POST /runs/{id}/results/junit` takes the report test runners already write, matching each test to a case by readable id (a `testify_id` property or an id in the name), otherwise by suite and title, as a JUnit import names cases.
+- **Runs by name:** `POST /plans/{id}/results/junit|batch?run_name=` creates the build's run on first use and reuses it after.
+- **Guide:** [api_getting_started.md](api_getting_started.md) §5 has examples for GitHub Actions, GitLab CI, Jenkins and Azure DevOps.
+- **Not built** (decided with Elliot): a command-line uploader (curl is enough) and generated client libraries (`/docs/json` works with OpenAPI generators).
 
-**What:**
+**What** (as planned):
 - A guide and ready-made examples for common setups: GitHub Actions, GitLab CI, JUnit result files.
 - Possibly a small command-line uploader.
 - Possibly a client library generated from the spec (step 3).
@@ -225,7 +229,7 @@ Many tools read that format, so the one file gives:
 2. **Fix first:** API tokens on global admin routes. Done.
 3. **Step 3:** finish the spec and docs page (stages 2-4). Done.
 4. **Steps 8 and 4:** the missing reads and paging, together. Done.
-5. **Step 5:** CI integration, built on the published spec.
+5. **Step 5:** CI integration, built on the published spec. Done.
 6. **Step 9:** bulk changes.
 7. **Steps 6 and 7:** agent writes and webhooks.
 
@@ -252,3 +256,8 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | Paging only for lists that grow (cases, a run's results, the audit log, case history); short lists stay whole. | The web app is unchanged. |
 | 2026-10-12 | Bulk changes (e.g. deprecating many cases) become their own roadmap step. | Keeps this pass to reads and paging. |
 | 2026-10-12 | One recipient at a time: `POST /report-schedules/{id}/recipients` and `DELETE /report-schedules/{id}/recipients/{email}`, rather than a partial `PATCH`. | `PUT` stays for replacing a whole schedule. A schedule keeps at least one recipient (`409 LAST_RECIPIENT`); adding one already there changes nothing. |
+| 2026-10-12 | CI uploads JUnit XML to the server as it is (`/results/junit`); no command-line uploader. | Nothing to install in CI; one `curl`. The same file format a JUnit import reads. |
+| 2026-10-12 | A JUnit test matches a case by readable id first (a `testify_id` property, or an id in the test name), otherwise by suite and title as a JUnit import names cases. Unmatched tests are reported (207), never created. | "Import the JUnit file once, then upload each build's file" needs no changes to the tests. |
+| 2026-10-12 | One call creates or reuses a build's run by name (`run_name` on `POST /plans/{id}/results/junit` and `/results/batch`). | Creating needs `RUN_MANAGE`; reusing only `EXECUTE_RUN`. Concurrent jobs end up in one run. |
+| 2026-10-12 | Guide examples for GitHub Actions, GitLab CI, Jenkins and Azure DevOps. | |
+| 2026-10-12 | CI results (JSON batches and JUnit uploads) never auto-close a run; `close_run=true` closes it on purpose. | Found while checking the guide live: with auto-linking, the first file of a build filled the plan and closed the run, refusing the build's other files and any re-run. Manual results still auto-close, once. |

@@ -2153,3 +2153,66 @@ Changing who gets a scheduled report meant resending the whole schedule with `PU
 Tests: `report_email.test.ts` +1, covering adding (letter case, spaces, adding twice), a bad address, removing, removing an unknown address, the last recipient, an unknown schedule, and that the rest of the schedule is untouched. `openapi.test.ts` now expects 96 routes.
 
 631 tests pass and typecheck is clean. Checked live on a production build: case-list paging and a bad cursor, the paged audit log, a run's results (filters, latest_only, one result, three results from one batch paged in order), and adding and removing recipients down to the last; `/docs/json` lists 96 operations.
+
+## Added: CI integration: JUnit XML uploads, runs by name, CI examples (API roadmap step 5) (2026-10-12)
+
+Sending results from CI meant converting the test runner's output to Testify's JSON, and looking up or creating the run with a jq script first. Now a build uploads the JUnit XML report its tests already write, in one `curl`.
+
+**Decided with Elliot:**
+- The server takes the JUnit file itself. There's no command-line uploader to install.
+- A test matches a case by readable id first, otherwise by suite and title. Unmatched tests are reported, not created.
+- One call creates or reuses the build's run by name.
+- The guide has examples for GitHub Actions, GitLab CI, Jenkins and Azure DevOps.
+- **CI results never auto-close a run** (asked after the live check below). `close_run=true` closes it on purpose. Manual results still auto-close, once.
+
+**What changed:**
+- **`POST /api/v1/runs/{runId}/results/junit`** (`EXECUTE_RUN`):
+  - The body is the JUnit file, any content type, up to 20,000 tests and 50 MB. It's parsed by `parseJUnitResults` (new, `packages/core/src/ingestion/junitResults.ts`).
+  - Verdicts: failure and error are FAILED (an error gets a note), skipped is SKIPPED (its message as the note), everything else PASSED. Surefire's `flakyFailure`/`rerunFailure` are ignored.
+  - `time` becomes the duration; the failure message and text become `failure_message` and `stack_trace`.
+  - Matching: a `testify_id` property, or a readable id in the test's name (`SHOP-101 …`, `[SHOP-101] …`), else the suite a JUnit import would have created (the last part of `classname`) plus the title.
+  - Query: `environment`, `ci_name`, `ci_run_id`, `ci_job_name`, `ci_url`, `commit_sha`, `all_or_nothing`, `close_run`.
+  - The response is the batch response, with each item's `test_name`. `400 INVALID_JUNIT` for anything unusable.
+- **Runs by name:** `POST /api/v1/plans/{planId}/results/junit?run_name=` and `POST /api/v1/plans/{planId}/results/batch?run_name=` record into the plan's run with that name (`services/runByName.ts`).
+  - Creating the run needs `RUN_MANAGE`; reusing it needs only `EXECUTE_RUN`.
+  - Concurrent requests end up with one run (`ON CONFLICT DO NOTHING`).
+  - The response adds `run: { id, name, created }`.
+  - Nothing is created for a locked plan or an unusable request.
+- **CI results don't auto-close runs:**
+  - **Found live:** with an empty plan, the first upload linked its cases, filled the plan and closed the run. A re-run of the job, or the build's next file (Surefire writes one per class), then got `422 RUN_CLOSED`. The JSON batch already behaved this way.
+  - **Now:** batches and JUnit uploads leave the run open. `close_run=true` (needs `RUN_MANAGE`) closes it after recording, and `run_status` says which.
+  - **Unchanged:** results recorded one at a time (the web app) still auto-close the run the first time every case has a result.
+- **Shared batch core:** the JSON batch's logic moved from `routes/batchExecution.ts` into `services/batchResults.ts` (`recordResultsBatch`), which all four routes use.
+  - Cases of the project that aren't in the plan yet are now looked up in a few queries for the whole batch, not one query per item (a JUnit file can name thousands of untracked tests).
+  - When several match by title, the one in the named suite is preferred.
+  - The batch route now checks `EXECUTE_RUN` with `requirePermission`, like other routes.
+- **Docs:**
+  - `api_getting_started.md` §5 is rewritten around the JUnit upload: matching, "import the JUnit file once", reading the response, examples for the four CI systems, and JSON as the alternative.
+  - RFC 03: route map, §3 intro, new §3.3 (JUnit) and §3.4 (runs by name, no auto-close for CI), `INVALID_JUNIT`, limits.
+  - RFC 01's auto-close rule and RFC 04's `RUN_MANAGE` row.
+  - Blueprint, README, reports_api_and_mcp.md.
+  - Roadmap: step 5 Done, five decisions, the endpoint count.
+  - CLAUDE.md/AGENTS.md: results, layout, decisions.
+
+Tests:
+- `packages/core/tests/junitResults.test.ts` (5):
+  - outcomes, durations, messages and stack traces;
+  - nested suites, test properties and reruns;
+  - refusing non-JUnit input;
+  - readable ids in names and properties;
+  - suite names.
+- `apps/server/tests/junit_results.test.ts` (6):
+  - matching by name, property, and suite and title, with an unmatched test, every stored field, and all-or-nothing;
+  - unusable files, and any content type;
+  - runs by name: create, reuse, three parallel uploads ending in one run, a token without `RUN_MANAGE`, a missing `run_name`, a closed run;
+  - no auto-close across two files and a re-run; `close_run` and its permission;
+  - the JSON batch by run name, where an empty batch creates no run;
+  - a JUnit file imported as cases matches the same file uploaded as results.
+- `openapi.test.ts` now expects 99 routes.
+
+Verified live on a production build:
+- Imported a pytest-style JUnit file.
+- Ran the guide's GitHub Actions script twice for one build: 207 listing the untracked test, the same run reused, and it stayed open.
+- Ran a Jenkins-style loop over two Surefire-style files into one new run, with `close_run` on the last: stored verdicts, durations and CI links, and the run closed.
+- `/docs/json` shows `application/xml` bodies.
+- The guide's four YAML/Groovy examples parse, and their shell passes `bash -n`.

@@ -87,7 +87,7 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 | Custom field values | `GET /cases/{caseId}/custom-fields`, `PUT`/`DELETE /cases/{caseId}/custom-fields/{definitionId}`; the same under `/suites/{suiteId}` |
 | Search | `POST /projects/{projectId}/case-search`, `GET /projects/{projectId}/case-search/fields` |
 | Plans | `GET`/`POST /projects/{projectId}/plans`, `GET`/`PATCH`/`DELETE /plans/{planId}`, `GET /plans/{planId}/cases?test_run_id=` (the plan's cases with each one's latest result in the run: Execute mode's queue), `POST /plans/{planId}/cases` (`test_case_id`), `DELETE /plans/{planId}/cases/{caseId}`, `POST`/`DELETE /plans/{planId}/suites/{suiteId}/cases` (every case in the suite's subtree) |
-| Runs and results | `GET`/`POST /plans/{planId}/runs`, `GET`/`PATCH`/`DELETE /runs/{runId}`, `GET /runs/{runId}/results` (paged, newest first; filters `verdict`, `test_case_id`, `source`, `latest_only`), `GET /results/{resultId}`, `POST /runs/{runId}/results` (one result), `POST /runs/{runId}/results/batch` (CI, §3) |
+| Runs and results | `GET`/`POST /plans/{planId}/runs`, `GET`/`PATCH`/`DELETE /runs/{runId}`, `GET /runs/{runId}/results` (paged, newest first; filters `verdict`, `test_case_id`, `source`, `latest_only`), `GET /results/{resultId}`, `POST /runs/{runId}/results` (one result), `POST /runs/{runId}/results/batch` (CI, §3), `POST /runs/{runId}/results/junit` (a JUnit XML file, §3.3), and the same two into a run by name: `POST /plans/{planId}/results/batch?run_name=`, `POST /plans/{planId}/results/junit?run_name=` |
 | Reports | `GET /projects/{projectId}/reports` (the catalog), `POST /projects/{projectId}/reports/{reportId}[?format=json\|markdown\|csv]` |
 | Report email | `POST /projects/{projectId}/report-emails`, `GET`/`POST /projects/{projectId}/report-schedules`, `PUT`/`DELETE /report-schedules/{scheduleId}`, `POST /report-schedules/{scheduleId}/recipients` (`email`), `DELETE /report-schedules/{scheduleId}/recipients/{email}`, `POST /report-schedules/{scheduleId}/send-now` |
 | Import | `POST /projects/{projectId}/imports/dry-run`, `POST /projects/{projectId}/imports/execute`, `GET /projects/{projectId}/imports/custom-field-options` (§6) |
@@ -142,9 +142,9 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 
 ---
 
-## 3. CI Results (`POST /runs/{runId}/results/batch`)
+## 3. CI Results (`POST /runs/{runId}/results/batch`, `/results/junit`)
 
-CI pipelines send many results at once. The batch route takes up to 5,000 per request and records them in one transaction.
+CI pipelines send many results at once: as JSON (up to 5,000 per request), or as a JUnit XML file (§3.3). Both are recorded in one transaction by `services/batchResults.ts`. Each also has a form that names the run instead of giving its id (§3.4).
 
 ### 3.1 Request and Response
 
@@ -207,14 +207,30 @@ A refused item carries `code`, `detail` and, for invalid input, `invalid_params`
 
 ### 3.2 How the Batch Route Stays Fast
 
-How the batch route (`apps/server/src/routes/batchExecution.ts`) records results quickly (2,000 results in about 1.5 s in the test suite):
+How the batch (`apps/server/src/services/batchResults.ts`) records results quickly (2,000 results in about 1.5 s in the test suite):
 
 1. **Validate everything first:** every item is checked (`validateBatchItem`) before anything touches the database. In all-or-nothing mode, all problems come back in one 400.
-2. **Look identifiers up in bulk:** the plan's cases are loaded once and the incoming `external_id` / `by_uuid` / `by_path_title` identifiers are resolved in memory. Step results are matched exactly against the steps of the version each case runs at.
+2. **Look identifiers up in bulk:** the plan's cases are loaded once and the incoming `external_id` / `by_uuid` / `by_path_title` identifiers are resolved in memory. Cases of the project that aren't in the plan yet are looked up in a few queries for the whole batch, not one per item. Step results are matched exactly against the steps of the version each case runs at.
 3. **One transaction, multi-row inserts:** auto-links, results, step results and the audit row are written in one transaction, with results and step results inserted 500 rows at a time. A refused item never leaves a plan link behind, and in atomic mode a refusal rolls everything back.
 4. **Version binding:** each result belongs to the case's link in the plan, which pins the version the case runs at. Editing or re-approving the case later doesn't change past results.
 
 Failure messages and stack traces are stored in the `test_results` row itself (`failure_message`, `stack_trace`). There's no out-of-band offloading (see §5).
+
+### 3.3 JUnit XML (`POST /runs/{runId}/results/junit`)
+
+The body is a JUnit XML report as test runners write it, sent as is with any content type (`curl --data-binary @report.xml`): up to 20,000 tests and 50 MB. `routes/junitResults.ts` reads it (`parseJUnitResults` in `packages/core/src/ingestion/junitResults.ts`) and turns each `<testcase>` into a batch item, then records them as §3.1-3.2 do. The response is the batch response with each item's `test_name` (`classname.name`).
+
+- **Verdicts:** `<failure>` and `<error>` are FAILED (an error also gets a note saying so), `<skipped>` is SKIPPED with its message as the note, anything else PASSED. Only the first outcome element counts; Surefire's `flakyFailure`/`rerunFailure` are ignored, so a test that passed on a rerun is PASSED.
+- **Fields:** `time` (seconds) → `duration_ms`; a failure's `message` attribute (or the first line of its text) → `failure_message`; its text → `stack_trace`.
+- **Matching a test to a case:** `external_id` from a `testify_id` property on the test, else a readable id in its name (`SHOP-101 …`, `[SHOP-101] …`); plus `by_path_title` with the suite a JUnit import would have created (the last part of `classname`, or the `<testsuite>` name) and the test's name as title. The batch tries the readable id first, then suite and title within the plan, then the project's cases (preferring the one in the named suite).
+- **Query parameters:** `environment`; `ci_name`, `ci_run_id`, `ci_job_name`, `ci_url`, `commit_sha` (stored as `runner_info`); `all_or_nothing`.
+- **Errors:** `400 INVALID_JUNIT` for an empty body, a file that isn't JUnit XML (no `<testsuite>`/`<testsuites>`), one without tests, or over 20,000 tests; `413` over 50 MB. Tests that match no case are refused per item (`CASE_NOT_FOUND`, 207).
+
+### 3.4 Runs by Name (`POST /plans/{planId}/results/batch|junit?run_name=`)
+
+One CI build is one run. Rather than looking the run up and creating it, CI names it: the plan's run with that name is used, and created if there is none (that needs `RUN_MANAGE`; using an existing run needs only `EXECUTE_RUN`). Concurrent requests creating the same run end up with one run (`INSERT … ON CONFLICT DO NOTHING` on the unique plan and name). The response adds `run: { id, name, created }`.
+
+CI results never auto-close a run (runs executed in the web app do, RFC 01): a build may send several files, from parallel jobs or one per test class, or be re-run, and only the CI knows when it is done. `close_run=true` on any batch or JUnit upload closes the run after recording (needs `RUN_MANAGE`), and `run_status` says so. A locked or archived plan gets `422 PLAN_LOCKED` before any run is created, and a request with nothing to record (no results, or an unusable JUnit file) is refused without creating one.
 
 ---
 
@@ -264,7 +280,7 @@ The codes a client is most likely to handle (the code is always in `code`; `deta
 
 | Status | Codes |
 | :--- | :--- |
-| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `INVALID_CURSOR`, `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
+| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `INVALID_CURSOR`, `INVALID_JUNIT`, `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
 | `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
 | `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `TOKEN_NOT_ALLOWED` (an API token on a route outside any project), `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
 | `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |
@@ -436,7 +452,7 @@ There are no personal access tokens or separate runner-token types; a token's ca
 Limits are generous on purpose -- CI runners, scripts and MCP agents make many more calls than people -- and exist to stop runaway loops and abuse. Each is a **token bucket** per caller: the whole allowance can be used at once, and it refills evenly over the window. The counts are kept in memory per server process (`apps/server/src/services/rateLimits.ts`).
 
 - **Rate Limits:**
-  - Every request made with a machine API token (REST, `/runs/{id}/results/batch`, `/mcp`): **1,200 requests per minute per token**. A batch request can carry up to 5,000 results.
+  - Every request made with a machine API token (REST, `/runs/{id}/results/batch`, `/mcp`): **1,200 requests per minute per token**. A batch request can carry up to 5,000 results, and a JUnit file up to 20,000 tests.
   - Exports (`.../exports/definitions`, `.../exports/results`): **120 per hour per user or token**.
   - Sending report emails (`.../report-emails` without `preview`, `/report-schedules/{id}/send-now`, `/admin/email-settings/test`): **60 per hour per user or token**.
 - **HTTP 429 Too Many Requests Payload:**
@@ -479,7 +495,7 @@ sequenceDiagram
     participant API as Testify API
     participant DB as PostgreSQL
 
-    CI->>API: POST /api/v1/runs/{runId}/results/batch (Bearer tf_ci_...)
+    CI->>API: POST /api/v1/runs/{runId}/results/batch or /results/junit (Bearer tf_ci_...)
     API->>API: Authenticate token, check project binding, rate limit, EXECUTE_RUN
     alt Run closed or plan locked
         API-->>CI: 422 (RUN_CLOSED / PLAN_LOCKED)
@@ -488,7 +504,7 @@ sequenceDiagram
         API->>DB: Load the plan's cases and steps (bulk)
         API->>API: Resolve identifiers, overwrite rule, steps
         API->>DB: One transaction: auto-links, results, step results, audit row
-        API->>DB: Auto-close the run if every case now has a result (first time only)
+        API->>DB: Close the run if close_run=true (CI results never auto-close it)
         API-->>CI: 201, or 207 with per-item results when some were refused
     end
 ```

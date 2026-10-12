@@ -21,7 +21,7 @@ The full reference is on your server: **`/docs`** (for example `http://localhost
    | Job | Capabilities |
    | :--- | :--- |
    | Send CI results into an existing run | `SPEC_VIEW`, `EXECUTE_RUN` |
-   | ...and create a run for each build | add `RUN_MANAGE` |
+   | ...and create a run for each build (`run_name`) | add `RUN_MANAGE` |
    | ...and change a result already recorded in the run | add `EXECUTE_OVERWRITE` |
    | Read reports (a dashboard, a bot) | `SPEC_VIEW` |
    | Import test cases | `SPEC_VIEW`, `IMPORT_DATA` |
@@ -100,30 +100,166 @@ In the web app, the Reports view's address shows the ids of the project, plan an
 
 A **test plan** is the set of cases to run. A **test run** is one go at them: typically one CI build. Results are recorded per case in a run.
 
-### Create the run for this build (or reuse it)
+### Upload your JUnit file
 
-Run names are unique within a plan. So use the build number in the name, and reuse the run if the job is re-run:
+Nearly every test runner can write a JUnit XML report. For example: pytest `--junitxml=report.xml`, Maven Surefire and Gradle (on by default), Jest `jest-junit`, Vitest `--reporter=junit`, Playwright `--reporter=junit`, Go `go-junit-report`. Send that file as it is, naming the run for this build:
 
 ```bash
-AUTH="Authorization: Bearer $TESTIFY_TOKEN"
-RUN_NAME="CI build $BUILD_NUMBER"
-RUN_ID=$(curl -sf "$TESTIFY/api/v1/plans/$PLAN_ID/runs" -H "$AUTH" \
-  | jq -r --arg name "$RUN_NAME" '.runs[] | select(.name == $name) | .id')
-if [ -z "$RUN_ID" ]; then
-  RUN_ID=$(curl -sf -X POST "$TESTIFY/api/v1/plans/$PLAN_ID/runs" -H "$AUTH" \
-    -H 'content-type: application/json' -d "$(jq -n --arg name "$RUN_NAME" '{name: $name}')" | jq -r .run.id)
-fi
+curl -s -X POST "$TESTIFY/api/v1/plans/$PLAN_ID/results/junit?run_name=CI%20build%20$BUILD_NUMBER" \
+  -H "Authorization: Bearer $TESTIFY_TOKEN" --data-binary @report.xml
 ```
 
-(Creating a run needs `RUN_MANAGE`. Without it, create the run in the web app and use its id.)
+- **The run:** the plan's run named `run_name` is created the first time (the token needs `RUN_MANAGE` for that) and reused after, so a re-run job adds to the same run, and parallel jobs of one build can each send their own file. To send into a run you already have, use `POST /api/v1/runs/{runId}/results/junit` instead.
+- **Verdicts:** `<failure>` and `<error>` are FAILED, `<skipped>` is SKIPPED, anything else PASSED. The test's `time` becomes its duration, and the failure's message and text become the error and stack trace in reports.
+- **Optional query parameters:** `environment` (e.g. `staging`); `ci_name`, `ci_run_id`, `ci_job_name`, `ci_url`, `commit_sha`, which link each result back to the build in reports; `close_run=true` to close the run afterwards.
+- **Size:** up to 20,000 tests and 50 MB per file.
 
-### Send the results
+**Matching tests to Testify cases.** Each test in the file is matched to a case of the project, in this order:
+1. A `testify_id` property on the test. In pytest: `record_property("testify_id", "SHOP-101")`.
+2. A readable id in the test's name: `SHOP-101 logs in`, `[SHOP-101] logs in`, `logs in (SHOP-101)`.
+3. Its suite and title. A JUnit import of the same file creates cases this way: one suite per class (the last part of `classname`), one case per test, named after it. So the simplest setup is to **import your JUnit file once** (Import in the web app, or `POST /api/v1/projects/{projectId}/imports/execute` with `"format": "JUNIT_XML"`), add the cases to the plan if you like, and upload each build's file from then on.
 
-Up to 5,000 results per request, saved in one transaction:
+A matched case that isn't in the plan yet is added to it, if it's approved. A test that matches no case isn't recorded; it's listed in the response, so you can see what isn't tracked.
+
+### Check what was saved
+
+The answer is **201** when every test was recorded, and **207** when some were refused (usually: tests with no matching case). Anything else (400, 401, 403, 404, 413, 422) means nothing was recorded. Print the refused tests:
 
 ```bash
-curl -s -X POST "$TESTIFY/api/v1/runs/$RUN_ID/results/batch" \
-  -H "$AUTH" -H 'content-type: application/json' \
+STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST \
+  "$TESTIFY/api/v1/plans/$PLAN_ID/results/junit?run_name=CI%20build%20$BUILD_NUMBER" \
+  -H "Authorization: Bearer $TESTIFY_TOKEN" --data-binary @report.xml)
+jq -c '.summary // .' response.json
+jq -r '.results[]? | select(.status >= 400) | "\(.code): \(.test_name)"' response.json
+```
+
+```text
+{"total_submitted":148,"successful":146,"failed":2,"duration_ms":212}
+CASE_NOT_FOUND: tests.misc.test_debug_helper
+CASE_NOT_FOUND: tests.misc.test_scratch
+```
+
+The reasons a test (or a JSON result) can be refused:
+- `CASE_NOT_FOUND`: no matching case, or it isn't approved.
+- `CASE_REMOVED_FROM_PLAN`: the case was taken out of the plan.
+- `RESULT_OVERWRITE_NOT_PERMITTED`: changing an earlier result in this run needs `EXECUTE_OVERWRITE`.
+- `INVALID_RESULT`: a field is wrong; `invalid_params` names it.
+- `UNKNOWN_STEP` (JSON only): a step result names a step the case doesn't have.
+
+Add `all_or_nothing=true` to record nothing at all when any test is refused.
+
+What else to know:
+- **Re-running a test** in the same build adds another result, and the latest one counts. A different verdict from an earlier upload needs `EXECUTE_OVERWRITE`.
+- **The run stays open** after CI results, even once every case has one, since a build may send several files or be re-run. Add `close_run=true` to the last upload of a build to close it (needs `RUN_MANAGE`), or close it in the web app. A closed run takes no more results (`422 RUN_CLOSED`); reopen it with `PATCH /api/v1/runs/{runId}` and `{"status": "OPEN"}`. (Runs executed by people in the web app close themselves the first time every case has a result.)
+
+### CI examples
+
+Each example sends the report even when tests failed, prints the refused tests, and fails the step only if the upload itself failed. A 207 for untracked tests doesn't fail the build; change the last check to `test "$STATUS" = 201` if it should. They need three settings: the token as a secret `TESTIFY_TOKEN`, and the server's address and the plan id as `TESTIFY_URL` and `TESTIFY_PLAN_ID`. They use `curl` and `jq`; `jq` also builds the query string, since build names and links need encoding.
+
+**GitHub Actions** (`.github/workflows/test.yml`, after the step that runs the tests):
+
+```yaml
+- name: Send results to Testify
+  if: ${{ !cancelled() }}
+  env:
+    TESTIFY_TOKEN: ${{ secrets.TESTIFY_TOKEN }}
+    URL: ${{ vars.TESTIFY_URL }}/api/v1/plans/${{ vars.TESTIFY_PLAN_ID }}/results/junit
+  run: |
+    QUERY=$(jq -rn \
+      --arg run_name "CI build ${{ github.run_number }}" --arg ci_name "GitHub Actions" \
+      --arg ci_run_id "${{ github.run_id }}" --arg commit_sha "${{ github.sha }}" \
+      --arg ci_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+      '$ARGS.named | to_entries | map("\(.key)=\(.value | @uri)") | join("&")')
+    STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$URL?$QUERY" \
+      -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/xml' --data-binary @report.xml)
+    jq -c '.summary // .' response.json
+    jq -r '.results[]? | select(.status >= 400) | "\(.code): \(.test_name)"' response.json
+    test "$STATUS" = 201 -o "$STATUS" = 207
+```
+
+**GitLab CI** (`.gitlab-ci.yml`; set `TESTIFY_TOKEN` as a masked CI/CD variable). The upload is its own job, so a failed upload shows as a failed job:
+
+```yaml
+test:
+  stage: test
+  script:
+    - pytest --junitxml=report.xml
+  artifacts:
+    when: always
+    paths: [report.xml]
+    reports:
+      junit: report.xml
+
+testify:
+  stage: .post
+  when: always
+  needs: [{ job: test, artifacts: true }]
+  script:
+    - |
+      QUERY=$(jq -rn \
+        --arg run_name "CI pipeline $CI_PIPELINE_IID" --arg ci_name "GitLab CI" \
+        --arg ci_run_id "$CI_PIPELINE_ID" --arg ci_url "$CI_PIPELINE_URL" --arg commit_sha "$CI_COMMIT_SHA" \
+        '$ARGS.named | to_entries | map("\(.key)=\(.value | @uri)") | join("&")')
+      STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$TESTIFY_URL/api/v1/plans/$TESTIFY_PLAN_ID/results/junit?$QUERY" \
+        -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/xml' --data-binary @report.xml)
+      jq -c '.summary // .' response.json
+      jq -r '.results[]? | select(.status >= 400) | "\(.code): \(.test_name)"' response.json
+      test "$STATUS" = 201 -o "$STATUS" = 207
+```
+
+**Jenkins** (`Jenkinsfile` with Maven; store the token as a "Secret text" credential with the id `testify-token`). Surefire writes one file per test class; each is sent, and they all land in the same run:
+
+```groovy
+post {
+  always {
+    withCredentials([string(credentialsId: 'testify-token', variable: 'TESTIFY_TOKEN')]) {
+      sh '''
+        QUERY=$(jq -rn \
+          --arg run_name "CI build $BUILD_NUMBER" --arg ci_name "Jenkins" --arg ci_job_name "$JOB_NAME" \
+          --arg ci_url "$BUILD_URL" --arg commit_sha "${GIT_COMMIT:-}" \
+          '$ARGS.named | to_entries | map("\\(.key)=\\(.value | @uri)") | join("&")')
+        for f in target/surefire-reports/TEST-*.xml; do
+          STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$TESTIFY_URL/api/v1/plans/$TESTIFY_PLAN_ID/results/junit?$QUERY" \
+            -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/xml' --data-binary @"$f")
+          jq -c '.summary // .' response.json
+          jq -r '.results[]? | select(.status >= 400) | "\\(.code): \\(.test_name)"' response.json
+          test "$STATUS" = 201 -o "$STATUS" = 207 || exit 1
+        done
+      '''
+    }
+  }
+}
+```
+
+(In Groovy's `'''` strings a backslash must be doubled, hence `\\(`.)
+
+**Azure DevOps** (`azure-pipelines.yml`; add `TESTIFY_TOKEN` as a secret pipeline variable; secrets reach a script only when mapped into `env`):
+
+```yaml
+- script: |
+    QUERY=$(jq -rn \
+      --arg run_name "CI build $(Build.BuildNumber)" --arg ci_name "Azure DevOps" \
+      --arg ci_run_id "$(Build.BuildId)" --arg commit_sha "$(Build.SourceVersion)" \
+      --arg ci_url "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)" \
+      '$ARGS.named | to_entries | map("\(.key)=\(.value | @uri)") | join("&")')
+    STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$(TESTIFY_URL)/api/v1/plans/$(TESTIFY_PLAN_ID)/results/junit?$QUERY" \
+      -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/xml' --data-binary @report.xml)
+    jq -c '.summary // .' response.json
+    jq -r '.results[]? | select(.status >= 400) | "\(.code): \(.test_name)"' response.json
+    test "$STATUS" = 201 -o "$STATUS" = 207
+  displayName: Send results to Testify
+  condition: succeededOrFailed()
+  env:
+    TESTIFY_TOKEN: $(TESTIFY_TOKEN)
+```
+
+### Sending JSON instead
+
+When your results aren't a JUnit file, or you want more than it holds (step results, `executed_at`, other verdicts such as `BLOCKED`), send them as JSON: up to 5,000 per request, saved in one transaction. `POST /api/v1/plans/{planId}/results/batch?run_name=...` creates or reuses the run, as above; `POST /api/v1/runs/{runId}/results/batch` sends into a run you have.
+
+```bash
+curl -s -X POST "$TESTIFY/api/v1/plans/$PLAN_ID/results/batch?run_name=CI%20build%20$BUILD_NUMBER" \
+  -H "Authorization: Bearer $TESTIFY_TOKEN" -H 'content-type: application/json' \
   -d '{
     "environment": "staging",
     "runner_info": { "name": "GitHub Actions", "run_id": "1234", "commit_sha": "a1b2c3d", "url": "https://github.com/acme/shop/actions/runs/1234" },
@@ -136,69 +272,11 @@ curl -s -X POST "$TESTIFY/api/v1/runs/$RUN_ID/results/batch" \
   }'
 ```
 
-What to know:
-
-- **Which case:**
-  - `case_identifier` is usually `{ "external_id": "SHOP-101" }`.
-  - `{ "by_uuid": "<case id>" }` and `{ "by_path_title": { "suite_path": "Payments / Checkout", "title": "..." } }` also work.
-  - A case that isn't in the plan yet is added to it, if it's approved.
+- **Which case:** `case_identifier` is usually `{ "external_id": "SHOP-101" }`; `{ "by_uuid": "<case id>" }` and `{ "by_path_title": { "suite_path": "Checkout", "title": "..." } }` (the suite's name and the case's title) also work.
 - **`verdict`:** one of `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `RETEST_REQUIRED`, `KNOWN_ISSUE`.
 - **Worth sending:** `failure_message` (the short error), `stack_trace` and `duration_ms`. They show up in run summaries, case history and the "slowest" and "flaky" reports.
 - **`runner_info`:** links each result back to your CI run. Its `run_id` is your CI system's id, not Testify's.
-- **Re-running a test** in the same build adds another result, and the latest one counts. A different verdict from an earlier request needs `EXECUTE_OVERWRITE`.
-- **The run closes itself** the first time every case in the plan has a result. A closed run takes no more results; reopen it with `PATCH /api/v1/runs/{runId}` and `{"status": "OPEN"}`.
-
-### Check what was saved
-
-The answer is **201** when everything was saved, and **207** when some results were refused. A refused result doesn't stop the others. Check the status, and print the refused ones:
-
-```bash
-STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$TESTIFY/api/v1/runs/$RUN_ID/results/batch" \
-  -H "$AUTH" -H 'content-type: application/json' --data @results.json)
-jq '.summary' response.json
-jq -r '.results[] | select(.status >= 400) | "result \(.index): \(.code) \(.detail)"' response.json
-```
-
-```text
-{ "total_submitted": 2, "successful": 1, "failed": 1, "duration_ms": 6 }
-result 1: CASE_NOT_FOUND Case identifier not found in test plan
-```
-
-The reasons a result can be refused:
-- `INVALID_RESULT`: a field is wrong; `invalid_params` names it.
-- `CASE_NOT_FOUND`: no such case, or it isn't approved.
-- `CASE_REMOVED_FROM_PLAN`: the case was taken out of the plan.
-- `RESULT_OVERWRITE_NOT_PERMITTED`: changing an earlier result needs `EXECUTE_OVERWRITE`.
-- `UNKNOWN_STEP`: a step result names a step the case doesn't have.
-
-Add `?all_or_nothing=true` to save nothing at all when any result is refused.
-
-### Example: a GitHub Actions step
-
-Your test framework writes `results.json` in the format above. This step then records it, and fails if any result was refused (the log lists them). Store the token as the secret `TESTIFY_TOKEN`, and the server's address and the plan id as the variables `TESTIFY_URL` and `TESTIFY_PLAN_ID`.
-
-```yaml
-- name: Send results to Testify
-  if: always()
-  env:
-    TESTIFY: ${{ vars.TESTIFY_URL }}
-    TESTIFY_TOKEN: ${{ secrets.TESTIFY_TOKEN }}
-    PLAN_ID: ${{ vars.TESTIFY_PLAN_ID }}
-    RUN_NAME: "CI build ${{ github.run_number }}"
-  run: |
-    AUTH="Authorization: Bearer $TESTIFY_TOKEN"
-    RUN_ID=$(curl -sf "$TESTIFY/api/v1/plans/$PLAN_ID/runs" -H "$AUTH" \
-      | jq -r --arg name "$RUN_NAME" '.runs[] | select(.name == $name) | .id')
-    if [ -z "$RUN_ID" ]; then
-      RUN_ID=$(curl -sf -X POST "$TESTIFY/api/v1/plans/$PLAN_ID/runs" -H "$AUTH" \
-        -H 'content-type: application/json' -d "$(jq -n --arg name "$RUN_NAME" '{name: $name}')" | jq -r .run.id)
-    fi
-    STATUS=$(curl -s -o response.json -w '%{http_code}' -X POST "$TESTIFY/api/v1/runs/$RUN_ID/results/batch" \
-      -H "$AUTH" -H 'content-type: application/json' --data @results.json)
-    jq '.summary' response.json
-    jq -r '.results[]? | select(.status >= 400) | "result \(.index): \(.code) \(.detail)"' response.json
-    test "$STATUS" -eq 201
-```
+- The response, refusals and `all_or_nothing` work as for JUnit files; refused results are identified by their `index` in `results`.
 
 ## 6. Read results back
 
@@ -259,7 +337,7 @@ The full list is in [RFC 03 §4.2](rfc_03_api_and_xml_contracts.md). An unexpect
 ## 8. Limits
 
 - 1,200 requests a minute per token (MCP calls included); the allowance refills evenly.
-- 5,000 results per batch request.
+- 5,000 results per JSON batch; 20,000 tests and 50 MB per JUnit file.
 - 120 exports and 60 report emails an hour.
 - Imports: 50 MB per file, two at a time.
 

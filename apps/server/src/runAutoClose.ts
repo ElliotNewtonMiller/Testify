@@ -6,7 +6,8 @@ import { NO_ORIGIN, type RequestOrigin } from './audit.js';
 
 /**
  * The run closes automatically the FIRST time every case in its plan has a result. Called
- * after a result is recorded (single and batch routes). Writes a RUN_AUTO_CLOSED audit
+ * after one result is recorded (routes/results.ts); CI batches never auto-close a run
+ * (services/batchResults.ts). Writes a RUN_AUTO_CLOSED audit
  * row when it fires, and that row is also what makes it once-only: a run that has already
  * auto-closed (and was then reopened to change a result) is never auto-closed again. Audit
  * rows are immutable, so this can't be reset by accident. Returns the run's resulting

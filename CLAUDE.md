@@ -13,7 +13,7 @@ Testify is an open-source, self-hosted test case management app meant to replace
 
 **Execution:**
 - A test plan pins a set of cases at a version; a test run belongs to a plan. Runs and results are `test_runs`/`test_results` in the database and "runs"/"results" in the API (older docs and audit rows say "build" and "execution").
-- Results are recorded per case in a run: by people with hotkeys in the web app, or by CI through the batch API.
+- Results are recorded per case in a run: by people with hotkeys in the web app, or by CI through the batch API (JSON, or a JUnit XML file, optionally into a run named by the build and created on first use).
 
 **Everything else:**
 - Reports: run summaries and diffs, trends, flaky and slow tests, case history, breakdowns. They're available in the app, the REST API, scheduled email and MCP.
@@ -62,9 +62,11 @@ npm workspaces (root `package.json`: `packages/*`, `apps/*`). Use `npm run <scri
 apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createServer + startup); src/dev.ts for development.
   src/routes/      One file per area: auth, admin, projects (projects/plans/runs), specEditing (suites/cases/versions/move),
                    testPlanCases (spec tree, plan membership, Execute queue), customFields, caseSearch, ingestion (import),
-                   exports, results (one result), batchExecution (CI results), reports, reportEmail, emailAdmin, apiTokens.
+                   exports, results (one result), batchExecution (CI results as JSON), junitResults (CI results as JUnit XML),
+                   reports, reportEmail, emailAdmin, apiTokens.
   src/services/    Logic shared by routes: adminGuard, caseFilterService, reportService, reportEmailService, mailer,
-                   rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets.
+                   rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets,
+                   batchResults (recording a CI batch, JSON or JUnit), runByName (CI's run per build).
   src/middleware/auth.ts   Authentication and permission checks (see "Auth and permissions").
   src/mcp/mcpServer.ts     POST /mcp: read-only MCP tools over the same services.
   src/openapi/     The OpenAPI spec and /docs page: index.ts (setup, validation, test-time response check),
@@ -105,7 +107,7 @@ docs/              changelog.md, api_roadmap.md, api_getting_started.md, deploym
 - Results are never edited; a new row becomes the latest.
 - Re-recording a case that already has a result in the run needs `EXECUTE_OVERWRITE`. The exception is re-sending your own latest verdict (adding notes).
 - Results are refused on a CLOSED run and on retired links.
-- A run auto-closes the first time every case has a result, once only (marked by its `RUN_AUTO_CLOSED` audit row; older runs by `BUILD_AUTO_CLOSED`).
+- A run auto-closes the first time every case has a result, once only (marked by its `RUN_AUTO_CLOSED` audit row; older runs by `BUILD_AUTO_CLOSED`). Only results recorded one at a time trigger it: CI batches and JUnit uploads never auto-close a run (a build may send several files or be re-run); `close_run=true` closes it.
 - Manual (UI) results are never timed: duration is null. Only batch/CI results carry durations.
 
 **Custom fields:**
@@ -227,7 +229,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - **No sample projects on startup.** Users and roles are seeded, plus dev fixture users on the in-memory database. The sample project exists only for tests (`SEED_SAMPLE_DATA`).
 - **Role templates and template-based dev accounts stay** (audit scope).
 - **Custom field rules:** values are unversioned, required fields always have a default, CHECKBOX fields can't be required (see "Domain rules").
-- **Results:** notes are kept for every verdict, manual results aren't timed, auto-close happens once, results don't snapshot custom fields.
+- **Results:** notes are kept for every verdict, manual results aren't timed, auto-close happens once and never from CI uploads, results don't snapshot custom fields.
 - **Search** covers ids, titles and suite names, not custom field values.
 - **Rate limits are generous**, since CI and agents make many calls.
 - **Sign-ins:** 8 hours idle and 7 days at most.

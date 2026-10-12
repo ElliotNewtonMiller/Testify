@@ -43,7 +43,7 @@ Permissions are string constants named `<DOMAIN>_<ACTION>`, e.g. `SPEC_APPROVE`,
 | `SPEC_DELETE` | Specifications | Delete test suites and test cases (after a confirmation). | **HIGH** |
 | `SPEC_AUTO_APPROVE` | Specifications | New cases this user creates start approved instead of as a draft. | **MEDIUM** |
 | `PLAN_MANAGE` | Planning | Create, edit and delete test plans; manage which cases are in one; edit custom field values. | **HIGH** |
-| `RUN_MANAGE` | Planning | Create, edit, close, reopen and delete test runs. | **MEDIUM** |
+| `RUN_MANAGE` | Planning | Create, edit, close, reopen and delete test runs (including CI creating a run by name with `run_name`). | **MEDIUM** |
 | `EXECUTE_RUN` | Execution | Record results (verdicts and notes) for test cases. | **MEDIUM** |
 | `EXECUTE_OVERWRITE` | Execution | Record a new result for a case that already has one in the run. Results are never edited; the new result becomes the latest. | **HIGH** |
 | `IMPORT_DATA` | Data | Import suites and cases (TestLink XML, JUnit XML, TestRail CSV, CSV, JSON), including creating project-scoped custom fields while mapping. | **HIGH** |
@@ -348,7 +348,7 @@ graph TD
 - **Risk:** Bots guess passwords at `/api/v1/auth/login`, or flood the API with a token.
 - **Mitigation:**
   - Sign-in (`apps/server/src/services/loginThrottle.ts`): an account locks for 15 minutes after 20 wrong passwords in a row, and an address is blocked after 50 failed sign-ins in 15 minutes. The current-password check on a password change counts too. Admins can unlock accounts.
-  - Every request made with an API token (REST, CI batches, MCP): 1,200 per minute per token, as a token bucket (`apps/server/src/services/rateLimits.ts`). A batch request can carry up to 5,000 results.
+  - Every request made with an API token (REST, CI batches, MCP): 1,200 per minute per token, as a token bucket (`apps/server/src/services/rateLimits.ts`). A batch request can carry up to 5,000 results, a JUnit file up to 20,000 tests.
   - Imports: at most 50 MB per file and 2 at a time per server.
   - Over a limit the API answers `429` with `Retry-After`. Address and rate counts are kept in memory per server process; account lockouts are in the database.
 

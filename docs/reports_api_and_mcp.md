@@ -66,7 +66,7 @@ POST /api/v1/projects/:projectId/reports/:reportId[?format=json|markdown|csv]
 
 ## Sending results that make good reports
 
-`POST /api/v1/runs/:runId/results/batch` (needs `EXECUTE_RUN`), with the results in a `results` list, stores per result:
+`POST /api/v1/runs/:runId/results/batch` (needs `EXECUTE_RUN`), with the results in a `results` list, stores per result (a JUnit XML file sent to `POST /api/v1/runs/:runId/results/junit` fills the same fields from the file; see [api_getting_started.md](api_getting_started.md) §5):
 
 - `verdict`
 - `duration_ms`

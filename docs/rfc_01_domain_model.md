@@ -104,7 +104,7 @@ The suite tree is live and editable; it's never snapshotted per plan. Moving or 
 ### 2.4 Closed Runs & Locked Plans
 
 - Recording a result in a CLOSED run, or in a LOCKED or ARCHIVED plan, fails with **HTTP 422** `RUN_CLOSED` / `PLAN_LOCKED`. Results can't be edited or deleted at all.
-- A run closes itself the first time every case in its plan has a result; it can be reopened, and won't auto-close again.
+- A run closes itself the first time every case in its plan has a result recorded in the web app or one at a time; it can be reopened, and won't auto-close again. CI batches and JUnit uploads never auto-close a run (a build may send several files or be re-run); they close it only with `close_run=true`.
 
 ### 2.5 Retention & Attachments
 

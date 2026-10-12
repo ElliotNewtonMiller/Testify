@@ -203,9 +203,10 @@ const caseIdentifier = {
   },
 };
 
-const batchResultsResponse = {
+function batchResponse(options: { run?: boolean; junit?: boolean } = {}) {
+  return {
   type: 'object',
-  required: ['object', 'summary', 'results'],
+  required: ['object', 'summary', 'results', ...(options.run ? ['run'] : [])],
   properties: {
     object: { type: 'string', enum: ['batch_results'] },
     summary: {
@@ -236,12 +237,28 @@ const batchResultsResponse = {
             type: 'array',
             items: { type: 'object', required: ['name', 'reason'], properties: { name: { type: 'string' }, reason: { type: 'string' } } },
           },
+          ...(options.junit ? { test_name: { type: 'string', description: 'The JUnit test: `classname.name`, or its name' } } : {}),
         },
       },
     },
-    run_status: oneOf(RUN_STATUSES, 'CLOSED if this batch just closed the run.'),
+    run_status: oneOf(RUN_STATUSES, 'CLOSED when `close_run=true` closed it; otherwise OPEN.'),
+    ...(options.run
+      ? {
+          run: {
+            type: 'object',
+            description: 'The run the results went into',
+            required: ['id', 'name', 'created'],
+            properties: { id: { type: 'string' }, name: { type: 'string' }, created: { type: 'boolean', description: 'true when this request created it' } },
+          },
+        }
+      : {}),
   },
-};
+  };
+}
+const batchResultsResponse = batchResponse();
+
+const CLOSE_RUN =
+  'Close the run after recording (needs `RUN_MANAGE`), e.g. from the last step of a build. CI results never close a run by themselves, since a build may send several files or be re-run.';
 
 export const batchResultsSchema = {
   tags: ['Runs and results'],
@@ -249,11 +266,14 @@ export const batchResultsSchema = {
   description:
     'Up to 5,000 results in one request, saved in one transaction (RFC 03 §3). Needs `EXECUTE_RUN` (and `EXECUTE_OVERWRITE` to change an existing result). ' +
     'A case not yet in the plan is added if it is approved. By default valid results are saved and refused ones reported per item (207 when any were refused); ' +
-    'with `all_or_nothing=true` one refusal saves nothing and fails the request.',
+    'with `all_or_nothing=true` one refusal saves nothing and fails the request. The run stays open (CI results don\'t auto-close it) unless `close_run=true`.',
   params: idParams('runId'),
   querystring: {
     type: 'object',
-    properties: { all_or_nothing: oneOf(['true', 'false', '1', '0'], 'Save everything or nothing.') },
+    properties: {
+      all_or_nothing: oneOf(['true', 'false', '1', '0'], 'Save everything or nothing.'),
+      close_run: oneOf(['true', 'false', '1', '0'], CLOSE_RUN),
+    },
   },
   body: handlerValidated({
     type: 'object',
@@ -314,6 +334,100 @@ export const batchResultsSchema = {
       404,
       [422, '`RUN_CLOSED` or `PLAN_LOCKED`; with all-or-nothing, also an item\'s refusal']
     ),
+  },
+};
+
+const RUN_NAME_QUERY = {
+  run_name: {
+    type: 'string',
+    description:
+      'The run to record in, by name: one CI build is one run, e.g. `CI build 1234`. Created if the plan has no run with this name (needs `RUN_MANAGE`), reused otherwise, so a re-run job adds to the same run.',
+  },
+};
+
+const ALL_OR_NOTHING = {
+  all_or_nothing: oneOf(['true', 'false', '1', '0'], 'Save everything or nothing.'),
+  close_run: oneOf(['true', 'false', '1', '0'], CLOSE_RUN),
+};
+
+export const planBatchResultsSchema = {
+  tags: ['Runs and results'],
+  summary: 'Record results from CI into a run by name (batch)',
+  description:
+    'The same as `POST /api/v1/runs/{runId}/results/batch`, into the plan\'s run named `run_name`, which is created if there is none yet (needs `RUN_MANAGE` then). ' +
+    'So CI needs no step to create or look up the run. The response says which run (`run`). Needs `EXECUTE_RUN`.',
+  params: idParams('planId'),
+  querystring: { type: 'object', required: ['run_name'], properties: { ...RUN_NAME_QUERY, ...ALL_OR_NOTHING } },
+  body: batchResultsSchema.body,
+  response: {
+    201: { description: 'Every result was saved', ...batchResponse({ run: true }) },
+    207: { description: 'Some results were refused; see `results[].status`', ...batchResponse({ run: true }) },
+    ...authedErrors(
+      [400, '`INVALID_RESULT`, or no `run_name`'],
+      [403, 'Missing `EXECUTE_RUN`, or `RUN_MANAGE` to create the run'],
+      404,
+      [422, '`RUN_CLOSED` or `PLAN_LOCKED`; with all-or-nothing, also an item\'s refusal']
+    ),
+  },
+};
+
+export const JUNIT_MAX_TESTS = 20_000;
+export const JUNIT_BODY_LIMIT_BYTES = 50 * 1024 * 1024;
+
+const JUNIT_QUERY = {
+  environment: { type: 'string', description: 'e.g. staging; stored with every result' },
+  ci_name: { type: 'string', description: 'Your CI system, e.g. GitHub Actions (shown in reports)' },
+  ci_run_id: { type: 'string', description: "Your CI system's id for this build (not a Testify id)" },
+  ci_job_name: { type: 'string' },
+  ci_url: { type: 'string', description: 'A link back to the build' },
+  commit_sha: { type: 'string' },
+  ...ALL_OR_NOTHING,
+};
+
+const JUNIT_DESCRIPTION =
+  'The body is a JUnit XML report, as most test runners write it (pytest `--junitxml`, Maven Surefire, Gradle, Jest and Vitest junit reporters, go-junit-report, ...), sent as is: `curl --data-binary @report.xml`. Up to 20,000 tests and 50 MB. ' +
+  'Each `<testcase>` is matched to a case of the project: by readable id (a `testify_id` property, or an id such as SHOP-101 in the test name), otherwise by suite and title, which is how a JUnit import of the same file names cases. ' +
+  'failure and error are FAILED, skipped is SKIPPED, everything else PASSED; `time` becomes the duration, the failure message and text the error and stack trace. ' +
+  'A matched case not yet in the plan is added if it is approved. Tests that match no case are listed as refused (`CASE_NOT_FOUND`, 207) and not recorded. Needs `EXECUTE_RUN`.';
+
+const junitBody = { type: 'string', description: 'The JUnit XML file' };
+
+const junitErrors = (more: Array<number | [number, string]>) =>
+  authedErrors(
+    [400, '`INVALID_JUNIT` (not a JUnit XML report, no tests, or too many), or `INVALID_RESULT` with all-or-nothing'],
+    ...more,
+    404,
+    [413, 'Over 50 MB'],
+    [422, '`RUN_CLOSED` or `PLAN_LOCKED`; with all-or-nothing, also a test\'s refusal']
+  );
+
+export const junitResultsSchema = {
+  tags: ['Runs and results'],
+  summary: 'Record results from a JUnit XML file',
+  description: JUNIT_DESCRIPTION,
+  consumes: ['application/xml'],
+  params: idParams('runId'),
+  querystring: { type: 'object', properties: JUNIT_QUERY },
+  body: junitBody,
+  response: {
+    201: { description: 'Every test was recorded', ...batchResponse({ junit: true }) },
+    207: { description: 'Some tests were refused (usually: no matching case); see `results[]`', ...batchResponse({ junit: true }) },
+    ...junitErrors([]),
+  },
+};
+
+export const planJunitResultsSchema = {
+  tags: ['Runs and results'],
+  summary: 'Record results from a JUnit XML file into a run by name',
+  description: `Into the plan's run named \`run_name\`, created if there is none yet (needs \`RUN_MANAGE\` then). ${JUNIT_DESCRIPTION}`,
+  consumes: ['application/xml'],
+  params: idParams('planId'),
+  querystring: { type: 'object', required: ['run_name'], properties: { ...RUN_NAME_QUERY, ...JUNIT_QUERY } },
+  body: junitBody,
+  response: {
+    201: { description: 'Every test was recorded', ...batchResponse({ run: true, junit: true }) },
+    207: { description: 'Some tests were refused (usually: no matching case); see `results[]`', ...batchResponse({ run: true, junit: true }) },
+    ...junitErrors([[403, 'Missing `EXECUTE_RUN`, or `RUN_MANAGE` to create the run']]),
   },
 };
 

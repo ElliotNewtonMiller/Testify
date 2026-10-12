@@ -3,7 +3,7 @@
 Testify is an open-source, self-hosted test case management app: a faster, more modern replacement for TestLink.
 
 - **Specification**: projects, nested test suites and versioned test cases with steps. Each case goes through draft, approved and deprecated, and you can add custom fields of six types.
-- **Execution**: test plans and test runs, with a keyboard-driven queue (`j`/`k` to move, `p`/`f`/`b`/`s` to record a verdict). CI systems send results in batches through the API.
+- **Execution**: test plans and test runs, with a keyboard-driven queue (`j`/`k` to move, `p`/`f`/`b`/`s` to record a verdict). CI systems send their JUnit XML reports, or results as JSON, through the API.
 - **Reports**: run summaries compared with the previous run, plan trends, flaky and slow tests, case history and breakdowns. They're available in the app, over the REST API, by email and over MCP for AI agents.
 - **Import and export**: TestLink XML, JUnit XML, TestRail CSV, CSV and JSON.
 - **Access control**: roles you can edit, per-project roles and overrides, and project-scoped API tokens for CI.
@@ -71,10 +71,10 @@ Schema changes always go in a new migration in `packages/db/src/migrations/`; ne
 
 ## API and integrations
 
-- **Getting started**: [docs/api_getting_started.md](docs/api_getting_started.md) takes you from making an API token to a CI pipeline that records its results (with a GitHub Actions example).
+- **Getting started**: [docs/api_getting_started.md](docs/api_getting_started.md) takes you from making an API token to a CI pipeline that records its results (with examples for GitHub Actions, GitLab CI, Jenkins and Azure DevOps).
 - **REST API**: sign in with `POST /api/v1/auth/login`, or use an API token from Admin Panel → API Tokens (`Authorization: Bearer tf_ci_...`).
 - **API docs page**: open `/docs` on your server (e.g. `http://localhost:3001/docs`) to browse the routes and try them; the OpenAPI spec is at `/docs/json`. Every route is on it.
-- **Results from CI**: `POST /api/v1/runs/:runId/results/batch`.
+- **Results from CI**: upload the JUnit XML report your tests already write (`POST /api/v1/plans/:planId/results/junit?run_name=...`), or send JSON (`POST /api/v1/runs/:runId/results/batch`).
 - **API reference**: [docs/rfc_03_api_and_xml_contracts.md](docs/rfc_03_api_and_xml_contracts.md) §1-4 has the conventions, every route and the error codes.
 - **Reports and MCP**: [docs/reports_api_and_mcp.md](docs/reports_api_and_mcp.md) describes every report, how to send results that make good reports, and how to connect an AI agent to `/mcp`.
 - **Health check**: `GET /api/v1/health`.
