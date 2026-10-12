@@ -2,6 +2,7 @@ import type { Kysely, Selectable, Insertable, Updateable } from 'kysely';
 import { sql } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database, TestResultsTable, TestStepResultsTable } from '../types.js';
+import { decodeCursor, toPage, type Page } from '../paging.js';
 
 export type TestResult = Selectable<TestResultsTable>;
 export type NewTestResult = Insertable<TestResultsTable>;
@@ -41,16 +42,29 @@ function jsonOrNull(v: Record<string, unknown> | null | undefined): string | nul
   return v && Object.keys(v).length > 0 ? JSON.stringify(v) : null;
 }
 
-function encodeCursor(ts: string, id: string): string {
-  return Buffer.from(`${ts}|${id}`, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string | null | undefined): { ts: string; id: string } | null {
-  if (!cursor) return null;
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
-  const sep = decoded.indexOf('|');
-  if (sep <= 0) return null;
-  return { ts: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
+/** One result in a run's result list (listForRun), with its case and step results. */
+export interface RunResultRow {
+  test_result_id: string;
+  test_run_id: string;
+  test_plan_case_id: string;
+  test_case_id: string;
+  external_id: string;
+  title: string;
+  test_case_version_id: string;
+  version_number: number | null;
+  verdict: string;
+  status: string;
+  duration_ms: number | null;
+  notes: string | null;
+  failure_message: string | null;
+  stack_trace: string | null;
+  environment: string | null;
+  runner: string | null;
+  source: string | null;
+  tester_id: string;
+  executed_at: string;
+  created_at: string;
+  steps: StepResult[];
 }
 
 export interface TestResultWithSteps extends TestResult {
@@ -370,16 +384,82 @@ export class TestResultRepository {
       .limit(opts.limit + 1)
       .execute();
 
-    const page = rows.slice(0, opts.limit) as CaseHistoryRow[];
-    const last = page[page.length - 1];
-    return {
-      rows: page,
-      next_cursor: rows.length > opts.limit && last ? encodeCursor(last.executed_at, last.test_result_id) : null,
-    };
+    return toPage(rows as CaseHistoryRow[], opts.limit, (r) => ({ ts: r.executed_at, id: r.test_result_id }));
   }
 
   /** Every result of a case (verdict + run + time only), oldest first -- the input for a
    * case's whole-history stats, independent of which history page is being shown. */
+  /**
+   * A run's results, newest first, a page at a time, each with its step results and its case.
+   * Filters: verdicts, one case, the source (UI / API), and `latestOnly` (each case's latest result
+   * in the run, i.e. what reports count). Keyset paging on (executed_at, id).
+   */
+  async listForRun(
+    runId: string,
+    filters: { verdicts?: string[]; testCaseId?: string; source?: string; latestOnly?: boolean },
+    page: { limit: number; cursor?: string | null }
+  ): Promise<Page<RunResultRow>> {
+    const base = this.runResultsQuery().where('e.test_run_id', '=', runId);
+
+    let query = this.db.selectFrom(base.as('r')).selectAll();
+    if (filters.latestOnly) query = query.where('r.rn', '=', 1);
+    if (filters.verdicts?.length) query = query.where('r.verdict', 'in', filters.verdicts);
+    if (filters.testCaseId) query = query.where('r.test_case_id', '=', filters.testCaseId);
+    if (filters.source) query = query.where('r.source', '=', filters.source);
+    const cursor = decodeCursor(page.cursor);
+    if (cursor) {
+      query = query.where((eb) =>
+        eb.or([eb('r.executed_at', '<', cursor.ts), eb.and([eb('r.executed_at', '=', cursor.ts), eb('r.test_result_id', '<', cursor.id)])])
+      );
+    }
+    const rows = await query.orderBy('r.executed_at', 'desc').orderBy('r.test_result_id', 'desc').limit(page.limit + 1).execute();
+    const paged = toPage(rows, page.limit, (r) => ({ ts: r.executed_at, id: r.test_result_id }));
+    return { next_cursor: paged.next_cursor, rows: await this.withSteps(paged.rows) };
+  }
+
+  /** One result in the same shape as listForRun's rows. */
+  async getRunResult(resultId: string): Promise<RunResultRow | undefined> {
+    const row = await this.runResultsQuery().where('e.id', '=', resultId).executeTakeFirst();
+    return row ? (await this.withSteps([row]))[0] : undefined;
+  }
+
+  private async withSteps<T extends { test_result_id: string; rn: number }>(rows: T[]): Promise<RunResultRow[]> {
+    const steps = await this.getStepResultsForResults(rows.map((r) => r.test_result_id));
+    return rows.map(({ rn: _rn, ...r }) => ({ ...(r as unknown as Omit<RunResultRow, 'steps'>), steps: steps.get(r.test_result_id) ?? [] }));
+  }
+
+  /** Results with their case and pinned version; `rn` = 1 for each case's latest result in its run. */
+  private runResultsQuery() {
+    return this.db
+      .selectFrom('test_results as e')
+      .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
+      .innerJoin('test_cases as c', 'c.id', 'tpc.test_case_id')
+      .leftJoin('test_case_versions as v', 'v.id', 'tpc.test_case_version_id')
+      .select([
+        'e.id as test_result_id',
+        'e.test_run_id as test_run_id',
+        'e.test_plan_case_id as test_plan_case_id',
+        'c.id as test_case_id',
+        'c.external_id as external_id',
+        'c.title as title',
+        'tpc.test_case_version_id as test_case_version_id',
+        'v.version_number as version_number',
+        'e.verdict as verdict',
+        'e.status as status',
+        'e.duration_ms as duration_ms',
+        'e.notes as notes',
+        'e.failure_message as failure_message',
+        'e.stack_trace as stack_trace',
+        'e.environment as environment',
+        'e.runner as runner',
+        'e.source as source',
+        'e.tester_id as tester_id',
+        'e.executed_at as executed_at',
+        'e.created_at as created_at',
+        sql<number>`row_number() over (partition by e.test_run_id, c.id order by e.executed_at desc, e.created_at desc, e.id desc)`.as('rn'),
+      ]);
+  }
+
   async getCaseVerdictTimeline(testCaseId: string): Promise<CaseVerdictTimelineRow[]> {
     return await this.db
       .selectFrom('test_results as e')

@@ -1,8 +1,14 @@
 import { sql, type Kysely, type Selectable, type Insertable, type Updateable } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database, TestCasesTable } from '../types.js';
+import { decodeCursor, toPage, type Page } from '../paging.js';
 
 export type TestCase = Selectable<TestCasesTable>;
+
+/** A case in a case list (listPage), with a summary of its latest version. */
+export interface CaseListRow extends TestCase {
+  latest_version: { id: string; version_number: number; status: string; updated_at: string } | null;
+}
 
 /** First key of the advisory lock that serializes external id assignment (second: the project). */
 const EXTERNAL_ID_LOCK_NAMESPACE = 0x7e57;
@@ -134,6 +140,45 @@ export class TestCaseRepository {
           : null,
       };
     });
+  }
+
+  /**
+   * A project's cases, oldest first, a page at a time, each with a summary of its latest version.
+   * Filters: readable ids, suites, latest-version status, priority. Keyset paging on (created_at, id).
+   */
+  async listPage(
+    projectId: string,
+    filters: { externalIds?: string[]; suiteIds?: string[]; versionStatuses?: string[]; priorities?: string[] },
+    page: { limit: number; cursor?: string | null }
+  ): Promise<Page<CaseListRow>> {
+    const latest = this.db
+      .selectFrom('test_case_versions')
+      .select(['test_case_id', sql<number>`max(version_number)`.as('vn')])
+      .groupBy('test_case_id');
+    let query = this.db
+      .selectFrom('test_cases as c')
+      .leftJoin(latest.as('lv'), 'lv.test_case_id', 'c.id')
+      .leftJoin('test_case_versions as v', (j) => j.onRef('v.test_case_id', '=', 'c.id').onRef('v.version_number', '=', 'lv.vn'))
+      .selectAll('c')
+      .select(['v.id as lv_id', 'v.version_number as lv_number', 'v.status as lv_status', 'v.updated_at as lv_updated_at'])
+      .where('c.project_id', '=', projectId);
+    if (filters.externalIds?.length) query = query.where('c.external_id', 'in', filters.externalIds);
+    if (filters.suiteIds?.length) query = query.where('c.test_suite_id', 'in', filters.suiteIds);
+    if (filters.versionStatuses?.length) query = query.where('v.status', 'in', filters.versionStatuses);
+    if (filters.priorities?.length) query = query.where('c.priority', 'in', filters.priorities);
+    const cursor = decodeCursor(page.cursor);
+    if (cursor) {
+      query = query.where((eb) => eb.or([eb('c.created_at', '>', cursor.ts), eb.and([eb('c.created_at', '=', cursor.ts), eb('c.id', '>', cursor.id)])]));
+    }
+    const rows = await query.orderBy('c.created_at', 'asc').orderBy('c.id', 'asc').limit(page.limit + 1).execute();
+    const paged = toPage(rows, page.limit, (r) => ({ ts: r.created_at, id: r.id }));
+    return {
+      next_cursor: paged.next_cursor,
+      rows: paged.rows.map(({ lv_id, lv_number, lv_status, lv_updated_at, ...c }) => ({
+        ...c,
+        latest_version: lv_id ? { id: lv_id, version_number: lv_number as number, status: lv_status as string, updated_at: lv_updated_at as string } : null,
+      })),
+    };
   }
 
   async update(id: string, input: UpdateTestCaseInput): Promise<TestCase | undefined> {

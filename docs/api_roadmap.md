@@ -21,10 +21,10 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 **Weak:**
 1. ~~**Mostly undocumented.**~~ Every route is on `/docs` with its fields, allowed values and errors (step 3), with a getting-started guide ([api_getting_started.md](api_getting_started.md)), the conventions in RFC 03 §1-4 and the reports in [reports_api_and_mcp.md](reports_api_and_mcp.md).
 2. ~~**Inconsistent, because it grew feature by feature.**~~ Fixed by step 1 (2026-10-11/12). Before, some addresses sat under a project and others didn't, errors came in two shapes, and runs were `builds` in addresses and fields.
-3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
+3. ~~**No paging.**~~ The lists that grow (a project's cases, a run's results, the audit log, case history) are paged with `limit`/`cursor` (step 4, 2026-10-12). Short lists stay whole.
 4. ~~**No machine-readable description.**~~ The OpenAPI spec (`/docs/json`) and docs page (`/docs`) cover every route (step 3). Report outputs are described only at the top level so far.
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
-6. **Reads are coarse** (step 8): no fetching a single item by id, no dedicated list of a run's results, readable ids (SHOP-12) accepted almost nowhere, only a case's latest version.
+6. ~~**Reads are coarse.**~~ Single items by id, a run's results, a project's cases, version history, and readable ids (SHOP-12) wherever a case id is taken (step 8, 2026-10-12).
 7. ~~**API tokens reach global admin routes.**~~ Fixed 2026-10-12 (see below).
 
 ---
@@ -140,7 +140,7 @@ Many tools read that format, so the one file gives:
 
 ### 4. Paging and filtering for lists
 
-**Status:** Not started
+**Status:** Done (2026-10-12, with step 8). Paged: `GET /projects/{id}/cases`, `GET /runs/{id}/results`, `GET /admin/audit-logs`, the case-history report. Filters: cases by readable id, suite (with sub-suites), latest version status, priority; results by verdict, case, source, latest only; audit entries by action, actor, since.
 
 **What:**
 - Lists return a page at a time (e.g. 100) with a way to ask for the next page.
@@ -187,7 +187,7 @@ Many tools read that format, so the one file gives:
 
 ### 8. Fill the read gaps
 
-**Status:** In progress (with step 4). Part 1 of 3 done (2026-10-12): single items by id, version history, readable ids everywhere.
+**Status:** In progress (with step 4). Parts 1-2 of 3 done (2026-10-12): single items by id, version history, readable ids everywhere; a run's results and a project's cases (paged). Left: changing one report-schedule recipient.
 
 **What:** reads a script needs and doesn't have today:
 - **Single items by id:** `GET /projects/{id}`, `/plans/{id}`, `/runs/{id}`, `/suites/{id}`, `/cases/{id}` (the case with its latest version and steps), `/results/{id}` (with step results). Today only lists exist, or the whole project's tree.

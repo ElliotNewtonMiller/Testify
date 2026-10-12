@@ -69,7 +69,7 @@ The API serves two kinds of client:
 - **Readable case ids:** wherever a case id is taken (`:caseId`, `test_case_id`, `case_ids`), the case's readable id works too, e.g. `GET /cases/SHOP-12`. Readable ids are normally unique, but imported cases keep the ids from their file, so two projects can share one; then the request's project (from its other ids, or an API token's project) decides, and without one the answer is `400 AMBIGUOUS_CASE_ID`.
 - **The project comes from the ids:** the server works out the project from every id a request names (in the path, query and JSON body) and checks permissions in that project. A request naming ids from two projects is refused with `400 PROJECTS_DIFFER`. An API token is refused on any project but its own (`403 TOKEN_PROJECT_MISMATCH`), and on routes that aren't part of a project at all, such as `/admin/...` (`403 TOKEN_NOT_ALLOWED`).
 - **Authentication:** every route except sign-in and `GET /api/v1/health` needs a credential (§7.1, RFC 04 §4).
-- **Paging:** none yet; lists return everything. The case-history report is the exception: it pages with `limit` and `cursor`, returning `next_cursor`.
+- **Paging:** lists that grow without bound are paged: a project's cases (`GET /projects/{projectId}/cases`), a run's results (`GET /runs/{runId}/results`), the audit log, and the case-history report. Each takes `limit` (a default and a maximum per list) and `cursor`, and answers `next_cursor`: pass it as `cursor` for the next page; it is null on the last page. Cursors are opaque (keyset paging, so a page never skips or repeats an item when new ones arrive); one the server didn't give out gets `400 INVALID_CURSOR`. Lists that stay small (projects, suites in the spec tree, plans, runs, versions, tokens, users) return everything.
 - **Validation:** input is checked before anything is written; a bad request gets a `400` naming each problem field in `invalid_params` (§4).
 
 ---
@@ -82,12 +82,12 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 | :--- | :--- |
 | Sign-in | `POST /auth/login` (`session: "cookie"` for the web app), `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/me` (`username`, `email`, `password`, `current_password`) |
 | Projects | `GET`/`POST /projects`, `GET`/`PATCH`/`DELETE /projects/{projectId}` |
-| Specification | `GET /projects/{projectId}/spec-tree?test_plan_id=&include_deprecated=`, `POST /projects/{projectId}/move`, `POST /projects/{projectId}/suites`, `GET`/`PATCH`/`DELETE /suites/{suiteId}`, `POST /projects/{projectId}/cases`, `GET`/`PATCH`/`DELETE /cases/{caseId}` (the case with its latest version) |
+| Specification | `GET /projects/{projectId}/spec-tree?test_plan_id=&include_deprecated=`, `POST /projects/{projectId}/move`, `POST /projects/{projectId}/suites`, `GET`/`PATCH`/`DELETE /suites/{suiteId}`, `GET /projects/{projectId}/cases` (paged; filters `external_id`, `test_suite_id` + `include_sub_suites`, `version_status`, `priority`), `POST /projects/{projectId}/cases`, `GET`/`PATCH`/`DELETE /cases/{caseId}` (the case with its latest version) |
 | Versions | `GET /cases/{caseId}/versions` (every version, newest first), `GET /cases/{caseId}/versions/latest`, `POST /cases/{caseId}/versions` (a new draft from the latest version), `GET`/`PATCH /versions/{versionId}`, `POST /versions/{versionId}/approve`, `/deprecate`, `/restore` |
 | Custom field values | `GET /cases/{caseId}/custom-fields`, `PUT`/`DELETE /cases/{caseId}/custom-fields/{definitionId}`; the same under `/suites/{suiteId}` |
 | Search | `POST /projects/{projectId}/case-search`, `GET /projects/{projectId}/case-search/fields` |
 | Plans | `GET`/`POST /projects/{projectId}/plans`, `GET`/`PATCH`/`DELETE /plans/{planId}`, `GET /plans/{planId}/cases?test_run_id=` (the plan's cases with each one's latest result in the run: Execute mode's queue), `POST /plans/{planId}/cases` (`test_case_id`), `DELETE /plans/{planId}/cases/{caseId}`, `POST`/`DELETE /plans/{planId}/suites/{suiteId}/cases` (every case in the suite's subtree) |
-| Runs and results | `GET`/`POST /plans/{planId}/runs`, `GET`/`PATCH`/`DELETE /runs/{runId}`, `POST /runs/{runId}/results` (one result), `POST /runs/{runId}/results/batch` (CI, §3) |
+| Runs and results | `GET`/`POST /plans/{planId}/runs`, `GET`/`PATCH`/`DELETE /runs/{runId}`, `GET /runs/{runId}/results` (paged, newest first; filters `verdict`, `test_case_id`, `source`, `latest_only`), `GET /results/{resultId}`, `POST /runs/{runId}/results` (one result), `POST /runs/{runId}/results/batch` (CI, §3) |
 | Reports | `GET /projects/{projectId}/reports` (the catalog), `POST /projects/{projectId}/reports/{reportId}[?format=json\|markdown\|csv]` |
 | Report email | `POST /projects/{projectId}/report-emails`, `GET`/`POST /projects/{projectId}/report-schedules`, `PUT`/`DELETE /report-schedules/{scheduleId}`, `POST /report-schedules/{scheduleId}/send-now` |
 | Import | `POST /projects/{projectId}/imports/dry-run`, `POST /projects/{projectId}/imports/execute`, `GET /projects/{projectId}/imports/custom-field-options` (§6) |
@@ -96,7 +96,7 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 | Users and roles | `GET`/`POST /admin/users`, `PATCH /admin/users/{userId}` (status), `PATCH /admin/users/{userId}/roles`, `GET`/`PUT /admin/users/{userId}/permission-overrides[?project_id=]`, `POST /admin/users/{userId}/reset-password`, `GET`/`POST /admin/roles`, `PATCH`/`DELETE /admin/roles/{roleId}`, `GET /admin/permissions` |
 | Custom field definitions | `GET`/`POST /admin/custom-fields`, `PATCH`/`DELETE /admin/custom-fields/{fieldId}` |
 | Email settings | `GET`/`PUT /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email` |
-| Audit | `GET /admin/audit-logs` (the Security Audit Log) |
+| Audit | `GET /admin/audit-logs` (the Security Audit Log; paged, filters `action`, `actor_id`, `since`) |
 | Operations | `GET /health` (no sign-in) |
 | MCP | `POST /mcp` (not under `/api/v1`; read-only tools, see [reports_api_and_mcp.md](reports_api_and_mcp.md)) |
 
@@ -264,7 +264,7 @@ The codes a client is most likely to handle (the code is always in `code`; `deta
 
 | Status | Codes |
 | :--- | :--- |
-| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
+| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `INVALID_CURSOR`, `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
 | `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
 | `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `TOKEN_NOT_ALLOWED` (an API token on a route outside any project), `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
 | `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |

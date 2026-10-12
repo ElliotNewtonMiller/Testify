@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { UserRepository, RoleRepository, SessionRepository, ApiTokenRepository, RoleName } from '@testify/db';
+import { UserRepository, RoleRepository, SessionRepository, ApiTokenRepository, RoleName, decodeCursor, toPage } from '@testify/db';
+import { commaList, readPage } from '../paging.js';
 import { authenticateRequest, requirePermission } from '../middleware/auth.js';
 import { sendRoleInUseError, sendError } from '../errors.js';
 import { AdminGuard, AdminGuardError } from '../services/adminGuard.js';
@@ -362,7 +363,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
   });
 
   // GET /api/v1/admin/audit-logs - Filtered Security Audit Log Viewer (Gated by USER_MANAGE or SYSTEM_ADMIN)
-  app.get('/api/v1/admin/audit-logs', { schema: A.auditLogSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async () => {
+  app.get('/api/v1/admin/audit-logs', { schema: A.auditLogSchema, preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const securityActions = [
       'USER_CREATED',
       'USER_DISABLED',
@@ -390,15 +391,26 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       'ACCOUNT_UNLOCKED',
     ];
 
-    const logs = await db
-      .selectFrom('audit_logs')
-      .selectAll()
-      .where('action', 'in', securityActions)
-      .orderBy('created_at', 'desc')
-      .limit(100)
-      .execute();
+    const query = request.query as { action?: string; actor_id?: string; since?: string };
+    const page = readPage(request, reply, A.AUDIT_PAGE.defaultLimit);
+    if (!page) return reply;
+    const since = query.since ? new Date(query.since) : null;
+    if (since && Number.isNaN(since.getTime())) {
+      return sendError(reply, 400, 'since must be an ISO 8601 date or date-time, e.g. 2026-10-01T00:00:00Z', {
+        invalid_params: [{ name: 'since', reason: 'must be an ISO 8601 date-time' }],
+      });
+    }
 
-    return { audit_logs: logs };
+    let logsQuery = db.selectFrom('audit_logs').selectAll().where('action', 'in', commaList(query.action) ?? securityActions);
+    if (query.actor_id) logsQuery = logsQuery.where('actor_id', '=', query.actor_id);
+    if (since) logsQuery = logsQuery.where('created_at', '>=', since.toISOString());
+    const cursor = decodeCursor(page.cursor);
+    if (cursor) {
+      logsQuery = logsQuery.where((eb) => eb.or([eb('created_at', '<', cursor.ts), eb.and([eb('created_at', '=', cursor.ts), eb('id', '<', cursor.id)])]));
+    }
+    const rows = await logsQuery.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(page.limit + 1).execute();
+    const { rows: audit_logs, next_cursor } = toPage(rows, page.limit, (r) => ({ ts: String(r.created_at), id: r.id }));
+    return { audit_logs, next_cursor };
   });
 
   // GET /api/v1/admin/permissions - The permission-key registry, for rendering toggle

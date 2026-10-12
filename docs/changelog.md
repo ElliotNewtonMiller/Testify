@@ -2112,3 +2112,25 @@ Tests:
 - `migrations.test.ts` +1 (009 and its rollback). `openapi.test.ts` now expects 91 routes.
 
 626 tests pass and typecheck is clean.
+
+## Added: paged lists of a project's cases, a run's results and the audit log (API roadmap steps 8 and 4, part 2) (2026-10-12)
+
+Scripts could only read a run's results through the Execute queue (latest verdict only), the reports or an export, and could only list cases by loading the whole spec tree. The audit log stopped at the latest 100 entries. Elliot chose paging only for the lists that grow; short lists stay whole and the web app is unchanged.
+
+- **Paging convention:** `limit` (a default and a maximum per list) and `cursor` in; `next_cursor` out, null on the last page. Cursors are keyset positions (time and id), so a page never skips or repeats an item when new ones arrive. A cursor the server didn't give out gets `400 INVALID_CURSOR`, including on the case-history report, which used to ignore it.
+  - `packages/db/src/paging.ts`: `encodeCursor`, `decodeCursor`, `toPage` (moved out of the result repository, now shared).
+  - `apps/server/src/paging.ts`: `readPage` (reads `limit` and `cursor`, answers the 400) and `commaList`.
+- **`GET /api/v1/projects/{projectId}/cases`** (`SPEC_VIEW`): every case, oldest first, 100 a page (at most 500), each with a summary of its latest version. Filters: `external_id` (comma list), `test_suite_id` with `include_sub_suites`, `version_status`, `priority`.
+- **`GET /api/v1/runs/{runId}/results`** (`SPEC_VIEW` or `EXECUTE_RUN`): every result in the run, newest first, 100 a page (at most 1,000), with its case, version, duration, notes, failure message, stack trace, environment, runner, source, who recorded it (`tested_by`) and step results. Filters: `verdict` (comma list), `test_case_id` (readable ids work), `source` (UI or API), `latest_only` (each case's latest result, what reports count).
+- **`GET /api/v1/results/{resultId}`**: one result in the same shape. Project resolution and the API-token route check now know `:resultId`.
+- **`GET /api/v1/admin/audit-logs`** is paged (100, at most 500) and filters by `action` (comma list; any action, not only the security ones), `actor_id` and `since`. The Admin Panel reads the first page as before.
+- **Shared:** `services/actorNames.ts` (user and token names) is used by the reports and the result list. A `RunResult` schema in the OpenAPI spec.
+- **Docs:** RFC 03 (paging convention, route map, `INVALID_CURSOR`), the roadmap (step 4 done, step 8 parts 1-2; also removed four Decisions rows that the last commit had added twice), CLAUDE.md/AGENTS.md.
+
+Tests:
+- `apps/server/tests/api_lists.test.ts` (4):
+  - cases: four pages of 3 cover all 10 exactly once; each filter; a bad status, limit and cursor;
+  - results: four pages of 1; UI and CI fields; each filter and `latest_only`; one result by id; 404s; a token reads its own project's results and is refused another's;
+  - audit log: pages of 2, newest first; `action`, `actor_id`, `since`; a bad `since` and cursor;
+  - the case-history report refuses a made-up cursor.
+- `openapi.test.ts` now expects 94 routes; the response check covers every new response.

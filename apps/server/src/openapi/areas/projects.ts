@@ -1,4 +1,4 @@
-import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, handlerValidated, oneOf, VERDICTS, STEP_VERDICTS, RESULT_STATUSES, PLAN_STATUSES, RUN_STATUSES } from '../schemas.js';
+import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, handlerValidated, oneOf, VERDICTS, STEP_VERDICTS, RESULT_STATUSES, PLAN_STATUSES, RUN_STATUSES, pageQuery, NEXT_CURSOR } from '../schemas.js';
 
 /** Route schemas for routes/projects.ts, the run list in routes/exports.ts, routes/results.ts and routes/batchExecution.ts. */
 
@@ -341,4 +341,45 @@ export const getRunSchema = {
   description: 'Needs `SPEC_VIEW` or `EXECUTE_RUN`. Its results: `GET /api/v1/runs/{runId}/results`; a summary: the `run_summary` report.',
   params: idParams('runId'),
   response: { 200: wrapped('run', 'Run', 'The run'), ...authedErrors(404) },
+};
+
+// ---- Reading results ----
+
+export const RESULT_PAGE = { defaultLimit: 100, maxLimit: 1000 };
+
+export const listRunResultsSchema = {
+  tags: ['Runs and results'],
+  summary: "A run's results",
+  description:
+    'Every result recorded in the run, newest first, a page at a time (`limit`, then `cursor` = the previous `next_cursor` until it is null). ' +
+    "A case re-run several times has several results; `latest_only=true` keeps only each case's latest, which is what reports count. " +
+    'Cases without a result have none here: for the whole plan with each case\'s state, use the `run_summary` report or `GET /api/v1/plans/{planId}/cases?test_run_id=`. Needs `SPEC_VIEW` or `EXECUTE_RUN`.',
+  params: idParams('runId'),
+  querystring: {
+    type: 'object',
+    properties: {
+      verdict: { type: 'string', description: `Comma-separated: ${VERDICTS.join(', ')}` },
+      test_case_id: { type: 'string', description: 'One case: its id or readable id (SHOP-12)' },
+      source: oneOf(['UI', 'API'], 'UI: recorded one at a time (Execute mode, or `POST /runs/{runId}/results`); API: a CI batch'),
+      latest_only: { type: 'boolean', description: "Only each case's latest result" },
+      ...pageQuery(RESULT_PAGE.defaultLimit, RESULT_PAGE.maxLimit),
+    },
+  },
+  response: {
+    200: {
+      description: 'A page of results',
+      type: 'object',
+      required: ['results', 'next_cursor'],
+      properties: { results: { type: 'array', items: { $ref: 'RunResult#' } }, next_cursor: NEXT_CURSOR },
+    },
+    ...authedErrors([400, '`INVALID_CURSOR`, `AMBIGUOUS_CASE_ID`, or an invalid filter (`invalid_params` names it)'], 404),
+  },
+};
+
+export const getResultSchema = {
+  tags: ['Runs and results'],
+  summary: 'A result',
+  description: 'One result, in the same shape as the run\'s result list. Needs `SPEC_VIEW` or `EXECUTE_RUN`.',
+  params: idParams('resultId'),
+  response: { 200: wrapped('result', 'RunResult', 'The result'), ...authedErrors(404) },
 };

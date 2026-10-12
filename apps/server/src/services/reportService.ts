@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { Database, TestSuiteNode, FinalResultRow, CustomFieldDefinition } from '@testify/db';
+import { decodeCursor } from '@testify/db';
 import {
   TestRunRepository,
   CustomFieldRepository,
@@ -34,6 +35,7 @@ import {
   type RunSummaryReport,
 } from '@testify/core';
 import { CaseFilterService } from './caseFilterService.js';
+import { actorNames } from './actorNames.js';
 
 /** Thrown for a request the report can't serve (unknown/cross-project id, bad param). The
  * route and the MCP tools turn it into a 4xx / a tool error. */
@@ -229,17 +231,8 @@ export class ReportService {
   }
 
   /** Display names for testers: users by username, machine API tokens by token name. */
-  private async actorNames(ids: Iterable<string | null>): Promise<Map<string, string>> {
-    const unique = [...new Set([...ids].filter((id): id is string => Boolean(id)))];
-    if (unique.length === 0) return new Map();
-    const [users, tokens] = await Promise.all([
-      this.db.selectFrom('users').select(['id', 'username']).where('id', 'in', unique).execute(),
-      this.db.selectFrom('api_tokens').select(['id', 'name']).where('id', 'in', unique).execute(),
-    ]);
-    const names = new Map<string, string>();
-    for (const u of users) names.set(u.id, u.username);
-    for (const t of tokens) names.set(t.id, `${t.name} (API token)`);
-    return names;
+  private actorNames(ids: Iterable<string | null>): Promise<Map<string, string>> {
+    return actorNames(this.db, ids);
   }
 
   /** The set of case ids a report `filter` selects, or null when there's no filter. */
@@ -436,6 +429,9 @@ export class ReportService {
   }
 
   async caseHistory(projectId: string, p: { test_case_id: string; limit: number; cursor?: string }): Promise<ReportOutput> {
+    if (p.cursor && !decodeCursor(p.cursor)) {
+      throw new ReportError(400, 'INVALID_CURSOR', "cursor isn't one this server gave out: use the previous page's next_cursor, or leave it out for the first page", { param: 'cursor' });
+    }
     const ctx = await this.projectContext(projectId);
     const testCase =
       ctx.caseById.get(p.test_case_id) ?? ctx.cases.find((c) => c.external_id.toLowerCase() === p.test_case_id.toLowerCase());

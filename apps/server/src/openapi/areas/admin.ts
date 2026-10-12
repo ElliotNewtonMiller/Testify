@@ -1,4 +1,4 @@
-import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, oneOf, handlerValidated, PERMISSIONS_LIST, CUSTOM_FIELD_TYPES } from '../schemas.js';
+import { authedErrors, wrapped, list, NO_CONTENT, FORCE_QUERY, idParams, oneOf, handlerValidated, PERMISSIONS_LIST, CUSTOM_FIELD_TYPES, pageQuery, NEXT_CURSOR } from '../schemas.js';
 
 /**
  * Route schemas for the Admin Panel's routes: users, roles and overrides and the audit log
@@ -199,16 +199,29 @@ export const deleteRoleSchema = {
   response: { 204: NO_CONTENT, ...authedErrors(GUARD_403, 404, [409, '`ROLE_IN_USE`']) },
 };
 
+export const AUDIT_PAGE = { defaultLimit: 100, maxLimit: 500 };
+
 export const auditLogSchema = {
   tags: AUDIT,
   summary: 'Security audit log',
   description:
-    'The latest 100 security entries (sign-in locks, users, roles, tokens, imports, exports, report emails, ...), newest first. Every entry is permanent. Needs `USER_MANAGE`.' + NO_TOKENS,
+    'Security entries (sign-in locks, users, roles, tokens, imports, exports, report emails, ...), newest first, a page at a time (`limit`, then `cursor` = the previous `next_cursor` until it is null). ' +
+    'With `action`, entries with those actions instead (any action, security or not). Every entry is permanent. Needs `USER_MANAGE`.' +
+    NO_TOKENS,
+  querystring: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', description: 'Actions, comma-separated, e.g. `API_TOKEN_GENERATED,API_TOKEN_REVOKED`' },
+      actor_id: { type: 'string', description: 'Only entries by this user or API token' },
+      since: { type: 'string', description: 'Only entries at or after this time (ISO 8601)' },
+      ...pageQuery(AUDIT_PAGE.defaultLimit, AUDIT_PAGE.maxLimit),
+    },
+  },
   response: {
     200: {
-      description: 'The entries',
+      description: 'A page of entries',
       type: 'object',
-      required: ['audit_logs'],
+      required: ['audit_logs', 'next_cursor'],
       properties: {
         audit_logs: {
           type: 'array',
@@ -230,9 +243,10 @@ export const auditLogSchema = {
             },
           },
         },
+        next_cursor: NEXT_CURSOR,
       },
     },
-    ...authedErrors(),
+    ...authedErrors([400, '`INVALID_CURSOR`, or `since` isn\'t a date']),
   },
 };
 

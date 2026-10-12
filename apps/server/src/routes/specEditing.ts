@@ -15,6 +15,8 @@ import { validateStepsInput } from '../services/stepValidation.js';
 import type { InvalidParam } from '../services/resultValidation.js';
 import { requestOrigin, type RequestOrigin } from '../audit.js';
 import * as S from '../openapi/areas/spec.js';
+import { PRIORITIES, VERSION_STATUSES } from '../openapi/schemas.js';
+import { commaList, readPage } from '../paging.js';
 
 /**
  * Create/edit/delete for Test Suites and Test Cases (including versioned content:
@@ -224,6 +226,31 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     const testCase = await caseRepo.findById(caseId);
     if (!testCase || testCase.project_id !== request.projectId) return sendError(reply, 404, 'Test case not found');
     return { versions: await versionRepo.findAllForCase(caseId) };
+  });
+
+  app.get('/api/v1/projects/:projectId/cases', { schema: S.listCasesSchema, preHandler: specView }, async (request, reply) => {
+    const projectId = request.projectId!;
+    const query = request.query as { external_id?: string; test_suite_id?: string; include_sub_suites?: boolean; version_status?: string; priority?: string };
+    const page = readPage(request, reply, S.CASE_PAGE.defaultLimit);
+    if (!page) return reply;
+    const versionStatuses = commaList(query.version_status)?.map((v) => v.toUpperCase());
+    const priorities = commaList(query.priority)?.map((v) => v.toUpperCase());
+    const invalid: InvalidParam[] = [];
+    if (versionStatuses?.some((v) => !(VERSION_STATUSES as readonly string[]).includes(v))) {
+      invalid.push({ name: 'version_status', reason: `must be one of: ${VERSION_STATUSES.join(', ')}` });
+    }
+    if (priorities?.some((v) => !(PRIORITIES as readonly string[]).includes(v))) invalid.push({ name: 'priority', reason: `must be one of: ${PRIORITIES.join(', ')}` });
+    if (invalid.length) return sendError(reply, 400, invalid.map((p) => `${p.name} ${p.reason}`).join('; '), { invalid_params: invalid });
+
+    let suiteIds: string[] | undefined;
+    if (query.test_suite_id) {
+      const suite = await suiteRepo.findById(query.test_suite_id);
+      if (!suite || suite.project_id !== projectId) return sendError(reply, 404, 'Test suite not found');
+      suiteIds = [suite.id];
+      if (query.include_sub_suites) suiteIds.push(...(await suiteRepo.findDescendants(suite.id)).map((d) => d.id));
+    }
+    const { rows, next_cursor } = await caseRepo.listPage(projectId, { externalIds: commaList(query.external_id), suiteIds, versionStatuses, priorities }, page);
+    return { cases: rows, next_cursor };
   });
 
   app.get('/api/v1/versions/:versionId', { schema: S.getVersionSchema, preHandler: specView }, async (request, reply) => {

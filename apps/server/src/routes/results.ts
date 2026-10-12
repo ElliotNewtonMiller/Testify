@@ -1,14 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
-import type { Database } from '@testify/db';
+import { TestResultRepository, type Database, type RunResultRow } from '@testify/db';
 import { sendCaseRemovedFromPlanError, sendProblemDetails, sendError, sendRunClosedError } from '../errors.js';
 import { validateManualResult } from '../services/resultValidation.js';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
-import { requirePermission } from '../middleware/auth.js';
+import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { autoCloseRunIfComplete } from '../runAutoClose.js';
 import { requestOrigin } from '../audit.js';
-import { recordResultSchema } from '../openapi/areas/projects.js';
+import { recordResultSchema, listRunResultsSchema, getResultSchema, RESULT_PAGE } from '../openapi/areas/projects.js';
+import { actorNames } from '../services/actorNames.js';
+import { commaList, readPage } from '../paging.js';
+import { VERDICTS } from '../openapi/schemas.js';
 
 /**
  * POST /api/v1/runs/:runId/results -- records one result for a case in a run (what Execute
@@ -187,4 +190,62 @@ export async function registerResultRoutes(app: FastifyInstance, db: Kysely<Data
       run_status: runStatus,
     });
   });
+
+  // ---- Reading results ----
+
+  const resultRepo = new TestResultRepository(db);
+  const executionRead = requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret);
+
+  app.get('/api/v1/runs/:runId/results', { schema: listRunResultsSchema, preHandler: executionRead }, async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const query = request.query as { verdict?: string; test_case_id?: string; source?: string; latest_only?: boolean };
+    const page = readPage(request, reply, RESULT_PAGE.defaultLimit);
+    if (!page) return reply;
+    const verdicts = commaList(query.verdict)?.map((v) => v.toUpperCase());
+    const unknown = verdicts?.filter((v) => !(VERDICTS as readonly string[]).includes(v)) ?? [];
+    if (unknown.length) {
+      return sendError(reply, 400, `Unknown verdict ${unknown.join(', ')}: use ${VERDICTS.join(', ')}`, {
+        invalid_params: [{ name: 'verdict', reason: `must be one of: ${VERDICTS.join(', ')}` }],
+      });
+    }
+    const run = await db.selectFrom('test_runs').select('id').where('id', '=', runId).executeTakeFirst();
+    if (!run) return sendError(reply, 404, 'Run not found');
+
+    const { rows, next_cursor } = await resultRepo.listForRun(
+      runId,
+      { verdicts, testCaseId: query.test_case_id, source: query.source, latestOnly: query.latest_only === true },
+      page
+    );
+    return { results: await presentResults(db, rows), next_cursor };
+  });
+
+  app.get('/api/v1/results/:resultId', { schema: getResultSchema, preHandler: executionRead }, async (request, reply) => {
+    const { resultId } = request.params as { resultId: string };
+    const row = await resultRepo.getRunResult(resultId);
+    if (!row) return sendError(reply, 404, 'Result not found');
+    return { result: (await presentResults(db, [row]))[0] };
+  });
+}
+
+/** JSON text stored for CI results (environment, runner) back to objects. */
+function parseJson(text: string | null): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Result rows as the API answers them (the RunResult schema). */
+async function presentResults(db: Kysely<Database>, rows: RunResultRow[]) {
+  const names = await actorNames(db, rows.map((r) => r.tester_id));
+  return rows.map(({ test_result_id, steps, environment, runner, ...r }) => ({
+    id: test_result_id,
+    ...r,
+    environment: parseJson(environment),
+    runner: parseJson(runner),
+    tested_by: names.get(r.tester_id) ?? r.tester_id,
+    step_results: steps.map((st) => ({ test_step_id: st.test_step_id, step_number: st.step_number, verdict: st.verdict, actual_result: st.actual_result })),
+  }));
 }

@@ -422,9 +422,58 @@ export const SHARED_SCHEMAS: Schema[] = [
       children: { type: 'array', items: { $ref: 'ImportPreviewNode#' } },
     },
   },
+  {
+    $id: 'RunResult',
+    type: 'object',
+    description: 'A result recorded in a run, with its case, the version it was recorded against, who recorded it and its step results.',
+    required: ['id', 'test_run_id', 'test_plan_case_id', 'test_case_id', 'external_id', 'title', 'test_case_version_id', 'version_number', 'verdict', 'status', 'duration_ms', 'notes', 'failure_message', 'stack_trace', 'environment', 'runner', 'source', 'tester_id', 'tested_by', 'executed_at', 'created_at', 'step_results'],
+    properties: {
+      id: str('The result id (test_result_id)'),
+      test_run_id: str(),
+      test_plan_case_id: str(),
+      test_case_id: str(),
+      external_id: str('The case\'s readable id, e.g. SHOP-101'),
+      title: str("The case's current title"),
+      test_case_version_id: str('The version the result was recorded against'),
+      version_number: { type: ['integer', 'null'] },
+      verdict: oneOf(VERDICTS),
+      status: oneOf(RESULT_STATUSES),
+      duration_ms: { type: ['integer', 'null'], description: 'Only CI results are timed; manual results are null.' },
+      notes: nullableStr(),
+      failure_message: nullableStr(),
+      stack_trace: nullableStr(),
+      environment: { type: ['object', 'null'], description: "CI results: the item's `environment_tags`, or `{ \"environment\": ... }` from the batch's `environment`" },
+      runner: { type: ['object', 'null'], description: 'As sent in a CI batch' },
+      source: { type: ['string', 'null'], description: 'UI (Execute mode, or one result through the API) or API (a CI batch)' },
+      tester_id: str('A user id, or an API token id'),
+      tested_by: str('The username, or "<name> (API token)"'),
+      executed_at: timestamp(),
+      created_at: timestamp(),
+      step_results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['test_step_id', 'step_number', 'verdict', 'actual_result'],
+          properties: { test_step_id: str(), step_number: { type: 'integer' }, verdict: oneOf(STEP_VERDICTS), actual_result: nullableStr() },
+        },
+      },
+    },
+  },
 ];
 
 // ---- Helpers for route schemas ----
+
+/** The properties of a shared schema, to build a variant of it (e.g. a case plus a summary of its latest version). */
+export function sharedProperties(id: string): Record<string, Schema> {
+  const shared = SHARED_SCHEMAS.find((s) => s.$id === id);
+  if (!shared) throw new Error(`No shared schema ${id}`);
+  return { ...(shared.properties as Record<string, Schema>) };
+}
+
+/** A shared schema's required fields. */
+export function sharedRequired(id: string): string[] {
+  return [...((SHARED_SCHEMAS.find((s) => s.$id === id)?.required as string[]) ?? [])];
+}
 
 /** A JSON response containing one item wrapped in its name, e.g. `{ "plan": { ... } }`. */
 export function wrapped(key: string, ref: string, description: string): Schema {
@@ -464,6 +513,17 @@ export function errors(...statuses: Array<number | [number, string]>): Record<st
 export function authedErrors(...more: Array<number | [number, string]>): Record<string, Schema> {
   return errors(401, 403, 429, ...more);
 }
+
+/** `limit` and `cursor` for a paged list (merge into its querystring `properties`). */
+export function pageQuery(defaultLimit: number, maxLimit: number): Record<string, Schema> {
+  return {
+    limit: { type: 'integer', minimum: 1, maximum: maxLimit, description: `Items per page: default ${defaultLimit}, at most ${maxLimit}.` },
+    cursor: { type: 'string', description: "The previous page's `next_cursor`; leave out for the first page." },
+  };
+}
+
+/** `next_cursor` in a paged list's response. */
+export const NEXT_CURSOR: Schema = { type: ['string', 'null'], description: 'Pass as `cursor` for the next page; null on the last page.' };
 
 /** `?force=true` for "delete anyway". */
 export const FORCE_QUERY: Schema = {

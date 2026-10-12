@@ -10,6 +10,11 @@ import {
   PRIORITIES,
   EXECUTION_TYPES,
   VERDICTS,
+  VERSION_STATUSES,
+  pageQuery,
+  NEXT_CURSOR,
+  sharedProperties,
+  sharedRequired,
 } from '../schemas.js';
 
 /**
@@ -589,4 +594,54 @@ export const getVersionSchema = {
   description: 'Needs `SPEC_VIEW`.',
   params: idParams('versionId'),
   response: { 200: wrapped('version', 'Version', 'The version'), ...authedErrors(404) },
+};
+
+// ---- The case list ----
+
+export const CASE_PAGE = { defaultLimit: 100, maxLimit: 500 };
+
+export const listCasesSchema = {
+  tags: SPEC,
+  summary: "A project's test cases",
+  description:
+    'Every case in the project, oldest first, a page at a time (`limit`, then `cursor` = the previous `next_cursor` until it is null), each with a summary of its latest version. ' +
+    'Comma-separated lists filter by any of their values. For full content, `GET /api/v1/cases/{caseId}`; to search by text or custom fields, `POST /api/v1/projects/{projectId}/case-search`. Needs `SPEC_VIEW`.',
+  params: idParams('projectId'),
+  querystring: {
+    type: 'object',
+    properties: {
+      external_id: { type: 'string', description: 'Readable ids, comma-separated: `SHOP-1,SHOP-7`' },
+      test_suite_id: { type: 'string', description: 'Only cases directly in this suite' },
+      include_sub_suites: { type: 'boolean', description: 'With `test_suite_id`: also the cases in the suites below it' },
+      version_status: { type: 'string', description: `Latest version's status, comma-separated: ${VERSION_STATUSES.join(', ')}` },
+      priority: { type: 'string', description: `Comma-separated: ${PRIORITIES.join(', ')}` },
+      ...pageQuery(CASE_PAGE.defaultLimit, CASE_PAGE.maxLimit),
+    },
+  },
+  response: {
+    200: {
+      description: 'A page of cases',
+      type: 'object',
+      required: ['cases', 'next_cursor'],
+      properties: {
+        cases: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: [...sharedRequired('TestCase'), 'latest_version'],
+            properties: {
+              ...sharedProperties('TestCase'),
+              latest_version: {
+                type: ['object', 'null'],
+                required: ['id', 'version_number', 'status', 'updated_at'],
+                properties: { id: { type: 'string' }, version_number: { type: 'integer' }, status: oneOf(VERSION_STATUSES), updated_at: { type: 'string' } },
+              },
+            },
+          },
+        },
+        next_cursor: NEXT_CURSOR,
+      },
+    },
+    ...authedErrors([400, '`INVALID_CURSOR`, or an invalid filter (`invalid_params` names it)'], 404),
+  },
 };

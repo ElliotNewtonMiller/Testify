@@ -47,7 +47,7 @@ declare module 'fastify' {
  *
  * The project comes from every id the request names:
  * - path params `:projectId`, `:planId`, `:runId`, `:caseId`, `:suiteId`, `:versionId`,
- *   `:scheduleId`, `:tokenId` (a case may be named by its readable id, e.g. SHOP-12);
+ *   `:scheduleId`, `:tokenId`, `:resultId` (a case may be named by its readable id, e.g. SHOP-12);
  * - `project_id`, `test_plan_id`, `test_run_id`, `test_case_id`, `test_suite_id` in the query or
  *   JSON body.
  * They must all belong to the same project, or the request is refused (`PROJECTS_DIFFER`) -- so a
@@ -97,6 +97,17 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   }
   if (params.scheduleId) add(await db.selectFrom('report_schedules').select('project_id').where('id', '=', params.scheduleId).executeTakeFirst());
   if (params.tokenId) add(await db.selectFrom('api_tokens').select('project_id').where('id', '=', params.tokenId).executeTakeFirst());
+  if (params.resultId) {
+    add(
+      await db
+        .selectFrom('test_results')
+        .innerJoin('test_runs', 'test_runs.id', 'test_results.test_run_id')
+        .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
+        .select('test_plans.project_id')
+        .where('test_results.id', '=', params.resultId)
+        .executeTakeFirst()
+    );
+  }
   // A case id, or its readable id (SHOP-12; see caseRefs.ts). Last, so a readable id shared by
   // several projects can be settled by the project the other ids name -- or, failing that, by
   // `projectHint` (an API token's own project).
@@ -154,7 +165,7 @@ export async function apiTokenIssuerAccess(
 }
 
 /** A route address names a project item when it has one of these parameters. */
-const PROJECT_ROUTE_PARAM = /:(projectId|planId|runId|caseId|suiteId|versionId|scheduleId|tokenId)\b/;
+const PROJECT_ROUTE_PARAM = /:(projectId|planId|runId|resultId|caseId|suiteId|versionId|scheduleId|tokenId)\b/;
 /** The routes outside any project that a token may still use: each stays within the token's project. */
 const TOKEN_PROJECTLESS_ROUTES = new Set([
   'GET /api/v1/auth/me', // who am I
