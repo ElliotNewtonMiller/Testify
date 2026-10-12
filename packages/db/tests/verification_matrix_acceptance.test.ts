@@ -10,8 +10,8 @@ import {
   TestCaseRepository,
   TestCaseVersionRepository,
   TestPlanRepository,
-  BuildRepository,
-  ExecutionRepository,
+  TestRunRepository,
+  TestResultRepository,
   AuditLogRepository,
 } from '../src/repositories/index.js';
 
@@ -26,8 +26,8 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
   let caseRepo: TestCaseRepository;
   let versionRepo: TestCaseVersionRepository;
   let planRepo: TestPlanRepository;
-  let buildRepo: BuildRepository;
-  let execRepo: ExecutionRepository;
+  let runRepo: TestRunRepository;
+  let execRepo: TestResultRepository;
   let auditRepo: AuditLogRepository;
 
   beforeEach(async () => {
@@ -39,8 +39,8 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     caseRepo = new TestCaseRepository(db);
     versionRepo = new TestCaseVersionRepository(db);
     planRepo = new TestPlanRepository(db);
-    buildRepo = new BuildRepository(db);
-    execRepo = new ExecutionRepository(db);
+    runRepo = new TestRunRepository(db);
+    execRepo = new TestResultRepository(db);
     auditRepo = new AuditLogRepository(db);
   });
 
@@ -148,7 +148,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     });
 
     const plan = await planRepo.create({ project_id: project.id, name: 'Move Test Plan' });
-    const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
+    const build = await runRepo.create({ test_plan_id: plan.id, name: 'Build 1' });
     const planCase = await planRepo.addCase({
       test_plan_id: plan.id,
       test_case_id: testCase.id,
@@ -156,7 +156,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     });
 
     const exec = await execRepo.create({
-      build_id: build.id,
+      test_run_id: build.id,
       test_plan_case_id: planCase.id,
       tester_id: 'tester_01',
       status: 'COMPLETED',
@@ -200,7 +200,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     });
 
     const plan = await planRepo.create({ project_id: project.id, name: 'Regression Plan' });
-    const build = await buildRepo.create({ test_plan_id: plan.id, name: 'v1.0' });
+    const build = await runRepo.create({ test_plan_id: plan.id, name: 'v1.0' });
     const planCase = await planRepo.addCase({
       test_plan_id: plan.id,
       test_case_id: testCase.id,
@@ -209,7 +209,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
 
     // Historical execution recorded under Version 1
     const execV1 = await execRepo.create({
-      build_id: build.id,
+      test_run_id: build.id,
       test_plan_case_id: planCase.id,
       tester_id: 'tester_qa',
       status: 'COMPLETED',
@@ -293,7 +293,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     });
 
     const plan = await planRepo.create({ project_id: project.id, name: 'Closed Sprint Plan', status: 'ARCHIVED' });
-    const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Build 1.0', status: 'CLOSED' });
+    const build = await runRepo.create({ test_plan_id: plan.id, name: 'Build 1.0', status: 'CLOSED' });
 
     // Business rule check for build status CLOSED / plan ARCHIVED
     let writeError: string | null = null;
@@ -432,7 +432,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     const tc = await caseRepo.create({ project_id: proj.id, test_suite_id: suite.id, external_id: 'FIN-1', title: 'Final Case' });
     const ver = await versionRepo.create({ test_case_id: tc.id, version_number: 1, status: 'APPROVED', summary: 'Final Version', author_id: 'user_author_01' });
     const plan = await planRepo.create({ project_id: proj.id, name: 'Final Plan' });
-    const build = await buildRepo.create({ test_plan_id: plan.id, name: 'Final Build' });
+    const build = await runRepo.create({ test_plan_id: plan.id, name: 'Final Build' });
     const planCase = await planRepo.addCase({
       test_plan_id: plan.id,
       test_case_id: tc.id,
@@ -440,7 +440,7 @@ describe('Phase 4 Acceptance Test Suite: Verification Matrix', () => {
     });
 
     const exec = await execRepo.create({
-      build_id: build.id,
+      test_run_id: build.id,
       test_plan_case_id: planCase.id,
       tester_id: 'qa_lead',
       status: 'COMPLETED',

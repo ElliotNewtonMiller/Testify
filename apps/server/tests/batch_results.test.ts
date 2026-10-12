@@ -69,18 +69,18 @@ describe('Batch results: validation, steps and transactions', () => {
     expect(r[3].invalid_params.map((p: any) => p.name).sort()).toEqual(['executions[3].duration_ms', 'executions[3].executed_at']);
     expect(r[4].invalid_params[0].name).toBe('executions[4].step_results[0].verdict');
     expect(r[5].invalid_params[0].name).toBe('executions[5].case_identifier');
-    expect(await count('executions')).toBe(1);
+    expect(await count('test_results')).toBe(1);
 
     const atomic = await batch([item('PASSED', {}, 'SHOP-105'), item('nope'), item('PASSED', { status: 'x' })], true);
     expect(atomic.statusCode).toBe(400);
     expect(body(atomic).code).toBe('INVALID_RESULT');
     expect(body(atomic).invalid_params.map((p: any) => p.name)).toEqual(['executions[1].verdict', 'executions[2].status']);
-    expect(await count('executions')).toBe(1);
+    expect(await count('test_results')).toBe(1);
 
     for (const executions of [[], 'all of them', null]) {
       const res = await batch(executions);
       expect(res.statusCode).toBe(400);
-      expect(body(res).invalid_params[0].name).toBe('executions');
+      expect(body(res).invalid_params[0].name).toBe('test_results');
     }
   });
 
@@ -107,27 +107,27 @@ describe('Batch results: validation, steps and transactions', () => {
     expect(r[4].invalid_params[0].reason).toBe('repeats a step already given');
 
     const steps = await db
-      .selectFrom('execution_steps')
+      .selectFrom('test_step_results')
       .select(['test_step_id', 'step_number', 'verdict', 'actual_result'])
-      .where('execution_id', '=', r[0].execution_id)
+      .where('test_result_id', '=', r[0].execution_id)
       .orderBy('step_number')
       .execute();
     expect(steps).toEqual([
       { test_step_id: shop101.steps[0].id, step_number: 1, verdict: 'PASSED', actual_result: null },
       { test_step_id: shop101.steps[1].id, step_number: 2, verdict: 'FAILED', actual_result: 'boom' },
     ]);
-    expect(await count('execution_steps')).toBe(2);
+    expect(await count('test_step_results')).toBe(2);
   });
 
   it('a refused batch in atomic mode leaves nothing behind, auto-linked cases included', async () => {
     const outside = await caseOutsidePlan('Batch atomic link');
-    const before = { executions: await count('executions'), audit: await count('audit_logs') };
+    const before = { executions: await count('test_results'), audit: await count('audit_logs') };
 
     const rejected = await batch([item('PASSED', {}, outside.external_id), item('PASSED', {}, 'NOPE-404')], true);
     expect(rejected.statusCode).toBe(422);
     expect(body(rejected).code).toBe('CASE_NOT_FOUND');
     expect(await linkCount(outside.id)).toBe(0);
-    expect(await count('executions')).toBe(before.executions);
+    expect(await count('test_results')).toBe(before.executions);
     expect(await count('audit_logs')).toBe(before.audit);
 
     // Not atomic: an item refused for its steps doesn't link its case either...
@@ -150,8 +150,8 @@ describe('Batch results: validation, steps and transactions', () => {
     const res = await batch(big);
     expect(res.statusCode).toBe(201);
     expect(body(res).summary).toMatchObject({ successful: 2000, failed: 0 });
-    expect(await count('executions')).toBe(2000);
-    expect(await count('execution_steps')).toBe(2000);
+    expect(await count('test_results')).toBe(2000);
+    expect(await count('test_step_results')).toBe(2000);
     expect(Date.now() - started).toBeLessThan(15_000);
   });
 });

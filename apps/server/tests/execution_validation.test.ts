@@ -12,7 +12,7 @@ describe('Recording a single result: validation', () => {
   const queue = async () =>
     body(await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers })).cases;
   const record = (payload: unknown) => app.inject({ method: 'POST', url: '/api/v1/executions', headers, payload });
-  const executionCount = async () => Number((await db.selectFrom('executions').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
+  const executionCount = async () => Number((await db.selectFrom('test_results').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
 
   beforeEach(async () => {
     ({ app, db, seed } = await createServer());
@@ -110,9 +110,9 @@ describe('Recording a single result: validation', () => {
     });
     expect(ok.statusCode).toBe(201);
     const steps = await db
-      .selectFrom('execution_steps')
+      .selectFrom('test_step_results')
       .select(['test_step_id', 'step_number', 'verdict', 'actual_result'])
-      .where('execution_id', '=', body(ok).id)
+      .where('test_result_id', '=', body(ok).id)
       .orderBy('step_number')
       .execute();
     expect(steps).toEqual([

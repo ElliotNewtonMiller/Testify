@@ -17,8 +17,8 @@ describe('Core Operational Loop E2E Integration Test', () => {
   /** Reads every result, step result and audit row straight from the database. (This used to be a
    * public GET /api/v1/executions/verify route -- removed: it needed no login and dumped everything.) */
   async function readExecutionTables(db: Kysely<Database>) {
-    const executions = await db.selectFrom('executions').selectAll().orderBy('created_at', 'desc').execute();
-    const steps = await db.selectFrom('execution_steps').selectAll().execute();
+    const executions = await db.selectFrom('test_results').selectAll().orderBy('created_at', 'desc').execute();
+    const steps = await db.selectFrom('test_step_results').selectAll().execute();
     const auditLogs = await db.selectFrom('audit_logs').selectAll().execute();
     return { total_executions: executions.length, executions, steps, auditLogs };
   }
@@ -120,7 +120,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
     expect(exec1).toBeDefined();
     expect(exec1.verdict).toBe('PASSED');
     expect(exec1.status).toBe('COMPLETED');
-    expect(exec1.build_id).toBe(seed.buildId);
+    expect(exec1.test_run_id).toBe(seed.buildId);
     expect(exec1.test_plan_case_id).toBe(case1.plan_case_id);
     // tester_id is the real authenticated caller now, not the old hardcoded 'usr_tester_01' stub.
     expect(exec1.tester_id).toBe(adminId);

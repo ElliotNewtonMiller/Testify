@@ -54,7 +54,7 @@ Many tools read that format, so the one file gives:
 
 ### 1. Make the API consistent
 
-**Status:** Not started
+**Status:** In progress. Plan: shallow addresses, short path names, database renamed too, no aliases (Decisions below). Stage 1 of 4 (database rename) done 2026-10-11.
 
 **What:** decide the conventions, then change the routes to follow them:
 - one address style (everything under `/projects/{projectId}/...`, or flat resources);
@@ -73,7 +73,7 @@ Many tools read that format, so the one file gives:
 
 ### 2. Version the API
 
-**Status:** Not started
+**Status:** Decided (2026-10-11): the cleaned-up API from step 1 becomes the stable `/api/v1`, with no aliases for old addresses.
 
 **What:** decide how the API changes once it's published.
 
@@ -173,3 +173,8 @@ Many tools read that format, so the one file gives:
 | Date | Decision | Notes |
 | :--- | :--- | :--- |
 | 2026-10-11 | Prefer an OpenAPI spec with a served docs page over a hand-written reference. | Recommended; confirm during planning. |
+| 2026-10-11 | Shallow addresses: lists and creation under the parent (`/projects/{id}/plans`), each item by its own id (`/plans/{id}`). | Chosen over fully nested and flat. |
+| 2026-10-11 | Short path names: `/suites`, `/cases`, `/versions`, `/plans`, `/runs`, `/results`. | |
+| 2026-10-11 | Rename in the database too: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`. | Migration `007`. |
+| 2026-10-11 | Id fields use the database column names (`test_plan_id`, `test_run_id`, ...) everywhere in the API. | One name per id, no translation layer. |
+| 2026-10-11 | No aliases: old addresses change outright; the cleaned-up API becomes the stable `/api/v1` (step 2). | Nothing outside Testify uses the API yet. |

@@ -98,7 +98,7 @@ describe('Production: the server serves the built web app', () => {
 });
 
 describe('Production: the build runs with plain Node', () => {
-  it('builds dist/server.js, which starts with node and serves the API and the web app', async () => {
+  it('test_runs dist/server.js, which starts with node and serves the API and the web app', async () => {
     const built = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: serverDir, encoding: 'utf8', timeout: 60_000 });
     expect(built.status).toBe(0);
 

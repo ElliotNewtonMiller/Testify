@@ -66,7 +66,7 @@ describe('Project scoping on routes not nested under /projects/:projectId', () =
     }
 
     // Nothing changed in project A.
-    expect(await db.selectFrom('executions').select('id').execute()).toEqual([]);
+    expect(await db.selectFrom('test_results').select('id').execute()).toEqual([]);
     expect((await db.selectFrom('test_plan_cases').select('id').where('test_plan_id', '=', seed.planId).execute()).length).toBe(10);
 
     // The token still works on its own project.
@@ -97,7 +97,7 @@ describe('Project scoping on routes not nested under /projects/:projectId', () =
     const pcNow = await planCaseA();
     const rec = await call(token, 'POST', '/api/v1/executions', { build_id: seed.buildId, test_plan_case_id: pcNow.id, verdict: 'PASSED' });
     expect(rec.statusCode).toBe(403);
-    expect(await db.selectFrom('executions').select('id').execute()).toEqual([]);
+    expect(await db.selectFrom('test_results').select('id').execute()).toEqual([]);
   });
 
   it('refuses a request whose ids belong to different projects', async () => {

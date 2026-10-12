@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { BuildRepository, CustomFieldRepository, ProjectRepository, TestCaseVersionRepository, TestPlanRepository } from '@testify/db';
+import { TestRunRepository, CustomFieldRepository, ProjectRepository, TestCaseVersionRepository, TestPlanRepository } from '@testify/db';
 import { REPORT_CATALOG, REPORT_DEFINITIONS, renderRunSummaryMarkdown, validateReportParams, type ReportDefinition, type RunSummaryReport } from '@testify/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -61,7 +61,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
   const caseFilter = new CaseFilterService(db);
   const projectRepo = new ProjectRepository(db);
   const planRepo = new TestPlanRepository(db);
-  const buildRepo = new BuildRepository(db);
+  const runRepo = new TestRunRepository(db);
   const versionRepo = new TestCaseVersionRepository(db);
   const customFieldRepo = new CustomFieldRepository(db);
 
@@ -110,7 +110,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
         const plans = (await planRepo.findByProject(projectId)).filter((p) => args.include_archived || p.status !== 'ARCHIVED');
         const out = [];
         for (const plan of plans) {
-          const runs = await buildRepo.findByTestPlan(plan.id);
+          const runs = await runRepo.findByTestPlan(plan.id);
           out.push({
             id: plan.id,
             name: plan.name,

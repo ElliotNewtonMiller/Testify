@@ -1,9 +1,9 @@
 import type { Kysely } from 'kysely';
 import type { Database, TestSuiteNode, FinalResultRow, CustomFieldDefinition } from '@testify/db';
 import {
-  BuildRepository,
+  TestRunRepository,
   CustomFieldRepository,
-  ExecutionRepository,
+  TestResultRepository,
   ProjectRepository,
   TestCaseRepository,
   TestPlanRepository,
@@ -64,7 +64,7 @@ const SLOWING_THRESHOLD = 1.2;
 const ALWAYS_FAILING_MIN_RUNS = 3;
 
 type CaseRow = Awaited<ReturnType<TestCaseRepository['findByProjectWithLatestVersion']>>[number];
-type Build = NonNullable<Awaited<ReturnType<BuildRepository['findById']>>>;
+type Build = NonNullable<Awaited<ReturnType<TestRunRepository['findById']>>>;
 type Plan = NonNullable<Awaited<ReturnType<TestPlanRepository['findById']>>>;
 
 interface ProjectContext {
@@ -98,8 +98,8 @@ function byExternalId(a: { external_id: string }, b: { external_id: string }) {
 export class ReportService {
   private projectRepo: ProjectRepository;
   private planRepo: TestPlanRepository;
-  private buildRepo: BuildRepository;
-  private executionRepo: ExecutionRepository;
+  private runRepo: TestRunRepository;
+  private resultRepo: TestResultRepository;
   private caseRepo: TestCaseRepository;
   private suiteRepo: TestSuiteRepository;
   private customFieldRepo: CustomFieldRepository;
@@ -108,8 +108,8 @@ export class ReportService {
   constructor(private db: Kysely<Database>) {
     this.projectRepo = new ProjectRepository(db);
     this.planRepo = new TestPlanRepository(db);
-    this.buildRepo = new BuildRepository(db);
-    this.executionRepo = new ExecutionRepository(db);
+    this.runRepo = new TestRunRepository(db);
+    this.resultRepo = new TestResultRepository(db);
     this.caseRepo = new TestCaseRepository(db);
     this.suiteRepo = new TestSuiteRepository(db);
     this.customFieldRepo = new CustomFieldRepository(db);
@@ -208,7 +208,7 @@ export class ReportService {
   }
 
   private async resolveRun(projectId: string, runId: string, param = 'run_id'): Promise<{ run: Build; plan: Plan }> {
-    const run = await this.buildRepo.findById(runId);
+    const run = await this.runRepo.findById(runId);
     const plan = run ? await this.planRepo.findById(run.test_plan_id) : undefined;
     if (!run || !plan || plan.project_id !== projectId) {
       throw new ReportError(404, 'RUN_NOT_FOUND', `Test run '${runId}' not found in this project`, { param });
@@ -276,7 +276,7 @@ export class ReportService {
           const r = byKey.get(`${runId}|${caseId}`);
           return {
             verdict: r?.verdict ?? null,
-            duration_ms: r?.execution_duration_ms ?? null,
+            duration_ms: r?.duration_ms ?? null,
             attempts: r?.attempts ?? 0,
             had_pass: r?.had_pass ?? false,
             had_fail: r?.had_fail ?? false,
@@ -297,7 +297,7 @@ export class ReportService {
     const ctx = await this.projectContext(projectId);
     const { run, plan } = await this.resolveRun(projectId, p.run_id);
 
-    const planRuns = await this.buildRepo.findByTestPlan(plan.id); // newest first
+    const planRuns = await this.runRepo.findByTestPlan(plan.id); // newest first
     const idx = planRuns.findIndex((r) => r.id === run.id);
     const historyRuns = planRuns.slice(idx, idx + HISTORY_WINDOW).reverse(); // oldest -> this run
     const historyIds = historyRuns.map((r) => r.id);
@@ -310,14 +310,14 @@ export class ReportService {
       compare = { run: planRuns[idx + 1], plan };
     }
 
-    const history = await this.executionRepo.getFinalResultsForRuns(plan.id, historyIds);
+    const history = await this.resultRepo.getFinalResultsForRuns(plan.id, historyIds);
     const byRun = ReportService.groupByRun(history);
     let baseRows: FinalResultRow[] = [];
     if (compare) {
       baseRows =
         compare.plan.id === plan.id && byRun.has(compare.run.id)
           ? byRun.get(compare.run.id)!
-          : await this.executionRepo.getFinalResultsForRuns(compare.plan.id, [compare.run.id]);
+          : await this.resultRepo.getFinalResultsForRuns(compare.plan.id, [compare.run.id]);
     }
 
     const filterSet = await this.applyFilter(projectId, p.filter, plan.id, run.id);
@@ -326,7 +326,7 @@ export class ReportService {
     baseRows = baseRows.filter(keep);
 
     const verdictSummary = summarizeVerdicts(headRows.map((r) => r.verdict));
-    const durations = headRows.map((r) => r.execution_duration_ms).filter((d): d is number => typeof d === 'number');
+    const durations = headRows.map((r) => r.duration_ms).filter((d): d is number => typeof d === 'number');
     const summary = {
       ...verdictSummary,
       attempts: headRows.reduce((n, r) => n + r.attempts, 0),
@@ -375,7 +375,7 @@ export class ReportService {
           verdict: r.verdict!,
           failure_message: r.failure_message,
           notes: r.notes,
-          executed_at: r.execution_timestamp,
+          executed_at: r.executed_at,
           tested_by: r.tester_id ? names.get(r.tester_id) ?? r.tester_id : null,
           source: r.source,
           attempts: r.attempts,
@@ -421,7 +421,7 @@ export class ReportService {
           failing_since: f?.failing_since?.run_name ?? '',
           flaky: f ? (f.flaky ? 'yes' : 'no') : '',
           attempts: r.attempts,
-          executed_at: r.execution_timestamp ?? '',
+          executed_at: r.executed_at ?? '',
           tested_by: r.tester_id ? names.get(r.tester_id) ?? r.tester_id : '',
         };
       })
@@ -442,19 +442,19 @@ export class ReportService {
     if (!testCase) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${p.case_id}' not found in this project`, { param: 'case_id' });
 
     const [page, timeline] = await Promise.all([
-      this.executionRepo.getCaseHistory(testCase.id, { limit: p.limit, cursor: p.cursor }),
-      this.executionRepo.getCaseVerdictTimeline(testCase.id),
+      this.resultRepo.getCaseHistory(testCase.id, { limit: p.limit, cursor: p.cursor }),
+      this.resultRepo.getCaseVerdictTimeline(testCase.id),
     ]);
     const names = await this.actorNames(page.rows.map((r) => r.tester_id));
     const executions = page.rows.map((r) => ({
-      execution_id: r.execution_id,
-      executed_at: r.execution_timestamp,
+      execution_id: r.test_result_id,
+      executed_at: r.executed_at,
       verdict: r.verdict,
       status: r.status,
       run: { id: r.run_id, name: r.run_name },
       plan: { id: r.plan_id, name: r.plan_name },
       version_number: r.version_number,
-      duration_ms: r.execution_duration_ms,
+      duration_ms: r.duration_ms,
       tested_by: names.get(r.tester_id) ?? r.tester_id,
       source: r.source,
       notes: r.notes,
@@ -490,11 +490,11 @@ export class ReportService {
   async planTrend(projectId: string, p: { plan_id: string; runs: number; filter?: unknown }): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
     const plan = await this.resolvePlan(projectId, p.plan_id);
-    const planRuns = await this.buildRepo.findByTestPlan(plan.id);
+    const planRuns = await this.runRepo.findByTestPlan(plan.id);
     // One extra (older) run so the first point also gets a "new failures" count.
     const window = planRuns.slice(0, p.runs + 1).reverse();
     const shown = window.slice(window.length > p.runs ? 1 : 0);
-    const rows = await this.executionRepo.getFinalResultsForRuns(plan.id, window.map((r) => r.id));
+    const rows = await this.resultRepo.getFinalResultsForRuns(plan.id, window.map((r) => r.id));
     const filterSet = await this.applyFilter(projectId, p.filter, plan.id, null);
     const kept = filterSet ? rows.filter((r) => filterSet.has(r.test_case_id)) : rows;
     const byRun = ReportService.groupByRun(kept);
@@ -536,12 +536,12 @@ export class ReportService {
   ): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
     const plan = await this.resolvePlan(projectId, p.plan_id);
-    const runs = (await this.buildRepo.findByTestPlan(plan.id)).slice(0, p.runs).reverse();
+    const runs = (await this.runRepo.findByTestPlan(plan.id)).slice(0, p.runs).reverse();
     const runIds = runs.map((r) => r.id);
     const [rows, pinned, lastExecuted] = await Promise.all([
-      this.executionRepo.getFinalResultsForRuns(plan.id, runIds),
+      this.resultRepo.getFinalResultsForRuns(plan.id, runIds),
       this.planRepo.getPinnedCases(plan.id),
-      this.executionRepo.getLastExecutedAtByCase(projectId),
+      this.resultRepo.getLastExecutedAtByCase(projectId),
     ]);
     const filterSet = await this.applyFilter(projectId, p.filter, plan.id, null);
     const planCaseIds = pinned.map((pc) => pc.test_case_id).filter((id) => !filterSet || filterSet.has(id));
@@ -654,7 +654,7 @@ export class ReportService {
 
     const [pinned, finals] = await Promise.all([
       this.planRepo.getPinnedCases(plan.id),
-      run ? this.executionRepo.getFinalResultsForRuns(plan.id, [run.id]) : Promise.resolve([] as FinalResultRow[]),
+      run ? this.resultRepo.getFinalResultsForRuns(plan.id, [run.id]) : Promise.resolve([] as FinalResultRow[]),
     ]);
     const inPlan = new Set(pinned.map((pc) => pc.test_case_id));
     const finalByCase = new Map(finals.map((r) => [r.test_case_id, r]));
@@ -760,13 +760,13 @@ export class ReportService {
 
     const planSummaries = [];
     for (const plan of plans) {
-      const runs = await this.buildRepo.findByTestPlan(plan.id);
+      const runs = await this.runRepo.findByTestPlan(plan.id);
       const [latest, previous] = runs;
       if (!latest) {
         planSummaries.push({ plan: { id: plan.id, name: plan.name }, latest_run: null, previous_run: null, summary: null, new_failures: null, fixed: null });
         continue;
       }
-      const rows = await this.executionRepo.getFinalResultsForRuns(plan.id, previous ? [latest.id, previous.id] : [latest.id]);
+      const rows = await this.resultRepo.getFinalResultsForRuns(plan.id, previous ? [latest.id, previous.id] : [latest.id]);
       const byRun = ReportService.groupByRun(rows);
       const head = byRun.get(latest.id) ?? [];
       const counts = previous
@@ -795,11 +795,11 @@ export class ReportService {
       .filter((c) => c.latest_version?.status === 'DRAFT')
       .map((c) => ({ ...this.caseRef(ctx, c.id), version_number: c.latest_version!.version_number, waiting_days: daysBetween(c.latest_version!.updated_at, nowIso) ?? 0 }))
       .sort((a, b) => b.waiting_days - a.waiting_days);
-    const lastExecuted = await this.executionRepo.getLastExecutedAtByCase(projectId);
+    const lastExecuted = await this.resultRepo.getLastExecutedAtByCase(projectId);
     const neverExecuted = ctx.cases.filter((c) => c.latest_version?.status !== 'DEPRECATED' && !lastExecuted.has(c.id)).length;
 
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (p.days - 1)));
-    const activityRows = await this.executionRepo.getActivity(projectId, start.toISOString());
+    const activityRows = await this.resultRepo.getActivity(projectId, start.toISOString());
     const byDay = new Map<string, { day: string; ui: number; api: number; total: number }>();
     for (let i = 0; i < p.days; i++) {
       const day = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);

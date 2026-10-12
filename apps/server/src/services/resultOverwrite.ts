@@ -31,11 +31,11 @@ export async function latestResultsInRun(
 ): Promise<Map<string, LatestRunResult>> {
   if (testCaseIds && testCaseIds.length === 0) return new Map();
   let query = db
-    .selectFrom('executions as e')
+    .selectFrom('test_results as e')
     .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
     .select(['tpc.test_case_id', 'e.verdict', 'e.tester_id'])
-    .where('e.build_id', '=', buildId)
-    .orderBy('e.execution_timestamp', 'desc')
+    .where('e.test_run_id', '=', buildId)
+    .orderBy('e.executed_at', 'desc')
     .orderBy('e.created_at', 'desc');
   if (testCaseIds) query = query.where('tpc.test_case_id', 'in', testCaseIds);
   const latest = new Map<string, LatestRunResult>();

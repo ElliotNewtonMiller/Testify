@@ -9,8 +9,8 @@ import {
   TestCaseRepository,
   TestCaseVersionRepository,
   TestPlanRepository,
-  BuildRepository,
-  ExecutionRepository,
+  TestRunRepository,
+  TestResultRepository,
   AuditLogRepository,
 } from '../src/index.js';
 
@@ -21,8 +21,8 @@ describe('Repositories', () => {
   let caseRepo: TestCaseRepository;
   let versionRepo: TestCaseVersionRepository;
   let planRepo: TestPlanRepository;
-  let buildRepo: BuildRepository;
-  let executionRepo: ExecutionRepository;
+  let runRepo: TestRunRepository;
+  let resultRepo: TestResultRepository;
   let auditLogRepo: AuditLogRepository;
 
   beforeEach(async () => {
@@ -34,8 +34,8 @@ describe('Repositories', () => {
     caseRepo = new TestCaseRepository(db);
     versionRepo = new TestCaseVersionRepository(db);
     planRepo = new TestPlanRepository(db);
-    buildRepo = new BuildRepository(db);
-    executionRepo = new ExecutionRepository(db);
+    runRepo = new TestRunRepository(db);
+    resultRepo = new TestResultRepository(db);
     auditLogRepo = new AuditLogRepository(db);
   });
 
@@ -226,7 +226,7 @@ describe('Repositories', () => {
       name: 'Sprint 1 Plan',
     });
 
-    const build = await buildRepo.create({
+    const build = await runRepo.create({
       test_plan_id: plan.id,
       name: 'v1.0-rc1',
     });
@@ -240,12 +240,12 @@ describe('Repositories', () => {
     expect(planCase.test_case_version_id).toBe(version.id);
 
     // Record Single Execution
-    const exec = await executionRepo.create({
-      build_id: build.id,
+    const exec = await resultRepo.create({
+      test_run_id: build.id,
       test_plan_case_id: planCase.id,
       tester_id: 'tester_01',
       verdict: 'PASSED',
-      execution_duration_ms: 500,
+      duration_ms: 500,
       notes: 'Executed cleanly',
       steps: [
         {
@@ -263,29 +263,29 @@ describe('Repositories', () => {
     // Two more results for the same case (e.g. CI retries), without step results.
     const retries = [];
     for (const [verdict, ms] of [['PASSED', 120], ['FAILED', 300]] as const) {
-      retries.push(await executionRepo.create({
-        build_id: build.id,
+      retries.push(await resultRepo.create({
+        test_run_id: build.id,
         test_plan_case_id: planCase.id,
         tester_id: 'ci_bot',
         verdict,
-        execution_duration_ms: ms,
+        duration_ms: ms,
       }));
     }
 
-    const allExecsForBuild = await executionRepo.findByBuild(build.id);
+    const allExecsForBuild = await resultRepo.findByRun(build.id);
     expect(allExecsForBuild).toHaveLength(3);
 
-    // getExecutionStepsForExecutions: batched sibling of getExecutionSteps, built for
+    // getStepResultsForResults: batched sibling of getStepResults, built for
     // export -- one query for every execution's steps instead of one call per execution.
-    const stepsMap = await executionRepo.getExecutionStepsForExecutions(allExecsForBuild.map((e) => e.id));
-    expect(stepsMap.get(exec.id)).toEqual(await executionRepo.getExecutionSteps(exec.id));
+    const stepsMap = await resultRepo.getStepResultsForResults(allExecsForBuild.map((e) => e.id));
+    expect(stepsMap.get(exec.id)).toEqual(await resultRepo.getStepResults(exec.id));
     expect(stepsMap.get(exec.id)).toHaveLength(1);
     // The 2 retries had no step results -- no map entry, matching the same
     // "group what exists" convention as the other batched methods.
     for (const be of retries) {
       expect(stepsMap.has(be.id)).toBe(false);
     }
-    expect(await executionRepo.getExecutionStepsForExecutions([])).toEqual(new Map());
+    expect(await resultRepo.getStepResultsForResults([])).toEqual(new Map());
   });
 
   it('TestCaseRepository.findByProjectWithLatestVersion / findBySuiteIds', async () => {

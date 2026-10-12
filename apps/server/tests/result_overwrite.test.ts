@@ -35,7 +35,7 @@ describe('EXECUTE_OVERWRITE', () => {
       headers: auth(token),
       payload: { executions },
     });
-  const resultCount = async () => Number((await db.selectFrom('executions').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
+  const resultCount = async () => Number((await db.selectFrom('test_results').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
 
   beforeEach(async () => {
     ({ app, db, seed } = await createServer());

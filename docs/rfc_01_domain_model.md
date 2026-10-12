@@ -41,16 +41,16 @@ This RFC sets out the domain model, schema, state machines and extension model. 
             | 1                                                   | 1
             | N                                                   | N
 +-----------------------+ 1                  N +-------------------------------------+
-|   Test Run (builds)   |--------------------->|          Result (executions)        |
+|   Test Run            |--------------------->|          Result                     |
 +-----------------------+                      +-------------------------------------+
                                                                   | 1
                                                                   | N
                                                +-------------------------------------+
-                                               |      Step Result (execution_steps)  |
+                                               |      Step Result                    |
                                                +-------------------------------------+
 ```
 
-The user-facing name is **test run**; the database and much of the code still say `build`.
+Tables: `test_runs`, `test_results`, `test_step_results` (renamed from `builds`, `executions` and `execution_steps` in migration `007`). Parts of the API and code still say `build` and `execution`.
 
 ### Core Constraints & Guarantees
 
@@ -136,13 +136,13 @@ erDiagram
     test_case_versions ||--o{ test_steps : contains
     test_case_versions ||--o{ test_plan_cases : pinned_in
 
-    test_plans ||--o{ builds : "test runs"
+    test_plans ||--o{ test_runs : runs
     test_plans ||--o{ test_plan_cases : selects
 
-    builds ||--o{ executions : results
-    test_plan_cases ||--o{ executions : results
-    executions ||--o{ execution_steps : "step results"
-    test_steps ||--o{ execution_steps : refers
+    test_runs ||--o{ test_results : results
+    test_plan_cases ||--o{ test_results : results
+    test_results ||--o{ test_step_results : "step results"
+    test_steps ||--o{ test_step_results : refers
 
     custom_field_definitions ||--o{ custom_field_options : options
     custom_field_definitions ||--o{ custom_field_values : values
@@ -173,10 +173,10 @@ erDiagram
 | Table | Key columns | Notes |
 | :--- | :--- | :--- |
 | `test_plans` | `project_id`, `name`, `description`, `status` | Status is `ACTIVE`, `LOCKED` or `ARCHIVED`. |
-| `builds` (test runs) | `test_plan_id`, `name`, `description`, `status`, `release_date` | `UNIQUE (test_plan_id, name)`. Status is `OPEN` or `CLOSED`. |
+| `test_runs` | `test_plan_id`, `name`, `description`, `status`, `release_date` | `UNIQUE (test_plan_id, name)`. Status is `OPEN` or `CLOSED`. |
 | `test_plan_cases` | `test_plan_id`, `test_case_id`, `test_case_version_id`, `position`, `removed_at`, `removed_by` | Partial unique index `(test_plan_id, test_case_id) WHERE removed_at IS NULL`: one active link per case per plan, any number of retired ones. |
-| `executions` (results) | `build_id`, `test_plan_case_id`, `tester_id`, `status`, `verdict`, `execution_duration_ms`, `notes`, `failure_message`, `stack_trace`, `environment` (JSON), `runner` (JSON: name, run id, job, commit SHA, URL), `source` (`UI`/`API`), `execution_timestamp` | Verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `RETEST_REQUIRED`, `KNOWN_ISSUE`. Status: `COMPLETED` (default), `IN_PROGRESS`, `ABORTED`. Duration is null for manual results. `tester_id` is the user or API token that recorded it. |
-| `execution_steps` | `execution_id`, `test_step_id`, `step_number`, `verdict`, `actual_result` | Step verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `UNTESTED`. `test_step_id` is RESTRICT, so steps with results are kept. |
+| `test_results` | `test_run_id`, `test_plan_case_id`, `tester_id`, `status`, `verdict`, `duration_ms`, `notes`, `failure_message`, `stack_trace`, `environment` (JSON), `runner` (JSON: name, run id, job, commit SHA, URL), `source` (`UI`/`API`), `execution_timestamp` | Verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `RETEST_REQUIRED`, `KNOWN_ISSUE`. Status: `COMPLETED` (default), `IN_PROGRESS`, `ABORTED`. Duration is null for manual results. `tester_id` is the user or API token that recorded it. |
+| `test_step_results` | `test_result_id`, `test_step_id`, `step_number`, `verdict`, `actual_result` | Step verdicts: `PASSED`, `FAILED`, `BLOCKED`, `SKIPPED`, `UNTESTED`. `test_step_id` is RESTRICT, so steps with results are kept. |
 
 #### Custom fields
 
@@ -323,7 +323,7 @@ stateDiagram-v2
 
 Results aren't a state machine: each one is an immutable row.
 - **"Untested"** means a case has no result in that run.
-- **The latest result** for a case in a run, by `execution_timestamp` then `created_at`, is the case's verdict there. Recording another result needs `EXECUTE_OVERWRITE`, except re-sending your own latest verdict with notes.
+- **The latest result** for a case in a run, by `executed_at` then `created_at`, is the case's verdict there. Recording another result needs `EXECUTE_OVERWRITE`, except re-sending your own latest verdict with notes.
 - **Status values:** CI can send `IN_PROGRESS` or `ABORTED`; the web app always records `COMPLETED`.
 
 ### 7.4 Deleting

@@ -136,7 +136,7 @@ describe('Migration & CRUD Integrity', () => {
       .execute();
 
     await db
-      .insertInto('builds')
+      .insertInto('test_runs')
       .values({
         id: buildId,
         test_plan_id: planId,
@@ -165,17 +165,17 @@ describe('Migration & CRUD Integrity', () => {
 
     // 8. Record Execution Run
     await db
-      .insertInto('executions')
+      .insertInto('test_results')
       .values({
         id: execId,
-        build_id: buildId,
+        test_run_id: buildId,
         test_plan_case_id: planCaseId,
         tester_id: 'user_tester_01',
         status: 'COMPLETED',
         verdict: 'PASSED',
-        execution_duration_ms: 1250,
+        duration_ms: 1250,
         notes: 'Execution verified successfully',
-        execution_timestamp: now,
+        executed_at: now,
         created_at: now,
         updated_at: now,
       })
@@ -183,12 +183,12 @@ describe('Migration & CRUD Integrity', () => {
 
     // Query Assertion: Join Test Plan Case to Pinned Case Version and Execution
     const result = await db
-      .selectFrom('executions as e')
+      .selectFrom('test_results as e')
       .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
       .innerJoin('test_case_versions as tcv', 'tcv.id', 'tpc.test_case_version_id')
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
       .select([
-        'e.id as execution_id',
+        'e.id as test_result_id',
         'e.verdict as execution_verdict',
         'tc.external_id as case_code',
         'tc.title as case_title',
@@ -198,7 +198,7 @@ describe('Migration & CRUD Integrity', () => {
       .where('e.id', '=', execId)
       .executeTakeFirstOrThrow();
 
-    expect(result.execution_id).toBe(execId);
+    expect(result.test_result_id).toBe(execId);
     expect(result.execution_verdict).toBe('PASSED');
     expect(result.case_code).toBe('PARITY-101');
     expect(result.case_title).toBe('OAuth2 PKCE Token Flow');

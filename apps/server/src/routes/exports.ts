@@ -9,8 +9,8 @@ import {
   TestCaseRepository,
   TestCaseVersionRepository,
   TestPlanRepository,
-  BuildRepository,
-  ExecutionRepository,
+  TestRunRepository,
+  TestResultRepository,
   CustomFieldRepository,
   UserRepository,
 } from '@testify/db';
@@ -44,13 +44,13 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   const caseRepo = new TestCaseRepository(db);
   const versionRepo = new TestCaseVersionRepository(db);
   const planRepo = new TestPlanRepository(db);
-  const buildRepo = new BuildRepository(db);
-  const executionRepo = new ExecutionRepository(db);
+  const runRepo = new TestRunRepository(db);
+  const resultRepo = new TestResultRepository(db);
   const customFieldRepo = new CustomFieldRepository(db);
   const userRepo = new UserRepository(db);
 
   // GET .../plans/:planId/builds -- lightweight listing for the Export modal's Build
-  // picker. No existing route returns just a plan's builds (BuildRepository.findByTestPlan
+  // picker. No existing route returns just a plan's builds (TestRunRepository.findByTestPlan
   // is otherwise only ever called from inside the much heavier GET .../test-plans/:id/cases,
   // which also joins every case + step + latest execution -- too expensive just for a
   // dropdown). Needs SPEC_VIEW on the project, like every other read.
@@ -60,7 +60,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
     if (!plan || plan.project_id !== projectId) {
       return reply.status(404).send({ error: 'Test plan not found in this project' });
     }
-    const builds = await buildRepo.findByTestPlan(planId);
+    const builds = await runRepo.findByTestPlan(planId);
     return reply.status(200).send({ builds });
   });
 
@@ -278,19 +278,19 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
       const { format, plan_id: planId, build_id: buildId } = (request.body as any) || {};
 
       const buildPlanInfo = await db
-        .selectFrom('builds')
-        .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
+        .selectFrom('test_runs')
+        .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select([
-          'builds.id as build_id',
-          'builds.name as build_name',
-          'builds.status as build_status',
-          'builds.release_date',
+          'test_runs.id as test_run_id',
+          'test_runs.name as build_name',
+          'test_runs.status as build_status',
+          'test_runs.release_date',
           'test_plans.id as plan_id',
           'test_plans.name as plan_name',
           'test_plans.project_id',
         ])
-        .where('builds.id', '=', buildId)
-        .where('builds.test_plan_id', '=', planId)
+        .where('test_runs.id', '=', buildId)
+        .where('test_runs.test_plan_id', '=', planId)
         .executeTakeFirst();
 
       if (!buildPlanInfo || buildPlanInfo.project_id !== projectId) {
@@ -300,9 +300,9 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
       const project = await projectRepo.findById(projectId);
       if (!project) return reply.status(404).send({ error: 'Project not found' });
 
-      const executions = await executionRepo.findByBuild(buildId);
+      const executions = await resultRepo.findByRun(buildId);
       const executionIds = executions.map((e) => e.id);
-      const stepsByExecution = await executionRepo.getExecutionStepsForExecutions(executionIds);
+      const stepsByExecution = await resultRepo.getStepResultsForResults(executionIds);
 
       const planCaseIds = Array.from(new Set(executions.map((e) => e.test_plan_case_id)));
       const planCaseRows =
@@ -353,9 +353,9 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
           tester_username: usernameById.get(ex.tester_id) || null,
           status: ex.status,
           verdict: ex.verdict,
-          execution_duration_ms: ex.execution_duration_ms,
+          execution_duration_ms: ex.duration_ms,
           notes: ex.notes,
-          execution_timestamp: ex.execution_timestamp,
+          execution_timestamp: ex.executed_at,
           environment_tags: environmentTags,
           step_results: steps,
         };
@@ -367,7 +367,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         project: { id: project.id, name: project.name, prefix: project.prefix },
         plan: { id: buildPlanInfo.plan_id, name: buildPlanInfo.plan_name },
         build: {
-          id: buildPlanInfo.build_id,
+          id: buildPlanInfo.test_run_id,
           name: buildPlanInfo.build_name,
           status: buildPlanInfo.build_status,
           release_date: buildPlanInfo.release_date,

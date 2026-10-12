@@ -70,7 +70,7 @@ export interface TestPlansTable {
   updated_at: string;
 }
 
-export interface BuildsTable {
+export interface TestRunsTable {
   id: string;
   test_plan_id: string;
   name: string;
@@ -95,28 +95,28 @@ export interface TestPlanCasesTable {
   removed_by: string | null;
 }
 
-export interface ExecutionsTable {
+export interface TestResultsTable {
   id: string;
-  build_id: string;
+  test_run_id: string;
   test_plan_case_id: string;
   tester_id: string;
   status: Generated<string>; // 'UNTESTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED'
   verdict: string; // 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE'
-  execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
+  duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
   failure_message: string | null;
   stack_trace: string | null;
   environment: string | null; // JSON object of environment tags
   runner: string | null; // JSON: { name?, run_id?, job_name?, commit_sha?, url? }
   source: string | null; // 'UI' | 'API'
-  execution_timestamp: string;
+  executed_at: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface ExecutionStepsTable {
+export interface TestStepResultsTable {
   id: string;
-  execution_id: string;
+  test_result_id: string;
   test_step_id: string;
   step_number: number;
   verdict: string; // 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'UNTESTED'
@@ -300,10 +300,10 @@ export interface Database {
   test_case_versions: TestCaseVersionsTable;
   test_steps: TestStepsTable;
   test_plans: TestPlansTable;
-  builds: BuildsTable;
+  test_runs: TestRunsTable;
   test_plan_cases: TestPlanCasesTable;
-  executions: ExecutionsTable;
-  execution_steps: ExecutionStepsTable;
+  test_results: TestResultsTable;
+  test_step_results: TestStepResultsTable;
   audit_logs: AuditLogsTable;
   custom_field_definitions: CustomFieldDefinitionsTable;
   custom_field_options: CustomFieldOptionsTable;

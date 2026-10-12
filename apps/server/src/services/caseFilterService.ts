@@ -1,9 +1,9 @@
 import type { Kysely } from 'kysely';
 import type { Database, TestSuiteNode } from '@testify/db';
 import {
-  BuildRepository,
+  TestRunRepository,
   CustomFieldRepository,
-  ExecutionRepository,
+  TestResultRepository,
   TestCaseRepository,
   TestPlanRepository,
   TestSuiteRepository,
@@ -48,16 +48,16 @@ export class CaseFilterService {
   private suiteRepo: TestSuiteRepository;
   private caseRepo: TestCaseRepository;
   private planRepo: TestPlanRepository;
-  private buildRepo: BuildRepository;
-  private executionRepo: ExecutionRepository;
+  private runRepo: TestRunRepository;
+  private resultRepo: TestResultRepository;
   private customFieldRepo: CustomFieldRepository;
 
   constructor(db: Kysely<Database>) {
     this.suiteRepo = new TestSuiteRepository(db);
     this.caseRepo = new TestCaseRepository(db);
     this.planRepo = new TestPlanRepository(db);
-    this.buildRepo = new BuildRepository(db);
-    this.executionRepo = new ExecutionRepository(db);
+    this.runRepo = new TestRunRepository(db);
+    this.resultRepo = new TestResultRepository(db);
     this.customFieldRepo = new CustomFieldRepository(db);
   }
 
@@ -157,7 +157,7 @@ export class CaseFilterService {
       }
     }
     if (buildId) {
-      const build = await this.buildRepo.findById(buildId);
+      const build = await this.runRepo.findById(buildId);
       const buildPlan = build ? await this.planRepo.findById(build.test_plan_id) : null;
       if (!build || !buildPlan || buildPlan.project_id !== projectId || (planId && build.test_plan_id !== planId)) {
         return { ok: false, status: 404, error: 'Build not found in this project/plan' };
@@ -209,7 +209,7 @@ export class CaseFilterService {
         ? this.planRepo.getPinnedCases(planId!)
         : Promise.resolve([]),
       usedFields.has('verdict')
-        ? this.executionRepo.getFinalResultsForRuns(planId!, [buildId!])
+        ? this.resultRepo.getFinalResultsForRuns(planId!, [buildId!])
         : Promise.resolve([]),
     ]);
 

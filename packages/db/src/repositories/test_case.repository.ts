@@ -42,7 +42,7 @@ export interface TestCaseWithLatestVersion extends TestCase {
 
 export type DeleteTestCaseResult =
   | { deleted: true }
-  | { deleted: false; blockedPlanLinkCount: number; blockedExecutionCount: number };
+  | { deleted: false; blockedPlanLinkCount: number; blockedResultCount: number };
 
 export class TestCaseRepository {
   constructor(private db: Kysely<Database>) {}
@@ -206,20 +206,20 @@ export class TestCaseRepository {
 
   /**
    * Deletes a case. Unlike the plain `delete()` above (which relies purely on the DB's
-   * ON DELETE RESTRICT FKs on test_plan_cases/executions and would surface a raw
+   * ON DELETE RESTRICT FKs on test_plan_cases/results and would surface a raw
    * constraint-violation error), this checks usage first and, without `force`, leaves
    * everything untouched and reports the blocking counts -- the same warn-then-confirm
    * shape as CustomFieldRepository.deleteDefinition. With `force` (or no usage at all),
-   * it cascades: delete every execution referencing this case's plan-links (their
-   * execution_steps cascade away automatically), then the plan-links themselves, then
-   * the case -- whose own versions/steps then cascade cleanly. Executions must be deleted
-   * before the case's version/step cascade runs, since execution_steps.test_step_id is
+   * it cascades: delete every result referencing this case's plan-links (their
+   * test_step_results cascade away automatically), then the plan-links themselves, then
+   * the case -- whose own versions/steps then cascade cleanly. Results must be deleted
+   * before the case's version/step cascade runs, since test_step_results.test_step_id is
    * ON DELETE RESTRICT and would otherwise block it.
    */
   async deleteWithForce(id: string, opts: { force?: boolean } = {}): Promise<DeleteTestCaseResult> {
     const existing = await this.findById(id);
     if (!existing) {
-      return { deleted: false, blockedPlanLinkCount: 0, blockedExecutionCount: 0 };
+      return { deleted: false, blockedPlanLinkCount: 0, blockedResultCount: 0 };
     }
 
     const planCases = await this.db
@@ -229,24 +229,24 @@ export class TestCaseRepository {
       .execute();
     const planCaseIds = planCases.map((pc) => pc.id);
 
-    let blockedExecutionCount = 0;
+    let blockedResultCount = 0;
     if (planCaseIds.length > 0) {
       const execRows = await this.db
-        .selectFrom('executions')
+        .selectFrom('test_results')
         .select('id')
         .where('test_plan_case_id', 'in', planCaseIds)
         .execute();
-      blockedExecutionCount = execRows.length;
+      blockedResultCount = execRows.length;
     }
     const blockedPlanLinkCount = planCaseIds.length;
 
-    if ((blockedPlanLinkCount > 0 || blockedExecutionCount > 0) && !opts.force) {
-      return { deleted: false, blockedPlanLinkCount, blockedExecutionCount };
+    if ((blockedPlanLinkCount > 0 || blockedResultCount > 0) && !opts.force) {
+      return { deleted: false, blockedPlanLinkCount, blockedResultCount };
     }
 
     await this.db.transaction().execute(async (trx) => {
       if (planCaseIds.length > 0) {
-        await trx.deleteFrom('executions').where('test_plan_case_id', 'in', planCaseIds).execute();
+        await trx.deleteFrom('test_results').where('test_plan_case_id', 'in', planCaseIds).execute();
         await trx.deleteFrom('test_plan_cases').where('id', 'in', planCaseIds).execute();
       }
       await trx.deleteFrom('test_cases').where('id', '=', id).execute();

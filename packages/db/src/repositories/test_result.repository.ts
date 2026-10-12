@@ -1,17 +1,17 @@
 import type { Kysely, Selectable, Insertable, Updateable } from 'kysely';
 import { sql } from 'kysely';
 import { v7 as uuidv7 } from 'uuid';
-import type { Database, ExecutionsTable, ExecutionStepsTable } from '../types.js';
+import type { Database, TestResultsTable, TestStepResultsTable } from '../types.js';
 
-export type Execution = Selectable<ExecutionsTable>;
-export type NewExecution = Insertable<ExecutionsTable>;
-export type ExecutionUpdate = Updateable<ExecutionsTable>;
+export type TestResult = Selectable<TestResultsTable>;
+export type NewTestResult = Insertable<TestResultsTable>;
+export type TestResultUpdate = Updateable<TestResultsTable>;
 
-export type ExecutionStep = Selectable<ExecutionStepsTable>;
-export type NewExecutionStep = Insertable<ExecutionStepsTable>;
-export type ExecutionStepUpdate = Updateable<ExecutionStepsTable>;
+export type StepResult = Selectable<TestStepResultsTable>;
+export type NewStepResult = Insertable<TestStepResultsTable>;
+export type StepResultUpdate = Updateable<TestStepResultsTable>;
 
-export interface CreateExecutionStepInput {
+export interface CreateStepResultInput {
   id?: string;
   test_step_id: string;
   step_number: number;
@@ -19,22 +19,22 @@ export interface CreateExecutionStepInput {
   actual_result?: string | null;
 }
 
-export interface CreateExecutionInput {
+export interface CreateTestResultInput {
   id?: string;
-  build_id: string;
+  test_run_id: string;
   test_plan_case_id: string;
   tester_id: string;
   status?: 'UNTESTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED' | string;
   verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE' | string;
-  execution_duration_ms?: number;
+  duration_ms?: number;
   notes?: string | null;
   failure_message?: string | null;
   stack_trace?: string | null;
   environment?: Record<string, unknown> | null;
   runner?: Record<string, unknown> | null;
   source?: 'UI' | 'API' | null;
-  execution_timestamp?: string;
-  steps?: CreateExecutionStepInput[];
+  executed_at?: string;
+  steps?: CreateStepResultInput[];
 }
 
 function jsonOrNull(v: Record<string, unknown> | null | undefined): string | null {
@@ -53,39 +53,39 @@ function decodeCursor(cursor: string | null | undefined): { ts: string; id: stri
   return { ts: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
 }
 
-export interface ExecutionWithSteps extends Execution {
-  steps: ExecutionStep[];
+export interface TestResultWithSteps extends TestResult {
+  steps: StepResult[];
 }
 
-/** The final result (latest execution) of one plan case in one run, plus what happened
+/** The final result (latest result) of one plan case in one run, plus what happened
  * across all of that case's attempts in the run. Every plan case gets a row for every
- * requested run; `verdict: null` (and every other execution field null) means it has no
+ * requested run; `verdict: null` (and every other result field null) means it has no
  * result in that run yet (UNTESTED). See getFinalResultsForRuns. */
 export interface FinalResultRow {
   run_id: string;
   plan_case_id: string;
   test_case_id: string;
-  execution_id: string | null;
+  test_result_id: string | null;
   verdict: string | null;
-  execution_duration_ms: number | null;
+  duration_ms: number | null;
   failure_message: string | null;
   notes: string | null;
   tester_id: string | null;
   source: string | null;
   runner: string | null; // JSON
-  execution_timestamp: string | null;
+  executed_at: string | null;
   /** The case was removed from the plan after it had results; it only appears in runs that
    * recorded one. */
   removed_from_plan: boolean;
-  /** Executions recorded for this case in this run (re-runs/retries add rows). 0 = untested. */
+  /** Results recorded for this case in this run (re-runs/retries add rows). 0 = untested. */
   attempts: number;
   had_pass: boolean;
   had_fail: boolean; // any FAILED or BLOCKED attempt
 }
 
-/** One execution in a case's history, with the run/plan it belongs to. */
+/** One result in a case's history, with the run/plan it belongs to. */
 export interface CaseHistoryRow {
-  execution_id: string;
+  test_result_id: string;
   run_id: string;
   run_name: string;
   plan_id: string;
@@ -93,7 +93,7 @@ export interface CaseHistoryRow {
   version_number: number | null;
   verdict: string;
   status: string;
-  execution_duration_ms: number | null;
+  duration_ms: number | null;
   notes: string | null;
   failure_message: string | null;
   stack_trace: string | null;
@@ -101,14 +101,14 @@ export interface CaseHistoryRow {
   runner: string | null; // JSON
   source: string | null;
   tester_id: string;
-  execution_timestamp: string;
+  executed_at: string;
 }
 
-/** Minimal per-execution row for a case's whole history (stats are computed from these). */
+/** Minimal per-result row for a case's whole history (stats are computed from these). */
 export interface CaseVerdictTimelineRow {
   run_id: string;
   verdict: string;
-  execution_timestamp: string;
+  executed_at: string;
 }
 
 export interface ActivityRow {
@@ -117,34 +117,34 @@ export interface ActivityRow {
   count: number;
 }
 
-export class ExecutionRepository {
+export class TestResultRepository {
   constructor(private db: Kysely<Database>) {}
 
-  async create(input: CreateExecutionInput): Promise<ExecutionWithSteps> {
+  async create(input: CreateTestResultInput): Promise<TestResultWithSteps> {
     const now = new Date().toISOString();
     const id = input.id || uuidv7();
-    const executionRow: NewExecution = {
+    const executionRow: NewTestResult = {
       id,
-      build_id: input.build_id,
+      test_run_id: input.test_run_id,
       test_plan_case_id: input.test_plan_case_id,
       tester_id: input.tester_id,
       status: input.status ?? 'COMPLETED',
       verdict: input.verdict,
-      execution_duration_ms: input.execution_duration_ms ?? null,
+      duration_ms: input.duration_ms ?? null,
       notes: input.notes ?? null,
       failure_message: input.failure_message ?? null,
       stack_trace: input.stack_trace ?? null,
       environment: jsonOrNull(input.environment),
       runner: jsonOrNull(input.runner),
       source: input.source ?? null,
-      execution_timestamp: input.execution_timestamp ?? now,
+      executed_at: input.executed_at ?? now,
       created_at: now,
       updated_at: now,
     };
 
-    const stepRows: NewExecutionStep[] = (input.steps ?? []).map((step) => ({
+    const stepRows: NewStepResult[] = (input.steps ?? []).map((step) => ({
       id: step.id || uuidv7(),
-      execution_id: id,
+      test_result_id: id,
       test_step_id: step.test_step_id,
       step_number: step.step_number,
       verdict: step.verdict,
@@ -153,74 +153,74 @@ export class ExecutionRepository {
     }));
 
     await this.db.transaction().execute(async (trx) => {
-      await trx.insertInto('executions').values(executionRow).execute();
+      await trx.insertInto('test_results').values(executionRow).execute();
       if (stepRows.length > 0) {
-        await trx.insertInto('execution_steps').values(stepRows).execute();
+        await trx.insertInto('test_step_results').values(stepRows).execute();
       }
     });
 
     return (await this.findById(id))!;
   }
 
-  async findById(id: string): Promise<ExecutionWithSteps | undefined> {
-    const execution = await this.db
-      .selectFrom('executions')
+  async findById(id: string): Promise<TestResultWithSteps | undefined> {
+    const row = await this.db
+      .selectFrom('test_results')
       .selectAll()
       .where('id', '=', id)
       .executeTakeFirst();
 
-    if (!execution) return undefined;
+    if (!row) return undefined;
 
-    const steps = await this.getExecutionSteps(id);
+    const steps = await this.getStepResults(id);
     return {
-      ...execution,
+      ...row,
       steps,
     };
   }
 
-  async findByBuild(buildId: string): Promise<Execution[]> {
+  async findByRun(buildId: string): Promise<TestResult[]> {
     return await this.db
-      .selectFrom('executions')
+      .selectFrom('test_results')
       .selectAll()
-      .where('build_id', '=', buildId)
-      .orderBy('execution_timestamp', 'desc')
+      .where('test_run_id', '=', buildId)
+      .orderBy('executed_at', 'desc')
       .execute();
   }
 
-  async getExecutionSteps(executionId: string): Promise<ExecutionStep[]> {
+  async getStepResults(executionId: string): Promise<StepResult[]> {
     return await this.db
-      .selectFrom('execution_steps')
+      .selectFrom('test_step_results')
       .selectAll()
-      .where('execution_id', '=', executionId)
+      .where('test_result_id', '=', executionId)
       .orderBy('step_number', 'asc')
       .execute();
   }
 
-  /** Batched sibling of getExecutionSteps() -- one query for every execution's steps
-   * instead of one getExecutionSteps() call per execution. Built for export, which needs
-   * step results across every execution in a build in a single request. */
-  async getExecutionStepsForExecutions(executionIds: string[]): Promise<Map<string, ExecutionStep[]>> {
+  /** Batched sibling of getStepResults() -- one query for every result's steps
+   * instead of one getStepResults() call per result. Built for export, which needs
+   * step results across every result in a run in a single request. */
+  async getStepResultsForResults(executionIds: string[]): Promise<Map<string, StepResult[]>> {
     if (executionIds.length === 0) return new Map();
     const rows = await this.db
-      .selectFrom('execution_steps')
+      .selectFrom('test_step_results')
       .selectAll()
-      .where('execution_id', 'in', executionIds)
+      .where('test_result_id', 'in', executionIds)
       .orderBy('step_number', 'asc')
       .execute();
-    const map = new Map<string, ExecutionStep[]>();
+    const map = new Map<string, StepResult[]>();
     for (const row of rows) {
-      const list = map.get(row.execution_id) ?? [];
+      const list = map.get(row.test_result_id) ?? [];
       list.push(row);
-      map.set(row.execution_id, list);
+      map.set(row.test_result_id, list);
     }
     return map;
   }
 
   /**
    * The final result of every plan case in `planId` for each of `runIds`, in ONE query: a
-   * window over (run, plan case) picks the latest execution (execution_timestamp desc,
+   * window over (run, plan case) picks the latest result (executed_at desc,
    * created_at desc tie-break) and also counts the attempts and whether any attempt passed
-   * or failed (pass-after-retry flakiness needs those). Plan cases with no execution in a run
+   * or failed (pass-after-retry flakiness needs those). Plan cases with no result in a run
    * get an all-null UNTESTED row, so totals reflect the plan's current case list.
    *
    * Which cases a run contains: every case with an active link, plus a case removed from the
@@ -243,27 +243,27 @@ export class ExecutionRepository {
       .execute();
     if (planCases.length === 0) return [];
 
-    const partition = ['e.build_id', 'e.test_plan_case_id'] as const;
+    const partition = ['e.test_run_id', 'e.test_plan_case_id'] as const;
     const ranked = await this.db
       .with('ranked', (db) =>
         db
-          .selectFrom('executions as e')
+          .selectFrom('test_results as e')
           .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
           .select((eb) => [
-            'e.id as execution_id',
-            'e.build_id as run_id',
+            'e.id as test_result_id',
+            'e.test_run_id as run_id',
             'e.test_plan_case_id as plan_case_id',
             'e.verdict as verdict',
-            'e.execution_duration_ms as execution_duration_ms',
+            'e.duration_ms as duration_ms',
             'e.failure_message as failure_message',
             'e.notes as notes',
             'e.tester_id as tester_id',
             'e.source as source',
             'e.runner as runner',
-            'e.execution_timestamp as execution_timestamp',
+            'e.executed_at as executed_at',
             eb.fn
               .agg<number>('row_number')
-              .over((ob) => ob.partitionBy([...partition]).orderBy('e.execution_timestamp', 'desc').orderBy('e.created_at', 'desc'))
+              .over((ob) => ob.partitionBy([...partition]).orderBy('e.executed_at', 'desc').orderBy('e.created_at', 'desc'))
               .as('rn'),
             eb.fn.count<number>('e.id').over((ob) => ob.partitionBy([...partition])).as('attempts'),
             eb.fn
@@ -276,7 +276,7 @@ export class ExecutionRepository {
               .as('had_fail'),
           ])
           .where('tpc.test_plan_id', '=', planId)
-          .where('e.build_id', 'in', runIds)
+          .where('e.test_run_id', 'in', runIds)
       )
       .selectFrom('ranked')
       .selectAll()
@@ -294,21 +294,21 @@ export class ExecutionRepository {
         const active = links.find((l) => !l.removed_at);
         const withResults = links.map((l) => byKey.get(`${runId}|${l.plan_case_id}`)).filter((r): r is NonNullable<typeof r> => Boolean(r));
         if (!active && withResults.length === 0) continue; // removed, and never run here
-        const r = withResults.sort((x, y) => (y.execution_timestamp ?? '').localeCompare(x.execution_timestamp ?? ''))[0];
+        const r = withResults.sort((x, y) => (y.executed_at ?? '').localeCompare(x.executed_at ?? ''))[0];
         results.push({
           removed_from_plan: !active,
           run_id: runId,
           plan_case_id: active ? active.plan_case_id : r!.plan_case_id,
           test_case_id: testCaseId,
-          execution_id: r?.execution_id ?? null,
+          test_result_id: r?.test_result_id ?? null,
           verdict: r?.verdict ?? null,
-          execution_duration_ms: r?.execution_duration_ms ?? null,
+          duration_ms: r?.duration_ms ?? null,
           failure_message: r?.failure_message ?? null,
           notes: r?.notes ?? null,
           tester_id: r?.tester_id ?? null,
           source: r?.source ?? null,
           runner: r?.runner ?? null,
-          execution_timestamp: r?.execution_timestamp ?? null,
+          executed_at: r?.executed_at ?? null,
           attempts: withResults.reduce((n, x) => n + Number(x.attempts), 0),
           had_pass: withResults.some((x) => Boolean(x.had_pass)),
           had_fail: withResults.some((x) => Boolean(x.had_fail)),
@@ -319,8 +319,8 @@ export class ExecutionRepository {
   }
 
   /**
-   * One page of every execution a test case ever got, across all plans and runs, newest
-   * first. Keyset-paginated on (execution_timestamp, id): pass the `next_cursor` from the
+   * One page of every result a test case ever got, across all plans and runs, newest
+   * first. Keyset-paginated on (executed_at, id): pass the `next_cursor` from the
    * previous page as `cursor`.
    */
   async getCaseHistory(
@@ -328,13 +328,13 @@ export class ExecutionRepository {
     opts: { limit: number; cursor?: string | null }
   ): Promise<{ rows: CaseHistoryRow[]; next_cursor: string | null }> {
     let query = this.db
-      .selectFrom('executions as e')
+      .selectFrom('test_results as e')
       .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
-      .innerJoin('builds as b', 'b.id', 'e.build_id')
+      .innerJoin('test_runs as b', 'b.id', 'e.test_run_id')
       .innerJoin('test_plans as p', 'p.id', 'b.test_plan_id')
       .leftJoin('test_case_versions as v', 'v.id', 'tpc.test_case_version_id')
       .select([
-        'e.id as execution_id',
+        'e.id as test_result_id',
         'b.id as run_id',
         'b.name as run_name',
         'p.id as plan_id',
@@ -342,7 +342,7 @@ export class ExecutionRepository {
         'v.version_number as version_number',
         'e.verdict as verdict',
         'e.status as status',
-        'e.execution_duration_ms as execution_duration_ms',
+        'e.duration_ms as duration_ms',
         'e.notes as notes',
         'e.failure_message as failure_message',
         'e.stack_trace as stack_trace',
@@ -350,7 +350,7 @@ export class ExecutionRepository {
         'e.runner as runner',
         'e.source as source',
         'e.tester_id as tester_id',
-        'e.execution_timestamp as execution_timestamp',
+        'e.executed_at as executed_at',
       ])
       .where('tpc.test_case_id', '=', testCaseId);
 
@@ -358,14 +358,14 @@ export class ExecutionRepository {
     if (cursor) {
       query = query.where((eb) =>
         eb.or([
-          eb('e.execution_timestamp', '<', cursor.ts),
-          eb.and([eb('e.execution_timestamp', '=', cursor.ts), eb('e.id', '<', cursor.id)]),
+          eb('e.executed_at', '<', cursor.ts),
+          eb.and([eb('e.executed_at', '=', cursor.ts), eb('e.id', '<', cursor.id)]),
         ])
       );
     }
 
     const rows = await query
-      .orderBy('e.execution_timestamp', 'desc')
+      .orderBy('e.executed_at', 'desc')
       .orderBy('e.id', 'desc')
       .limit(opts.limit + 1)
       .execute();
@@ -374,48 +374,48 @@ export class ExecutionRepository {
     const last = page[page.length - 1];
     return {
       rows: page,
-      next_cursor: rows.length > opts.limit && last ? encodeCursor(last.execution_timestamp, last.execution_id) : null,
+      next_cursor: rows.length > opts.limit && last ? encodeCursor(last.executed_at, last.test_result_id) : null,
     };
   }
 
-  /** Every execution of a case (verdict + run + time only), oldest first -- the input for a
+  /** Every result of a case (verdict + run + time only), oldest first -- the input for a
    * case's whole-history stats, independent of which history page is being shown. */
   async getCaseVerdictTimeline(testCaseId: string): Promise<CaseVerdictTimelineRow[]> {
     return await this.db
-      .selectFrom('executions as e')
+      .selectFrom('test_results as e')
       .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
-      .select(['e.build_id as run_id', 'e.verdict as verdict', 'e.execution_timestamp as execution_timestamp'])
+      .select(['e.test_run_id as run_id', 'e.verdict as verdict', 'e.executed_at as executed_at'])
       .where('tpc.test_case_id', '=', testCaseId)
-      .orderBy('e.execution_timestamp', 'asc')
+      .orderBy('e.executed_at', 'asc')
       .orderBy('e.created_at', 'asc')
       .execute();
   }
 
-  /** Latest execution time per test case in a project, in any plan/run. Cases never
+  /** Latest result time per test case in a project, in any plan/run. Cases never
    * executed are simply absent. */
   async getLastExecutedAtByCase(projectId: string): Promise<Map<string, string>> {
     const rows = await this.db
-      .selectFrom('executions as e')
+      .selectFrom('test_results as e')
       .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
-      .select((eb) => ['tpc.test_case_id as test_case_id', eb.fn.max('e.execution_timestamp').as('last_executed_at')])
+      .select((eb) => ['tpc.test_case_id as test_case_id', eb.fn.max('e.executed_at').as('last_executed_at')])
       .where('tc.project_id', '=', projectId)
       .groupBy('tpc.test_case_id')
       .execute();
     return new Map(rows.map((r) => [r.test_case_id, String(r.last_executed_at)]));
   }
 
-  /** Results recorded per day (UTC, from execution_timestamp) and source in a project,
+  /** Results recorded per day (UTC, from executed_at) and source in a project,
    * since `sinceIso`. */
   async getActivity(projectId: string, sinceIso: string): Promise<ActivityRow[]> {
-    const day = sql<string>`left(${sql.ref('e.execution_timestamp')}, 10)`;
+    const day = sql<string>`left(${sql.ref('e.executed_at')}, 10)`;
     const rows = await this.db
-      .selectFrom('executions as e')
-      .innerJoin('builds as b', 'b.id', 'e.build_id')
+      .selectFrom('test_results as e')
+      .innerJoin('test_runs as b', 'b.id', 'e.test_run_id')
       .innerJoin('test_plans as p', 'p.id', 'b.test_plan_id')
       .select((eb) => [day.as('day'), 'e.source as source', eb.fn.count<number>('e.id').as('count')])
       .where('p.project_id', '=', projectId)
-      .where('e.execution_timestamp', '>=', sinceIso)
+      .where('e.executed_at', '>=', sinceIso)
       .groupBy([day, 'e.source'])
       .orderBy('day', 'asc')
       .execute();

@@ -97,7 +97,7 @@ export interface ExportableExecution {
   execution_duration_ms: number | null; // null = not measured/not supplied, never fabricated
   notes: string | null;
   execution_timestamp: string;
-  // Parsed from executions.environment -- the environment tags a batch-API caller reported
+  // Parsed from test_results.environment -- the environment tags a batch-API caller reported
   // (see batchExecution.ts). Null for results recorded in the UI.
   environment_tags: Record<string, unknown> | null;
   step_results: ExportableExecutionStepResult[];

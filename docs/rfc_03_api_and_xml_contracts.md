@@ -334,7 +334,7 @@ How the batch route (`apps/server/src/routes/batchExecution.ts`) records results
 3. **One transaction, multi-row inserts:** auto-links, results, step results and the audit row are written in one transaction, with results and step results inserted 500 rows at a time. A refused item never leaves a plan link behind, and in atomic mode a refusal rolls everything back.
 4. **Version binding:** each result belongs to the case's link in the plan, which pins the version the case runs at. Editing or re-approving the case later doesn't change past results.
 
-Failure messages and stack traces are stored in the `executions` row itself (`failure_message`, `stack_trace`). There's no out-of-band offloading (see §5).
+Failure messages and stack traces are stored in the `test_results` row itself (`failure_message`, `stack_trace`). There's no out-of-band offloading (see §5).
 
 ---
 

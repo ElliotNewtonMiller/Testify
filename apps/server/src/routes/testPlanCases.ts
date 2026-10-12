@@ -8,8 +8,8 @@ import {
   TestCaseVersionRepository,
   TestPlanRepository,
   ProjectRepository,
-  ExecutionRepository,
-  BuildRepository,
+  TestResultRepository,
+  TestRunRepository,
   type TestSuiteNode,
   type TestCaseVersionWithSteps,
 } from '@testify/db';
@@ -108,8 +108,8 @@ export async function registerTestPlanCaseRoutes(
   const versionRepo = new TestCaseVersionRepository(db);
   const planRepo = new TestPlanRepository(db);
   const projectRepo = new ProjectRepository(db);
-  const executionRepo = new ExecutionRepository(db);
-  const buildRepo = new BuildRepository(db);
+  const resultRepo = new TestResultRepository(db);
+  const runRepo = new TestRunRepository(db);
 
   // GET /api/v1/projects/:projectId/spec-tree?plan_id=...&include_deprecated=true -- drives
   // Specification mode's whole 3-pane view in one fetch: nested suite tree (with
@@ -237,13 +237,13 @@ export async function registerTestPlanCaseRoutes(
       return reply.status(404).send({ error: 'Test plan not found' });
     }
 
-    const builds = await buildRepo.findByTestPlan(planId);
+    const builds = await runRepo.findByTestPlan(planId);
     const buildId = requestedBuildId || builds[0]?.id;
 
     // Which cases this run contains, and each one's latest result in it -- the shared rule in
-    // ExecutionRepository.getFinalResultsForRuns: active links, plus cases removed from the
+    // TestResultRepository.getFinalResultsForRuns: active links, plus cases removed from the
     // plan that have a result in this run (shown read-only). With no run yet: active links.
-    const finals = buildId ? await executionRepo.getFinalResultsForRuns(planId, [buildId]) : [];
+    const finals = buildId ? await resultRepo.getFinalResultsForRuns(planId, [buildId]) : [];
     const finalByLink = new Map(finals.map((f) => [f.plan_case_id, f]));
 
     let caseQuery = db
@@ -278,7 +278,7 @@ export async function registerTestPlanCaseRoutes(
           ...c,
           steps,
           latest_verdict: final?.verdict || 'UNTESTED',
-          latest_execution_id: final?.execution_id ?? null,
+          latest_execution_id: final?.test_result_id ?? null,
           latest_notes: final?.notes ?? null,
           removed_from_plan: final?.removed_from_plan ?? false,
         };

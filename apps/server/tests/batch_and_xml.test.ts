@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from '../src/server.js';
-import { TestCaseRepository, TestCaseVersionRepository, ProjectRepository, TestPlanRepository, BuildRepository, CustomFieldRepository } from '@testify/db';
+import { TestCaseRepository, TestCaseVersionRepository, ProjectRepository, TestPlanRepository, TestRunRepository, CustomFieldRepository } from '@testify/db';
 
 describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
   let serverInstance: any;
@@ -651,7 +651,7 @@ ${tc('SEL-4', 'Done', '')}
 
       // No Execution-mode records are created by a JUnit import (case-level custom fields
       // only) -- confirms the locked-in "custom fields only" design decision.
-      const executionCount = await db.selectFrom('executions').select(db.fn.count('id').as('cnt')).executeTakeFirst();
+      const executionCount = await db.selectFrom('test_results').select(db.fn.count('id').as('cnt')).executeTakeFirst();
       expect(Number(executionCount?.cnt)).toBe(0);
     });
 
@@ -782,7 +782,7 @@ ${tc('SEL-4', 'Done', '')}
       expect(data.results.length).toBe(1000);
 
       // Verify DB count
-      const totalInDb = await db.selectFrom('executions').select(db.fn.count('id').as('cnt')).where('build_id', '=', seed.buildId).executeTakeFirst();
+      const totalInDb = await db.selectFrom('test_results').select(db.fn.count('id').as('cnt')).where('test_run_id', '=', seed.buildId).executeTakeFirst();
       expect(Number(totalInDb?.cnt)).toBe(1000);
     });
 
@@ -923,7 +923,7 @@ ${tc('SEL-4', 'Done', '')}
       });
       expect(res.statusCode).toBe(201);
       const execId = JSON.parse(res.payload).results[0].execution_id;
-      const execRow = await db.selectFrom('executions').selectAll().where('id', '=', execId).executeTakeFirst();
+      const execRow = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirst();
       expect(execRow?.tester_id).toBe(userId);
       expect(execRow?.tester_id).not.toBe('usr_ci_runner');
       expect(execRow?.tester_id).not.toBe('a-client-supplied-lie');
@@ -952,13 +952,13 @@ ${tc('SEL-4', 'Done', '')}
       });
       expect(res.statusCode).toBe(201);
       const execId = JSON.parse(res.payload).results[0].execution_id;
-      const execRow = await db.selectFrom('executions').selectAll().where('id', '=', execId).executeTakeFirst();
+      const execRow = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirst();
       expect(execRow?.tester_id).toBe(apiTokenId);
 
       // A build belonging to a different project -- token scoped to seed.projectId must be rejected.
       const otherProject = await new ProjectRepository(db).create({ name: 'Other Project 2', prefix: 'OTHR2' });
       const otherPlan = await new TestPlanRepository(db).create({ project_id: otherProject.id, name: 'Other Plan' });
-      const otherBuild = await new BuildRepository(db).create({ test_plan_id: otherPlan.id, name: 'Other Build' });
+      const otherBuild = await new TestRunRepository(db).create({ test_plan_id: otherPlan.id, name: 'Other Build' });
 
       const mismatchRes = await app.inject({
         method: 'POST',
@@ -1003,7 +1003,7 @@ ${tc('SEL-4', 'Done', '')}
       const { token } = await loginAsAdmin(app);
 
       // Close build
-      await db.updateTable('builds').set({ status: 'CLOSED' }).where('id', '=', seed.buildId).execute();
+      await db.updateTable('test_runs').set({ status: 'CLOSED' }).where('id', '=', seed.buildId).execute();
 
       const res = await app.inject({
         method: 'POST',

@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { Database, LastEmail, ReportSchedule, ReportScheduleSection } from '@testify/db';
-import { BuildRepository, ProjectRepository, ReportScheduleRepository, RoleRepository, TestPlanRepository, UserRepository } from '@testify/db';
+import { TestRunRepository, ProjectRepository, ReportScheduleRepository, RoleRepository, TestPlanRepository, UserRepository } from '@testify/db';
 import { EMAILABLE_REPORTS, findReport, nextRunAt, renderReportEmail, validateReportParams, type EmailSection, type RenderedEmail } from '@testify/core';
 import { ReportError, ReportService } from './reportService.js';
 import { loadEmailSettings, sendEmail } from './mailer.js';
@@ -48,7 +48,7 @@ export class ReportEmailService {
   private reports: ReportService;
   private projectRepo: ProjectRepository;
   private planRepo: TestPlanRepository;
-  private buildRepo: BuildRepository;
+  private runRepo: TestRunRepository;
   private scheduleRepo: ReportScheduleRepository;
   private roleRepo: RoleRepository;
   private userRepo: UserRepository;
@@ -57,7 +57,7 @@ export class ReportEmailService {
     this.reports = new ReportService(db);
     this.projectRepo = new ProjectRepository(db);
     this.planRepo = new TestPlanRepository(db);
-    this.buildRepo = new BuildRepository(db);
+    this.runRepo = new TestRunRepository(db);
     this.scheduleRepo = new ReportScheduleRepository(db);
     this.roleRepo = new RoleRepository(db);
     this.userRepo = new UserRepository(db);
@@ -102,7 +102,7 @@ export class ReportEmailService {
       if (section.kind === 'overview') {
         requests.push({ report_id: 'overview', params: { days: 7 } });
       } else if (section.kind === 'latest_run') {
-        const [latest] = await this.buildRepo.findByTestPlan(section.plan_id!);
+        const [latest] = await this.runRepo.findByTestPlan(section.plan_id!);
         if (!latest) continue; // the plan has no runs yet -- nothing to summarize
         runIds.push(latest.id);
         requests.push({ report_id: 'run_summary', params: { run_id: latest.id, limit: 50, ...filter } });

@@ -85,11 +85,50 @@ describe('migrateToLatest', () => {
     await migrateToLatest(db);
     expect(await columns('test_plan_cases')).not.toContain('assigned_user_id');
     expect(await columns('test_plan_cases')).not.toContain('custom_fields_snapshot');
-    expect(await columns('executions')).not.toContain('custom_fields_snapshot');
+    expect(await columns('test_results')).not.toContain('custom_fields_snapshot');
 
     const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
     expect((await migrator.migrateTo('005_rename_build_manage')).error).toBeUndefined();
     expect(await columns('test_plan_cases')).toEqual(expect.arrayContaining(['assigned_user_id', 'custom_fields_snapshot']));
     expect(await columns('executions')).toContain('custom_fields_snapshot');
+  }, 30_000);
+
+  it('007 renames builds/executions/execution_steps to test_runs/test_results/test_step_results, keeping data; rolling back restores them', async () => {
+    const tables = async () =>
+      (await sql<{ table_name: string }>`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`.execute(db)).rows.map(
+        (r) => r.table_name
+      );
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('006_drop_unused_columns')).error).toBeUndefined();
+
+    // A run with one result and one step result, written with the old names.
+    const t = '2026-10-11T00:00:00.000Z';
+    await sql`INSERT INTO projects (id, name, prefix, settings, created_at, updated_at) VALUES ('p1', 'P', 'P', '{}', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_suites (id, project_id, name, position, path, created_at, updated_at) VALUES ('s1', 'p1', 'S', 0, '/s1', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_cases (id, project_id, test_suite_id, external_id, title, created_at, updated_at) VALUES ('c1', 'p1', 's1', 'P-1', 'C', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_case_versions (id, test_case_id, version_number, status, author_id, created_at, updated_at) VALUES ('v1', 'c1', 1, 'APPROVED', 'u', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_steps (id, test_case_version_id, step_number, action, expected_result, created_at, updated_at) VALUES ('st1', 'v1', 1, 'a', 'b', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_plans (id, project_id, name, created_at, updated_at) VALUES ('pl1', 'p1', 'Plan', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO test_plan_cases (id, test_plan_id, test_case_id, test_case_version_id, created_at, updated_at) VALUES ('pc1', 'pl1', 'c1', 'v1', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO builds (id, test_plan_id, name, created_at, updated_at) VALUES ('r1', 'pl1', 'Run 1', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO executions (id, build_id, test_plan_case_id, tester_id, verdict, execution_duration_ms, execution_timestamp, created_at, updated_at)
+              VALUES ('e1', 'r1', 'pc1', 'u', 'FAILED', 1200, ${t}, ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO execution_steps (id, execution_id, test_step_id, step_number, verdict, created_at) VALUES ('es1', 'e1', 'st1', 1, 'FAILED', ${t})`.execute(db);
+
+    expect(await migrateToLatest(db)).toContain('007_rename_runs_and_results');
+    expect(await tables()).toEqual(expect.arrayContaining(['test_runs', 'test_results', 'test_step_results']));
+    expect(await tables()).not.toEqual(expect.arrayContaining(['builds']));
+    const result = (await sql<any>`SELECT * FROM test_results`.execute(db)).rows[0];
+    expect(result).toMatchObject({ id: 'e1', test_run_id: 'r1', duration_ms: 1200, executed_at: t, verdict: 'FAILED' });
+    expect((await sql<any>`SELECT * FROM test_step_results`.execute(db)).rows[0]).toMatchObject({ id: 'es1', test_result_id: 'e1' });
+    expect((await sql<any>`SELECT name FROM test_runs`.execute(db)).rows).toEqual([{ name: 'Run 1' }]);
+    // The foreign keys survived: a run with results can't be deleted, and the constraints carry the new names.
+    await expect(sql`DELETE FROM test_runs WHERE id = 'r1'`.execute(db)).rejects.toThrow(/test_results_test_run_id_fkey/);
+    const indexes = (await sql<{ indexname: string }>`SELECT indexname FROM pg_indexes WHERE tablename = 'test_results'`.execute(db)).rows.map((r) => r.indexname);
+    expect(indexes).toEqual(expect.arrayContaining(['test_results_pkey', 'idx_test_results_run_case', 'idx_test_results_executed_at']));
+
+    expect((await migrator.migrateTo('006_drop_unused_columns')).error).toBeUndefined();
+    expect(await tables()).toEqual(expect.arrayContaining(['builds', 'executions', 'execution_steps']));
+    expect((await sql<any>`SELECT build_id, execution_duration_ms FROM executions`.execute(db)).rows).toEqual([{ build_id: 'r1', execution_duration_ms: 1200 }]);
   }, 30_000);
 });

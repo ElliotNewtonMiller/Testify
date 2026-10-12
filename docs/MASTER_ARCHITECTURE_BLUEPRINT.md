@@ -70,7 +70,7 @@ The core chain is:
 
 project → suites (a tree) → cases → versions → steps
 
-with plans pinning case versions (`test_plan_cases`, retired rather than deleted once a case has results) and runs (`builds`) holding results (`executions`, with step results).
+with plans pinning case versions (`test_plan_cases`, retired rather than deleted once a case has results) and runs (`test_runs`) holding results (`test_results`, with `test_step_results`).
 
 Around that sit:
 - custom fields: definitions, options and typed values;

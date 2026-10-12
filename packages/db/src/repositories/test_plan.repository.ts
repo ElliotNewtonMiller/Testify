@@ -40,7 +40,7 @@ export interface BulkAddCaseEntry {
 
 export type DeleteTestPlanResult =
   | { deleted: true }
-  | { deleted: false; blockedBuildCount: number; blockedCaseLinkCount: number; blockedExecutionCount: number };
+  | { deleted: false; blockedRunCount: number; blockedCaseLinkCount: number; blockedResultCount: number };
 
 export class TestPlanRepository {
   constructor(private db: Kysely<Database>) {}
@@ -188,7 +188,7 @@ export class TestPlanRepository {
     if (links.length === 0) return { blocked: false, removed: 0, retired: 0 };
 
     const usage = await this.db
-      .selectFrom('executions')
+      .selectFrom('test_results')
       .select((eb) => ['test_plan_case_id', eb.fn.countAll<number>().as('results')])
       .where('test_plan_case_id', 'in', links.map((l) => l.id))
       .groupBy('test_plan_case_id')
@@ -216,8 +216,8 @@ export class TestPlanRepository {
 
   private async distinctRunCount(planCaseIds: string[]): Promise<number> {
     const row = await this.db
-      .selectFrom('executions')
-      .select((eb) => eb.fn.count<number>('build_id').distinct().as('n'))
+      .selectFrom('test_results')
+      .select((eb) => eb.fn.count<number>('test_run_id').distinct().as('n'))
       .where('test_plan_case_id', 'in', planCaseIds)
       .executeTakeFirst();
     return Number(row?.n ?? 0);
@@ -248,7 +248,7 @@ export class TestPlanRepository {
    * Moves every ACTIVE plan that contains `testCaseId` onto `newTestCaseVersionId` -- called
    * when a version is approved, so Execute mode always shows the case's last approved
    * version. LOCKED/ARCHIVED plans keep whatever version they had (a frozen plan must not
-   * change underneath its recorded results). Existing executions are untouched: they
+   * change underneath its recorded results). Existing results are untouched: they
    * reference the plan-case row and the old version's steps, which are never deleted.
    * Returns the number of plans re-pinned.
    */
@@ -278,43 +278,43 @@ export class TestPlanRepository {
 
   /**
    * Deletes a plan and everything under it. Unlike the plain `delete()` above (which relies
-   * purely on the DB's ON DELETE RESTRICT FKs on builds.test_plan_id and
+   * purely on the DB's ON DELETE RESTRICT FKs on test_runs.test_plan_id and
    * test_plan_cases.test_plan_id), this checks usage first and, without `force`, leaves
    * everything untouched and reports the blocking counts -- the same warn-then-confirm shape
    * as TestSuiteRepository.deleteWithForce/TestCaseRepository.deleteWithForce. With `force`
-   * (or an already-empty plan), it deletes every execution under this plan's builds (their
-   * execution_steps cascade away automatically), then the builds themselves, then the plan's
-   * test_plan_cases links, then the plan. Executions must go before builds since
-   * executions.build_id is ON DELETE RESTRICT, and builds/plan-case-links must both go before
+   * (or an already-empty plan), it deletes every result under this plan's runs (their
+   * test_step_results cascade away automatically), then the runs themselves, then the plan's
+   * test_plan_cases links, then the plan. Results must go before runs since
+   * test_results.test_run_id is ON DELETE RESTRICT, and runs/plan-case-links must both go before
    * the plan itself for the same reason.
    */
   async deleteWithForce(id: string, opts: { force?: boolean } = {}): Promise<DeleteTestPlanResult> {
     const existing = await this.findById(id);
     if (!existing) {
-      return { deleted: false, blockedBuildCount: 0, blockedCaseLinkCount: 0, blockedExecutionCount: 0 };
+      return { deleted: false, blockedRunCount: 0, blockedCaseLinkCount: 0, blockedResultCount: 0 };
     }
 
-    const builds = await this.db.selectFrom('builds').select('id').where('test_plan_id', '=', id).execute();
-    const buildIds = builds.map((b) => b.id);
+    const runs = await this.db.selectFrom('test_runs').select('id').where('test_plan_id', '=', id).execute();
+    const runIds = runs.map((r) => r.id);
 
-    let blockedExecutionCount = 0;
-    if (buildIds.length > 0) {
-      const execRows = await this.db.selectFrom('executions').select('id').where('build_id', 'in', buildIds).execute();
-      blockedExecutionCount = execRows.length;
+    let blockedResultCount = 0;
+    if (runIds.length > 0) {
+      const execRows = await this.db.selectFrom('test_results').select('id').where('test_run_id', 'in', runIds).execute();
+      blockedResultCount = execRows.length;
     }
-    const blockedBuildCount = buildIds.length;
+    const blockedRunCount = runIds.length;
 
     const planCases = await this.db.selectFrom('test_plan_cases').select('id').where('test_plan_id', '=', id).execute();
     const blockedCaseLinkCount = planCases.length;
 
-    if ((blockedBuildCount > 0 || blockedCaseLinkCount > 0) && !opts.force) {
-      return { deleted: false, blockedBuildCount, blockedCaseLinkCount, blockedExecutionCount };
+    if ((blockedRunCount > 0 || blockedCaseLinkCount > 0) && !opts.force) {
+      return { deleted: false, blockedRunCount, blockedCaseLinkCount, blockedResultCount };
     }
 
     await this.db.transaction().execute(async (trx) => {
-      if (buildIds.length > 0) {
-        await trx.deleteFrom('executions').where('build_id', 'in', buildIds).execute();
-        await trx.deleteFrom('builds').where('id', 'in', buildIds).execute();
+      if (runIds.length > 0) {
+        await trx.deleteFrom('test_results').where('test_run_id', 'in', runIds).execute();
+        await trx.deleteFrom('test_runs').where('id', 'in', runIds).execute();
       }
       await trx.deleteFrom('test_plan_cases').where('test_plan_id', '=', id).execute();
       await trx.deleteFrom('test_plans').where('id', '=', id).execute();

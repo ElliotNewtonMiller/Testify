@@ -12,8 +12,8 @@ Testify is an open-source, self-hosted test case management app meant to replace
 - Admins can define custom fields (six types) on cases and suites.
 
 **Execution:**
-- A test plan pins a set of cases at a version; a test run (called "build" in the database and older code) belongs to a plan.
-- Results ("executions") are recorded per case in a run: by people with hotkeys in the web app, or by CI through the batch API.
+- A test plan pins a set of cases at a version; a test run belongs to a plan. The database says `test_runs`/`test_results`; parts of the API and server code still say "build" and "execution" (being renamed, see `docs/api_roadmap.md` step 1).
+- Results are recorded per case in a run: by people with hotkeys in the web app, or by CI through the batch API.
 
 **Everything else:**
 - Reports: run summaries and diffs, trends, flaky and slow tests, case history, breakdowns. They're available in the app, the REST API, scheduled email and MCP.

@@ -33,7 +33,7 @@ export type DeleteTestSuiteResult =
       blockedSubSuiteCount: number;
       blockedCaseCount: number;
       blockedPlanLinkCount: number;
-      blockedExecutionCount: number;
+      blockedResultCount: number;
     };
 
 export class TestSuiteRepository {
@@ -268,7 +268,7 @@ export class TestSuiteRepository {
    * the same warn-then-confirm shape as CustomFieldRepository.deleteDefinition. With
    * `force` (or an already-empty subtree), it force-deletes every case in every
    * descendant suite (via caseRepo.deleteWithForce, which itself handles that case's own
-   * plan-link/execution cascade), then deletes descendant suites leaf-to-root (deepest
+   * plan-link/result cascade), then deletes descendant suites leaf-to-root (deepest
    * path first, so a child suite is always gone before its parent is deleted), then this
    * suite itself. `caseRepo` is accepted as a parameter rather than imported and
    * instantiated internally, matching how repositories in this codebase are always
@@ -281,7 +281,7 @@ export class TestSuiteRepository {
   ): Promise<DeleteTestSuiteResult> {
     const suite = await this.findById(id);
     if (!suite) {
-      return { deleted: false, blockedSubSuiteCount: 0, blockedCaseCount: 0, blockedPlanLinkCount: 0, blockedExecutionCount: 0 };
+      return { deleted: false, blockedSubSuiteCount: 0, blockedCaseCount: 0, blockedPlanLinkCount: 0, blockedResultCount: 0 };
     }
 
     const descendants = await this.findDescendants(id);
@@ -289,7 +289,7 @@ export class TestSuiteRepository {
     const cases = await caseRepo.findBySuiteIds(suiteIds);
 
     let blockedPlanLinkCount = 0;
-    let blockedExecutionCount = 0;
+    let blockedResultCount = 0;
     for (const c of cases) {
       const planCases = await this.db
         .selectFrom('test_plan_cases')
@@ -300,11 +300,11 @@ export class TestSuiteRepository {
       if (planCases.length > 0) {
         const planCaseIds = planCases.map((pc) => pc.id);
         const execRows = await this.db
-          .selectFrom('executions')
+          .selectFrom('test_results')
           .select('id')
           .where('test_plan_case_id', 'in', planCaseIds)
           .execute();
-        blockedExecutionCount += execRows.length;
+        blockedResultCount += execRows.length;
       }
     }
 
@@ -313,7 +313,7 @@ export class TestSuiteRepository {
     const hasContent = blockedSubSuiteCount > 0 || blockedCaseCount > 0;
 
     if (hasContent && !opts.force) {
-      return { deleted: false, blockedSubSuiteCount, blockedCaseCount, blockedPlanLinkCount, blockedExecutionCount };
+      return { deleted: false, blockedSubSuiteCount, blockedCaseCount, blockedPlanLinkCount, blockedResultCount };
     }
 
     for (const c of cases) {

@@ -75,7 +75,7 @@ describe('Projects: real create / edit / delete', () => {
       const rows = await db.selectFrom(table).select('id').where('project_id', '=', seed.projectId).execute();
       expect(rows).toHaveLength(0);
     }
-    expect(await db.selectFrom('builds').select('id').where('id', '=', seed.buildId).executeTakeFirst()).toBeUndefined();
+    expect(await db.selectFrom('test_runs').select('id').where('id', '=', seed.buildId).executeTakeFirst()).toBeUndefined();
     expect(await db.selectFrom('projects').select('id').where('id', '=', seed.projectId).executeTakeFirst()).toBeUndefined();
     const audit = await db.selectFrom('audit_logs').selectAll().where('action', '=', 'PROJECT_DELETED').execute();
     expect(audit).toHaveLength(1);

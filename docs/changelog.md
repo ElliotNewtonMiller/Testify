@@ -1821,3 +1821,45 @@ Every item of the 2026-10-07 audit is now fixed. Docs only; no code changed.
 
   Each step has a recommendation, open questions and a status line. The file also gives a recommended order and has a Decisions table.
 - **`CLAUDE.md`:** points to it in the doc map and the workflow, in place of the audit file.
+
+## Changed: database tables renamed to test runs and results (API consistency, stage 1 of 4) (2026-10-11)
+
+The first stage of making the API consistent (`docs/api_roadmap.md` step 1).
+
+**Decided with Elliot:**
+- shallow addresses;
+- short path names;
+- rename in the database too;
+- no aliases for the old addresses.
+
+The decisions and the four stages are recorded in the roadmap's Decisions table. This stage renames the database and the code that talks to it; the API itself is unchanged until stage 3.
+
+- **Migration `007_rename_runs_and_results`:**
+  - `builds` → `test_runs`;
+  - `executions` → `test_results`, with `build_id` → `test_run_id`, `execution_duration_ms` → `duration_ms` and `execution_timestamp` → `executed_at` (the names the batch API already used for those fields);
+  - `execution_steps` → `test_step_results`, with `execution_id` → `test_result_id`;
+  - their primary keys, foreign keys, unique constraint and indexes renamed to match.
+
+  `down` reverses it all.
+- **What isn't renamed:**
+  - Audit-log rows that say "build" or "execution" stay as they are, since the table is append-only.
+  - `execution_type` (manual/automated) and the permission keys `EXECUTE_RUN`/`EXECUTE_OVERWRITE` are a different concept and stay.
+- **Code** (`packages/db`):
+  - `BuildRepository` → `TestRunRepository` (`test_run.repository.ts`), `ExecutionRepository` → `TestResultRepository` (`test_result.repository.ts`), with their types and methods: `findByBuild` → `findByRun`, `getExecutionSteps` → `getStepResults`, `getExecutionStepsForExecutions` → `getStepResultsForResults`;
+  - internal row fields: `test_result_id`, `executed_at`, `duration_ms`;
+  - `blockedExecutionCount`/`blockedBuildCount` → `blockedResultCount`/`blockedRunCount`;
+  - every query, the seeds and the comments.
+
+  The server's queries, inserts (the single-result and batch routes), services and `packages/core`'s case-history input follow. Responses keep their current field names (`latest_execution_id`, the export file's `execution_timestamp`, ...) until stage 3.
+- **Tests:**
+  - `migrations.test.ts` +1: a database at 006 holding a run, a result and a step result migrates to 007 with everything under the new names. The foreign keys still hold, with their new names, and rolling back restores the old tables and data.
+  - The 006 test is adjusted for the renamed table, and `execution_reporting.repository.test.ts` is renamed `test_result_reporting.repository.test.ts`.
+- **Docs:** RFC 01's table dictionary and diagrams, the blueprint, RFC 03 §3.2 and CLAUDE.md use the new table names.
+
+597/597 tests pass and typecheck is clean. Verified live against a production build on an in-memory database:
+- the demo data loads;
+- Spec and Execute modes load;
+- a hotkey verdict records;
+- Reports count it.
+
+Not yet run against real PostgreSQL (the Docker images were removed); CI's PostgreSQL job covers it once pushed.

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { ProjectRepository, TestPlanRepository, BuildRepository } from '@testify/db';
+import { ProjectRepository, TestPlanRepository, TestRunRepository } from '@testify/db';
 import { authenticateRequest, requirePermission, permissionsInProject, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError } from '../errors.js';
@@ -28,7 +28,7 @@ const PROJECT_PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
 export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const projectRepo = new ProjectRepository(db);
   const planRepo = new TestPlanRepository(db);
-  const buildRepo = new BuildRepository(db);
+  const runRepo = new TestRunRepository(db);
 
   app.get('/api/v1/projects', async (request, reply) => {
     const user = await authenticateRequest(request, reply, db, jwtSecret);
@@ -263,7 +263,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         return sendPlanInUseError(
           reply,
           planId,
-          { builds: result.blockedBuildCount, caseLinks: result.blockedCaseLinkCount, executions: result.blockedExecutionCount },
+          { builds: result.blockedRunCount, caseLinks: result.blockedCaseLinkCount, executions: result.blockedResultCount },
           request.url,
           existing.name
         );
@@ -274,9 +274,9 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   );
 
   // Test Run (Build) mutation routes, nested one level deeper than Plans (a build only ever
-  // exists under one plan -- see BuildRepository/migration's uq_build_plan_name constraint,
+  // exists under one plan -- see TestRunRepository/migration's uq_build_plan_name constraint,
   // already enforcing unique run names per plan at the DB layer). Same resurrection story as
-  // the Plan routes above: BuildRepository.create/update/deleteWithForce existed since the
+  // the Plan routes above: TestRunRepository.create/update/deleteWithForce existed since the
   // first migration, never called by any route -- the Run create/edit/delete toolbar was
   // 100% client-side mock state. Gated on RUN_MANAGE (already registered/seeded, held by
   // Admin/Test Lead/Automation Service, just never had a route to gate until now).
@@ -299,7 +299,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       }
 
       try {
-        const build = await buildRepo.create({
+        const build = await runRepo.create({
           test_plan_id: planId,
           name: name.trim(),
           description: description ?? null,
@@ -326,7 +326,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       if (!plan || plan.project_id !== projectId) {
         return reply.status(404).send({ error: 'Test plan not found in this project' });
       }
-      const existing = await buildRepo.findById(buildId);
+      const existing = await runRepo.findById(buildId);
       if (!existing || existing.test_plan_id !== planId) {
         return reply.status(404).send({ error: 'Test run not found in this test plan' });
       }
@@ -340,7 +340,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       }
 
       try {
-        const build = await buildRepo.update(buildId, {
+        const build = await runRepo.update(buildId, {
           ...(name !== undefined ? { name: name.trim() } : {}),
           ...(description !== undefined ? { description } : {}),
           ...(status !== undefined ? { status } : {}),
@@ -367,14 +367,14 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       if (!plan || plan.project_id !== projectId) {
         return reply.status(404).send({ error: 'Test plan not found in this project' });
       }
-      const existing = await buildRepo.findById(buildId);
+      const existing = await runRepo.findById(buildId);
       if (!existing || existing.test_plan_id !== planId) {
         return reply.status(404).send({ error: 'Test run not found in this test plan' });
       }
 
-      const result = await buildRepo.deleteWithForce(buildId, { force: force === 'true' });
+      const result = await runRepo.deleteWithForce(buildId, { force: force === 'true' });
       if (!result.deleted) {
-        return sendBuildInUseError(reply, buildId, { executions: result.blockedExecutionCount }, request.url, existing.name);
+        return sendBuildInUseError(reply, buildId, { executions: result.blockedResultCount }, request.url, existing.name);
       }
 
       return reply.status(200).send({ deleted: true });

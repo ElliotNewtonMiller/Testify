@@ -575,7 +575,7 @@ describe('Specification / Plan Curation Routes', () => {
       const { token } = await loginAsAdmin(app);
 
       // The seeded plan/build already has 10 pinned cases (see seed_core_loop.ts); record one
-      // execution too so blockedExecutionCount is also exercised, not just build/case-link counts.
+      // execution too so blockedResultCount is also exercised, not just build/case-link counts.
       await app.inject({
         method: 'POST',
         url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
@@ -816,7 +816,7 @@ describe('Specification / Plan Curation Routes', () => {
       });
       // The plan is gone, so listing its runs 404s; and the run rows really are deleted.
       expect(listRes.statusCode).toBe(404);
-      expect(await db.selectFrom('builds').select('id').where('test_plan_id', '=', seed.planId).execute()).toEqual([]);
+      expect(await db.selectFrom('test_runs').select('id').where('test_plan_id', '=', seed.planId).execute()).toEqual([]);
     });
   });
 });

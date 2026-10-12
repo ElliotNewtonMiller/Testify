@@ -171,10 +171,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
 
     // 1. Verify build and plan lock state
     const build = await db
-      .selectFrom('builds')
-      .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
-      .select(['builds.status as build_status', 'builds.test_plan_id', 'test_plans.status as plan_status', 'test_plans.project_id'])
-      .where('builds.id', '=', body.build_id)
+      .selectFrom('test_runs')
+      .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
+      .select(['test_runs.status as build_status', 'test_runs.test_plan_id', 'test_plans.status as plan_status', 'test_plans.project_id'])
+      .where('test_runs.id', '=', body.build_id)
       .executeTakeFirst();
 
     if (!build) {
@@ -269,10 +269,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
     // The result, its step results and the audit row are saved together or not at all.
     await db.transaction().execute(async (trx) => {
       await trx
-        .insertInto('executions')
+        .insertInto('test_results')
         .values({
           id: execId,
-          build_id: body.build_id,
+          test_run_id: body.build_id,
           test_plan_case_id: body.test_plan_case_id,
           tester_id: actorId,
           status: body.status,
@@ -281,10 +281,10 @@ export async function createServer(connectionString?: string, options: { db?: Ky
           // never stores a duration, even if one is sent. Durations come only from automated
           // results via the batch route (routes/batchExecution.ts), which is all Reports'
           // "Slowest" table ranks.
-          execution_duration_ms: null,
+          duration_ms: null,
           notes: body.notes,
           source: 'UI',
-          execution_timestamp: now,
+          executed_at: now,
           created_at: now,
           updated_at: now,
         })
@@ -292,11 +292,11 @@ export async function createServer(connectionString?: string, options: { db?: Ky
 
       if (body.step_results.length > 0) {
         await trx
-          .insertInto('execution_steps')
+          .insertInto('test_step_results')
           .values(
             body.step_results.map((sr) => ({
               id: uuidv4(),
-              execution_id: execId,
+              test_result_id: execId,
               test_step_id: sr.test_step_id,
               step_number: stepNumberById.get(sr.test_step_id)!,
               verdict: sr.verdict,

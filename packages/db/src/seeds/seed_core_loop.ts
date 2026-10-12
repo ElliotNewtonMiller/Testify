@@ -153,9 +153,9 @@ export async function seedCoreLoopData(db: Kysely<Database>): Promise<{
     .onConflict((oc) => oc.column('id').doNothing())
     .execute();
 
-  // 5. Seed Build
+  // 5. Seed Run
   await db
-    .insertInto('builds')
+    .insertInto('test_runs')
     .values({
       id: buildId,
       test_plan_id: planId,

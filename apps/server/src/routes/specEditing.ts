@@ -179,7 +179,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
             subSuites: result.blockedSubSuiteCount,
             cases: result.blockedCaseCount,
             planLinks: result.blockedPlanLinkCount,
-            executions: result.blockedExecutionCount,
+            executions: result.blockedResultCount,
           },
           request.url,
           existing.name
@@ -359,7 +359,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         return sendCaseInUseError(
           reply,
           caseId,
-          { planLinks: result.blockedPlanLinkCount, executions: result.blockedExecutionCount },
+          { planLinks: result.blockedPlanLinkCount, executions: result.blockedResultCount },
           request.url
         );
       }

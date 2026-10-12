@@ -72,10 +72,10 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   if (buildId) {
     add(
       await db
-        .selectFrom('builds')
-        .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
+        .selectFrom('test_runs')
+        .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select('test_plans.project_id')
-        .where('builds.id', '=', buildId)
+        .where('test_runs.id', '=', buildId)
         .executeTakeFirst()
     );
   }
@@ -201,7 +201,7 @@ async function authenticateApiToken(
 
   const authUser: AuthenticatedUser = {
     // The token's own id, unprefixed -- every id column this ends up written into
-    // (executions.tester_id, audit_logs.actor_id, etc.) is varchar(36), exactly one
+    // (test_results.tester_id, audit_logs.actor_id, etc.) is varchar(36), exactly one
     // uuidv7's width with zero room for a prefix (the same class of bug this repo hit
     // once already with devId()-generated fixture ids). api_token.id below is what
     // actually signals "this is a machine identity" to any code that cares.

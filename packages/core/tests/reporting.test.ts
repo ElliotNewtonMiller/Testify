@@ -133,10 +133,10 @@ describe('test health', () => {
 describe('case stats', () => {
   it('uses the final result per run for pass rate and streak, but every execution for last pass/fail', () => {
     const stats = computeCaseStats([
-      { run_id: 'r1', verdict: 'PASSED', execution_timestamp: '2026-01-01T00:00:00Z' },
-      { run_id: 'r2', verdict: 'PASSED', execution_timestamp: '2026-01-02T00:00:00Z' },
-      { run_id: 'r2', verdict: 'FAILED', execution_timestamp: '2026-01-02T01:00:00Z' }, // final for r2
-      { run_id: 'r3', verdict: 'FAILED', execution_timestamp: '2026-01-03T00:00:00Z' },
+      { run_id: 'r1', verdict: 'PASSED', executed_at: '2026-01-01T00:00:00Z' },
+      { run_id: 'r2', verdict: 'PASSED', executed_at: '2026-01-02T00:00:00Z' },
+      { run_id: 'r2', verdict: 'FAILED', executed_at: '2026-01-02T01:00:00Z' }, // final for r2
+      { run_id: 'r3', verdict: 'FAILED', executed_at: '2026-01-03T00:00:00Z' },
     ]);
     expect(stats).toMatchObject({
       total_executions: 4,

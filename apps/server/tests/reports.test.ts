@@ -38,7 +38,7 @@ describe('Reports: catalog-driven report API', () => {
   /** Adds a run to the seeded plan with a pinned created_at, so run order is deterministic. */
   async function addRun(db: any, planId: string, name: string, createdAt: string): Promise<string> {
     const id = uuidv4();
-    await db.insertInto('builds').values({ id, test_plan_id: planId, name, status: 'OPEN', created_at: createdAt, updated_at: createdAt }).execute();
+    await db.insertInto('test_runs').values({ id, test_plan_id: planId, name, status: 'OPEN', created_at: createdAt, updated_at: createdAt }).execute();
     return id;
   }
 
@@ -389,7 +389,7 @@ describe('Reports: catalog-driven report API', () => {
       const { app, db, seed, token } = await seedThreeRuns();
       const case101 = await db.selectFrom('test_cases').select('id').where('external_id', '=', 'SHOP-101').executeTakeFirstOrThrow();
       const row = await db
-        .selectFrom('executions as e')
+        .selectFrom('test_results as e')
         .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
         .selectAll('e')
         .where('tpc.test_case_id', '=', case101.id)
@@ -407,7 +407,7 @@ describe('Reports: catalog-driven report API', () => {
         payload: { build_id: seed.buildId, test_plan_case_id: planCase.id, verdict: 'PASSED' },
       });
       expect(res.statusCode).toBe(201);
-      const uiRow = await db.selectFrom('executions').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
+      const uiRow = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
       expect(uiRow).toMatchObject({ source: 'UI', environment: null, runner: null });
     });
   });
@@ -432,9 +432,9 @@ describe('Reports: catalog-driven report API', () => {
       expect(res.statusCode).toBe(201);
 
       const execId = JSON.parse(res.payload).id ?? JSON.parse(res.payload).execution?.id;
-      const row = await db.selectFrom('executions').selectAll().where('id', '=', execId).executeTakeFirstOrThrow();
-      expect(row.execution_duration_ms).toBeNull();
-      expect(row.execution_duration_ms).not.toBe(450);
+      const row = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirstOrThrow();
+      expect(row.duration_ms).toBeNull();
+      expect(row.duration_ms).not.toBe(450);
     });
 
     it('POST /api/v1/executions (manual) ignores a supplied duration -- manual execution is never timed', async () => {
@@ -453,8 +453,8 @@ describe('Reports: catalog-driven report API', () => {
         payload: { build_id: seed.buildId, test_plan_case_id: planCaseRow.id, verdict: 'PASSED', execution_duration_ms: 777 },
       });
       expect(res.statusCode).toBe(201);
-      const row = await db.selectFrom('executions').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
-      expect(row.execution_duration_ms).toBeNull();
+      const row = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
+      expect(row.duration_ms).toBeNull();
     });
 
     it('batchExecution.ts stores null, not a fabricated 0, when duration_ms is omitted', async () => {
@@ -475,13 +475,13 @@ describe('Reports: catalog-driven report API', () => {
         .where('test_case_id', '=', caseRow.id)
         .executeTakeFirstOrThrow();
       const execRow = await db
-        .selectFrom('executions')
+        .selectFrom('test_results')
         .selectAll()
         .where('test_plan_case_id', '=', planCaseRow.id)
-        .where('build_id', '=', seed.buildId)
+        .where('test_run_id', '=', seed.buildId)
         .executeTakeFirstOrThrow();
-      expect(execRow.execution_duration_ms).toBeNull();
-      expect(execRow.execution_duration_ms).not.toBe(0);
+      expect(execRow.duration_ms).toBeNull();
+      expect(execRow.duration_ms).not.toBe(0);
     });
   });
 });

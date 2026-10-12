@@ -58,17 +58,17 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
 
       // 1. Verify build and test plan lock state
       const buildPlanInfo = await db
-        .selectFrom('builds')
-        .innerJoin('test_plans', 'test_plans.id', 'builds.test_plan_id')
+        .selectFrom('test_runs')
+        .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select([
-          'builds.id as build_id',
-          'builds.status as build_status',
+          'test_runs.id as test_run_id',
+          'test_runs.status as build_status',
           'test_plans.id as plan_id',
           'test_plans.status as plan_status',
           'test_plans.project_id',
         ])
-        .where('builds.id', '=', buildId)
-        .where('builds.test_plan_id', '=', planId)
+        .where('test_runs.id', '=', buildId)
+        .where('test_runs.test_plan_id', '=', planId)
         .executeTakeFirst();
 
       if (!buildPlanInfo) {
@@ -100,7 +100,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           title: 'Bad Request',
           code: 'INVALID_RESULT',
           detail: `executions must be a list of 1 to ${MAX_BATCH_RESULTS} results`,
-          invalid_params: [{ name: 'executions', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
+          invalid_params: [{ name: 'test_results', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
           instance: req.url,
         });
       }
@@ -349,27 +349,27 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             const envTags = item.environment_tags ?? (defaultEnvironment ? { environment: defaultEnvironment } : null);
             executionRows.push({
               id: execId,
-              build_id: buildId,
+              test_run_id: buildId,
               test_plan_case_id: resolvedPlanCase.plan_case_id,
               tester_id: user.id,
               status: item.status,
               verdict: item.verdict,
               // null (not a fabricated 0) when the caller doesn't report a real duration.
-              execution_duration_ms: item.duration_ms,
+              duration_ms: item.duration_ms,
               notes: item.notes,
               failure_message: item.failure_message,
               stack_trace: item.stack_trace,
               environment: envTags ? JSON.stringify(envTags) : null,
               runner: runnerJson,
               source: 'API',
-              execution_timestamp: item.executed_at ?? now,
+              executed_at: item.executed_at ?? now,
               created_at: itemCreatedAt,
               updated_at: itemCreatedAt,
             });
             item.step_results.forEach((sr, j) => {
               stepRows.push({
                 id: uuidv4(),
-                execution_id: execId,
+                test_result_id: execId,
                 test_step_id: resolvedSteps[j].id,
                 step_number: resolvedSteps[j].step_number,
                 verdict: sr.verdict,
@@ -390,10 +390,10 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
 
           // Multi-row inserts, in chunks that stay well under Postgres's parameter limit.
           for (let k = 0; k < executionRows.length; k += INSERT_CHUNK) {
-            await trx.insertInto('executions').values(executionRows.slice(k, k + INSERT_CHUNK)).execute();
+            await trx.insertInto('test_results').values(executionRows.slice(k, k + INSERT_CHUNK)).execute();
           }
           for (let k = 0; k < stepRows.length; k += INSERT_CHUNK) {
-            await trx.insertInto('execution_steps').values(stepRows.slice(k, k + INSERT_CHUNK)).execute();
+            await trx.insertInto('test_step_results').values(stepRows.slice(k, k + INSERT_CHUNK)).execute();
           }
 
           // One summary row per batch call, not per execution item, to avoid flooding

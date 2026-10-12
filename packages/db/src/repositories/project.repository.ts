@@ -112,15 +112,15 @@ export class ProjectRepository {
       count(this.db.selectFrom('test_suites').select((eb) => eb.fn.countAll().as('n')).where('project_id', '=', id).executeTakeFirst()),
       count(this.db.selectFrom('test_cases').select((eb) => eb.fn.countAll().as('n')).where('project_id', '=', id).executeTakeFirst()),
       planIds.length
-        ? count(this.db.selectFrom('builds').select((eb) => eb.fn.countAll().as('n')).where('test_plan_id', 'in', planIds).executeTakeFirst())
+        ? count(this.db.selectFrom('test_runs').select((eb) => eb.fn.countAll().as('n')).where('test_plan_id', 'in', planIds).executeTakeFirst())
         : Promise.resolve(0),
       planIds.length
         ? count(
             this.db
-              .selectFrom('executions')
-              .innerJoin('builds', 'builds.id', 'executions.build_id')
+              .selectFrom('test_results')
+              .innerJoin('test_runs', 'test_runs.id', 'test_results.test_run_id')
               .select((eb) => eb.fn.countAll().as('n'))
-              .where('builds.test_plan_id', 'in', planIds)
+              .where('test_runs.test_plan_id', 'in', planIds)
               .executeTakeFirst()
           )
         : Promise.resolve(0),
@@ -132,7 +132,7 @@ export class ProjectRepository {
    * Deletes a project. Without `force`, a project that still holds any suites, cases, plans
    * or runs is left untouched and its counts are reported (same warn-then-confirm shape as
    * the suite/case/plan/run deletes). With `force`, everything in it goes, in an order that
-   * respects every ON DELETE RESTRICT: executions (their steps cascade) -> runs -> plan links
+   * respects every ON DELETE RESTRICT: results (their steps cascade) -> runs -> plan links
    * -> plans -> custom field values on its cases/suites and its project-scoped fields -> cases
    * (versions/steps cascade) -> suites -> the project (its role assignments, permission
    * overrides and API tokens cascade). Audit log rows are kept -- they're immutable history.
@@ -151,7 +151,7 @@ export class ProjectRepository {
       const caseIds = await ids(trx.selectFrom('test_cases').select('id').where('project_id', '=', id).execute());
       const suiteIds = await ids(trx.selectFrom('test_suites').select('id').where('project_id', '=', id).execute());
       const buildIds = planIds.length
-        ? await ids(trx.selectFrom('builds').select('id').where('test_plan_id', 'in', planIds).execute())
+        ? await ids(trx.selectFrom('test_runs').select('id').where('test_plan_id', 'in', planIds).execute())
         : [];
       // Plan links for this project's plans, plus any link to this project's cases.
       const planCaseIds =
@@ -170,9 +170,9 @@ export class ProjectRepository {
             )
           : [];
 
-      if (buildIds.length) await trx.deleteFrom('executions').where('build_id', 'in', buildIds).execute();
-      if (planCaseIds.length) await trx.deleteFrom('executions').where('test_plan_case_id', 'in', planCaseIds).execute();
-      if (buildIds.length) await trx.deleteFrom('builds').where('id', 'in', buildIds).execute();
+      if (buildIds.length) await trx.deleteFrom('test_results').where('test_run_id', 'in', buildIds).execute();
+      if (planCaseIds.length) await trx.deleteFrom('test_results').where('test_plan_case_id', 'in', planCaseIds).execute();
+      if (buildIds.length) await trx.deleteFrom('test_runs').where('id', 'in', buildIds).execute();
       if (planCaseIds.length) await trx.deleteFrom('test_plan_cases').where('id', 'in', planCaseIds).execute();
       if (planIds.length) await trx.deleteFrom('test_plans').where('id', 'in', planIds).execute();
 
