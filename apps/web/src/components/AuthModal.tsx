@@ -3,6 +3,7 @@ import { validatePasswordPolicy } from "../../../../packages/core/src/security/p
 import { jsonHeaders } from "../utils/session";
 
 import { errorMessage as apiErrorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface UserProfile {
   id: string;
   username: string;
@@ -52,7 +53,7 @@ export function AuthModal({
     setIsLoading(true);
 
     try {
-      const res = await fetch("/api/v1/auth/login", {
+      const res = await fetch(api.login, {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({ username: identifier, password, session: "cookie" }),
@@ -92,15 +93,14 @@ export function AuthModal({
     setIsLoading(true);
 
     try {
-      const res = await fetch("/api/v1/auth/credentials", {
-        method: "PUT",
+      const res = await fetch(api.me, {
+        method: "PATCH",
         headers: jsonHeaders(),
         body: JSON.stringify({
-          newUsername:
-            newUsername !== currentUser?.username ? newUsername : undefined,
-          newEmail: newEmail !== currentUser?.email ? newEmail : undefined,
-          newPassword: newPassword || undefined,
-          currentPassword: newPassword ? currentPassword : undefined,
+          username: newUsername !== currentUser?.username ? newUsername : undefined,
+          email: newEmail !== currentUser?.email ? newEmail : undefined,
+          password: newPassword || undefined,
+          current_password: newPassword ? currentPassword : undefined,
         }),
       });
 

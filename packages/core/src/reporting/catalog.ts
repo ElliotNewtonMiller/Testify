@@ -64,7 +64,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       'which cases are new failures, fixed, still failing, or no longer run. Lists every failing case with its error message, how long it has been failing, and whether it looks flaky. ' +
       'Start here to find out what broke.',
     {
-      run_id: { type: 'string', description: 'The test run (build) to summarize.' },
+      test_run_id: { type: 'string', description: 'The test run to summarize.' },
       compare_to: {
         type: 'string',
         nullable: true,
@@ -73,7 +73,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       filter: FILTER_PARAM,
       limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100, description: 'Max cases listed per diff bucket and in the failures list.' },
     },
-    ['run_id'],
+    ['test_run_id'],
     ['json', 'markdown', 'csv']
   ),
   def(
@@ -82,11 +82,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     'Every result one test case ever got, across all plans and runs, newest first: verdict, run, plan, version, who or which CI runner, duration, notes, error message, stack trace, environment. ' +
       'Plus stats: pass rate, current streak, last pass and last failure. Use it to troubleshoot a specific case.',
     {
-      case_id: { type: 'string', description: 'Test case id (UUID) or external id such as "SHOP-12".' },
+      test_case_id: { type: 'string', description: 'Test case id (UUID) or external id such as "SHOP-12".' },
       limit: { type: 'integer', minimum: 1, maximum: 200, default: 25, description: 'Executions per page.' },
       cursor: { type: 'string', description: 'next_cursor from the previous page.' },
     },
-    ['case_id'],
+    ['test_case_id'],
     ['json', 'csv']
   ),
   def(
@@ -94,11 +94,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     'Plan trend',
     "How a plan's results move across its recent runs (oldest first): counts, pass rate, completion and new failures per run.",
     {
-      plan_id: { type: 'string', description: 'The test plan.' },
+      test_plan_id: { type: 'string', description: 'The test plan.' },
       runs: { type: 'integer', minimum: 1, maximum: 50, default: 10, description: 'How many recent runs to include.' },
       filter: FILTER_PARAM,
     },
-    ['plan_id'],
+    ['test_plan_id'],
     ['json', 'csv']
   ),
   def(
@@ -107,35 +107,35 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     "Problem cases across a plan's recent runs: flaky (pass/fail flip-flopping between runs, or passing only after a retry within a run), " +
       'slowest and getting slower (automated results only -- manual results are not timed), always failing, and stale (not executed anywhere for N days, or never).',
     {
-      plan_id: { type: 'string', description: 'The test plan.' },
+      test_plan_id: { type: 'string', description: 'The test plan.' },
       runs: { type: 'integer', minimum: 2, maximum: 50, default: 10, description: 'How many recent runs to analyse.' },
       stale_days: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'A case not executed for this many days is stale.' },
       filter: FILTER_PARAM,
       limit: { type: 'integer', minimum: 1, maximum: 500, default: 20, description: 'Max cases per list.' },
     },
-    ['plan_id'],
+    ['test_plan_id'],
     ['json', 'csv']
   ),
   def(
     'breakdown',
     'Breakdown',
-    'Group cases by a property and compare the groups. Without run_id: plan coverage per group (cases in the plan vs not). ' +
-      'With run_id: verdict counts and pass rate per group for that run. group_by is suite, priority, execution_type, version_status, tester (needs run_id), ' +
+    'Group cases by a property and compare the groups. Without test_run_id: plan coverage per group (cases in the plan vs not). ' +
+      'With test_run_id: verdict counts and pass rate per group for that run. group_by is suite, priority, execution_type, version_status, tester (needs test_run_id), ' +
       'or a custom field key (cf:<id> for case fields, suite_cf:<id> for suite fields) from GET .../case-search/fields.',
     {
-      plan_id: { type: 'string', description: 'The test plan.' },
-      run_id: { type: 'string', nullable: true, description: 'A run of that plan, for verdicts per group. Omit for coverage.' },
+      test_plan_id: { type: 'string', description: 'The test plan.' },
+      test_run_id: { type: 'string', nullable: true, description: 'A run of that plan, for verdicts per group. Omit for coverage.' },
       group_by: { type: 'string', default: 'suite', description: 'Property to group by.' },
       filter: FILTER_PARAM,
     },
-    ['plan_id'],
+    ['test_plan_id'],
     ['json', 'csv']
   ),
 ];
 
 /** How every number in the reports is defined -- returned with the catalog. */
 export const REPORT_DEFINITIONS: Record<string, string> = {
-  final_result: "A case's final result in a run is its latest execution in that run (re-running adds a new execution; nothing is overwritten).",
+  final_result: "A case's final result in a run is its latest result in that run (re-running adds a new result; nothing is overwritten).",
   verdicts: 'PASSED, FAILED, BLOCKED, SKIPPED, UNTESTED (no result yet), OTHER (RETEST_REQUIRED, KNOWN_ISSUE). FAILED and BLOCKED count as failing.',
   pass_rate: 'passed / (total - untested - skipped). 0 when nothing counted was executed. Rates are fractions between 0 and 1.',
   completion: '(total - untested) / total.',
@@ -147,7 +147,7 @@ export const REPORT_DEFINITIONS: Record<string, string> = {
     'A case counts as flaky when its flip score is at least 0.3 (a break later followed by a fix stays below that), or when within one run it both passed and failed (e.g. passed on retry). Run summaries use the last 10 runs; test health uses its runs window.',
   slowing: 'Median duration of the recent half of the timed runs divided by the median of the older half (needs 4+ timed runs). Listed when 1.2 or more.',
   always_failing: 'Failing in each of the last 3 or more runs it was executed in.',
-  stale: 'No execution in any plan for stale_days days, or never executed.',
+  stale: 'No result in any plan for stale_days days, or never run.',
   durations: 'Only automated results (batch API) carry durations; results recorded by people in Execute mode are not timed.',
 };
 

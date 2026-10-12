@@ -26,7 +26,7 @@ export interface LatestRunResult {
  */
 export async function latestResultsInRun(
   db: Kysely<Database>,
-  buildId: string,
+  runId: string,
   testCaseIds?: string[]
 ): Promise<Map<string, LatestRunResult>> {
   if (testCaseIds && testCaseIds.length === 0) return new Map();
@@ -34,7 +34,7 @@ export async function latestResultsInRun(
     .selectFrom('test_results as e')
     .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
     .select(['tpc.test_case_id', 'e.verdict', 'e.tester_id'])
-    .where('e.test_run_id', '=', buildId)
+    .where('e.test_run_id', '=', runId)
     .orderBy('e.executed_at', 'desc')
     .orderBy('e.created_at', 'desc');
   if (testCaseIds) query = query.where('tpc.test_case_id', 'in', testCaseIds);

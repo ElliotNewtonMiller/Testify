@@ -40,7 +40,7 @@ describe('Per-project access', () => {
 
   it('a project role gives access to just that project, including projects created later staying hidden', async () => {
     const user = await createUser('No Access');
-    const assigned = await call(admin, 'PUT', `/api/v1/admin/users/${user.id}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Tester' }] });
+    const assigned = await call(admin, 'PATCH', `/api/v1/admin/users/${user.id}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Tester' }] });
     expect(assigned.statusCode).toBe(200);
 
     const later = body(await call(admin, 'POST', '/api/v1/projects', { name: 'Later', prefix: 'LTR' })).project;
@@ -52,16 +52,16 @@ describe('Per-project access', () => {
 
     // They work in it as a Tester...
     expect((await call(user.token, 'GET', `/api/v1/projects/${seed.projectId}/spec-tree`)).statusCode).toBe(200);
-    const suite = await call(user.token, 'POST', `/api/v1/projects/${seed.projectId}/test-suites`, { name: 'Mine' });
+    const suite = await call(user.token, 'POST', `/api/v1/projects/${seed.projectId}/suites`, { name: 'Mine' });
     expect(suite.statusCode).toBe(201);
     // ...and nowhere else.
     expect((await call(user.token, 'GET', `/api/v1/projects/${later.id}/plans`)).statusCode).toBe(403);
-    expect((await call(user.token, 'POST', `/api/v1/projects/${later.id}/test-suites`, { name: 'Nope' })).statusCode).toBe(403);
+    expect((await call(user.token, 'POST', `/api/v1/projects/${later.id}/suites`, { name: 'Nope' })).statusCode).toBe(403);
   });
 
   it('the project list carries each project\'s own permissions, which can differ from the global role', async () => {
     const user = await createUser('Viewer');
-    await call(admin, 'PUT', `/api/v1/admin/users/${user.id}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Test Lead' }] });
+    await call(admin, 'PATCH', `/api/v1/admin/users/${user.id}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Test Lead' }] });
     const other = body(await call(admin, 'POST', '/api/v1/projects', { name: 'Other', prefix: 'OTH' })).project;
 
     const projects = body(await call(user.token, 'GET', '/api/v1/projects')).projects;

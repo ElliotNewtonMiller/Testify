@@ -1,7 +1,7 @@
 import type {
   IFileSerializer,
   DefinitionsExportBundle,
-  ExecutionResultsExportBundle,
+  TestResultsExportBundle,
   ExportableSuite,
   ExportableCase,
 } from './types.js';
@@ -153,7 +153,7 @@ export class CsvExportSerializer implements IFileSerializer {
     return lines.join('\r\n');
   }
 
-  serializeExecutionResults(bundle: ExecutionResultsExportBundle): string {
+  serializeTestResults(bundle: TestResultsExportBundle): string {
     const header = [
       'Test Case External ID',
       'Test Case Title',
@@ -163,14 +163,14 @@ export class CsvExportSerializer implements IFileSerializer {
       'Verdict',
       'Duration (ms)',
       'Notes',
-      'Execution Timestamp',
+      'Executed At',
       'Step Number',
       'Step Verdict',
       'Step Actual Result',
     ];
     const lines = [csvRow(header)];
 
-    for (const ex of bundle.executions) {
+    for (const ex of bundle.results) {
       const base = [
         ex.test_case_external_id,
         ex.test_case_title,
@@ -178,9 +178,9 @@ export class CsvExportSerializer implements IFileSerializer {
         ex.tester_username || ex.tester_id,
         ex.status,
         ex.verdict,
-        ex.execution_duration_ms === null ? '' : String(ex.execution_duration_ms),
+        ex.duration_ms === null ? '' : String(ex.duration_ms),
         ex.notes || '',
-        ex.execution_timestamp,
+        ex.executed_at,
       ];
       if (ex.step_results.length === 0) {
         lines.push(csvRow([...base, '', '', '']));

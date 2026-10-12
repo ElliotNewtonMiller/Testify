@@ -17,6 +17,7 @@ import {
 import { buildExecutionCaseOrder } from "../utils/executionCaseOrder";
 import { flattenSuiteOptions } from "../utils/suiteTree";
 import { authHeaders, jsonHeaders } from "../utils/session";
+import { api } from "../api/routes";
 
 export interface ExecutionOptions {
   executionWorkspace: ExecutionWorkspace;
@@ -100,7 +101,7 @@ export function useExecution({
   // Custom field values for whichever case is active in Execution mode -- shown read-only
   // under the steps. Same clear-before-fetch discipline as the Spec-mode case's fetch in App (the
   // editors are uncontrolled, so nothing stale may be mounted while the fetch is in flight).
-  const activeExecCaseId = activeCase?.case_id ?? null;
+  const activeExecCaseId = activeCase?.test_case_id ?? null;
   useEffect(() => {
     if (workspaceMode !== "EXECUTION" || !activeExecCaseId) {
       setExecCaseCustomFieldValues(null);
@@ -110,7 +111,7 @@ export function useExecution({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/test-cases/${activeExecCaseId}/custom-field-values`, {
+        const res = await fetch(api.caseCustomFields(activeExecCaseId), {
           headers: authHeaders(),
         });
         if (!cancelled) setExecCaseCustomFieldValues(res.ok ? (await res.json()).values : null);
@@ -125,7 +126,7 @@ export function useExecution({
 
   // Execute verdict submission (Optimistic UI + Background API)
   // A CLOSED run is read-only: no verdicts, no notes (the server also refuses them with
-  // 422 BUILD_CLOSED). A run closes manually via the Close Run button, or automatically once
+  // 422 RUN_CLOSED). A run closes manually via the Close Run button, or automatically once
   // every case in the plan has a result.
   const isRunClosed = workspaceMode === "EXECUTION" && selectedRun?.status === "CLOSED";
   const isRunMissing = workspaceMode === "EXECUTION" && !selectedRunId;
@@ -164,7 +165,7 @@ export function useExecution({
       setWorkspace((prev) => {
         if (!prev) return prev;
         const updatedCases = prev.cases.map((c) =>
-          c.plan_case_id === targetCase.plan_case_id
+          c.test_plan_case_id === targetCase.test_plan_case_id
             ? { ...c, latest_verdict: verdict, latest_notes: resolvedNotes }
             : c,
         );
@@ -179,7 +180,7 @@ export function useExecution({
           return {
             ...prev,
             cases: prev.cases.map((c) =>
-              c.plan_case_id === targetCase.plan_case_id
+              c.test_plan_case_id === targetCase.test_plan_case_id
                 ? { ...c, latest_verdict: targetCase.latest_verdict, latest_notes: targetCase.latest_notes }
                 : c,
             ),
@@ -190,15 +191,13 @@ export function useExecution({
 
       // 2. DISPATCH BACKGROUND API CALL
       try {
-        const response = await fetch("/api/v1/executions", {
+        // The run selected in the dropdown (workspace.run is always the plan's newest run, so
+        // using it recorded results against the wrong run whenever an older run was selected).
+        const response = await fetch(api.runResults(selectedRunId), {
           method: "POST",
           headers: jsonHeaders(),
           body: JSON.stringify({
-            // The run selected in the dropdown -- workspace.build is always the plan's newest
-            // run, so using it recorded results against the wrong run whenever an older
-            // run was selected.
-            build_id: selectedRunId,
-            test_plan_case_id: targetCase.plan_case_id,
+            test_plan_case_id: targetCase.test_plan_case_id,
             verdict,
             status: "COMPLETED",
             notes: resolvedNotes,
@@ -214,7 +213,7 @@ export function useExecution({
           );
           const data = await response.json().catch(() => ({}));
           const recordedRunId = selectedRunId;
-          if (data.build_status === "CLOSED") {
+          if (data.run_status === "CLOSED") {
             setRunsList((prev) =>
               prev.map((r) => (r.id === recordedRunId ? { ...r, status: "CLOSED" } : r)),
             );
@@ -233,7 +232,7 @@ export function useExecution({
             setSyncStatus("Not permitted: your role can't change an existing result");
             setExecutionDenied(OVERWRITE_DENIED_MESSAGE);
           } else {
-            setSyncStatus("Not permitted: your role can't record executions");
+            setSyncStatus("Not permitted: your role can't record results");
             setExecutionDenied(RUN_DENIED_MESSAGE);
           }
         } else {
@@ -254,7 +253,7 @@ export function useExecution({
   // so a filtered list can never select the wrong case. The active case may itself be
   // hidden by a filter (selection is left alone while typing); then no row is highlighted.
   const visibleCaseIndices: number[] = (workspace?.cases || []).reduce<number[]>((acc, c, i) => {
-    if (!filterResult || filterResult.caseIds.has((c as any).case_id ?? "")) acc.push(i);
+    if (!filterResult || filterResult.caseIds.has((c as any).test_case_id ?? "")) acc.push(i);
     return acc;
   }, []);
   const visibleCaseIndexSet = new Set(visibleCaseIndices);

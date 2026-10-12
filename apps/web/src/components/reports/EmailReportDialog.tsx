@@ -4,6 +4,7 @@ import { buttonStyle } from "./shared";
 import { jsonHeaders } from "../../utils/session";
 
 import { errorMessage } from "../../api/errors";
+import { api } from "../../api/routes";
 /** One report in an email: a catalog report id and its params (same as the report API). */
 export interface EmailSectionRequest {
   report_id: string;
@@ -43,7 +44,7 @@ export function EmailReportDialog({ projectId, what, sections, onClose }: { proj
   }, [onClose, preview]);
 
   const post = async (body: Record<string, unknown>) => {
-    const res = await fetch(`/api/v1/projects/${projectId}/report-emails`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) });
+    const res = await fetch(api.reportEmails(projectId), { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(errorMessage(data) || `Request failed (${res.status})`);
     return data;

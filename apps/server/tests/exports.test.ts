@@ -148,12 +148,12 @@ describe('Data export: definitions and execution results', () => {
         method: 'POST',
         url: `/api/v1/projects/${seed.projectId}/exports/definitions`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { format: 'NATIVE_JSON', scope: { type: 'SUITE', suite_id: childSuiteId } },
+        payload: { format: 'NATIVE_JSON', scope: { type: 'SUITE', test_suite_id: childSuiteId } },
       });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.scope).toEqual({ type: 'SUITE', suite_id: childSuiteId, suite_name: 'Child Suite' });
+      expect(body.scope).toEqual({ type: 'SUITE', test_suite_id: childSuiteId, suite_name: 'Child Suite' });
       expect(body.suites).toHaveLength(1);
       expect(body.suites[0].id).toBe(childSuiteId);
       expect(body.record_count.case_count).toBe(0);
@@ -185,7 +185,7 @@ describe('Data export: definitions and execution results', () => {
         method: 'POST',
         url: `/api/v1/projects/${seed.projectId}/exports/definitions`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { format: 'NATIVE_JSON', scope: { type: 'PLAN', plan_id: seed.planId } },
+        payload: { format: 'NATIVE_JSON', scope: { type: 'PLAN', test_plan_id: seed.planId } },
       });
 
       expect(res.statusCode).toBe(200);
@@ -322,13 +322,12 @@ describe('Data export: definitions and execution results', () => {
 
       const execRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${otherProject.id}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: csv,
           filename: 'export.csv',
           format: 'STANDARD_CSV',
-          target_project_id: otherProject.id,
           configuration: { duplicate_resolution: { default_action: 'CREATE_NEW' } },
         },
       });
@@ -360,9 +359,9 @@ describe('Data export: definitions and execution results', () => {
     async function recordAnExecution(app: any, token: string, seed: any) {
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED', notes: 'looks good' }] },
+        payload: { results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED', notes: 'looks good' }] },
       });
       expect(res.statusCode).toBe(201);
     }
@@ -374,23 +373,23 @@ describe('Data export: definitions and execution results', () => {
 
       const jsonRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/exports/execution-results`,
+        url: `/api/v1/projects/${seed.projectId}/exports/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { format: 'NATIVE_JSON', plan_id: seed.planId, build_id: seed.buildId },
+        payload: { format: 'NATIVE_JSON', test_run_id: seed.buildId },
       });
       expect(jsonRes.statusCode).toBe(200);
       const jsonBody = JSON.parse(jsonRes.payload);
-      expect(jsonBody.object).toBe('execution_results_export_bundle');
-      expect(jsonBody.executions.length).toBeGreaterThanOrEqual(1);
-      const ex = jsonBody.executions.find((e: any) => e.test_case_external_id === 'SHOP-101');
+      expect(jsonBody.object).toBe('test_results_export_bundle');
+      expect(jsonBody.results.length).toBeGreaterThanOrEqual(1);
+      const ex = jsonBody.results.find((e: any) => e.test_case_external_id === 'SHOP-101');
       expect(ex.verdict).toBe('PASSED');
       expect(ex.notes).toBe('looks good');
 
       const csvRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/exports/execution-results`,
+        url: `/api/v1/projects/${seed.projectId}/exports/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { format: 'STANDARD_CSV', plan_id: seed.planId, build_id: seed.buildId },
+        payload: { format: 'STANDARD_CSV', test_run_id: seed.buildId },
       });
       expect(csvRes.statusCode).toBe(200);
       expect(csvRes.payload.split('\r\n')[0]).toContain('Test Case External ID');
@@ -404,27 +403,28 @@ describe('Data export: definitions and execution results', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${otherProject.id}/exports/execution-results`,
+        url: `/api/v1/projects/${otherProject.id}/exports/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { format: 'NATIVE_JSON', plan_id: seed.planId, build_id: seed.buildId },
+        payload: { format: 'NATIVE_JSON', test_run_id: seed.buildId },
       });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).code).toBe('PROJECTS_DIFFER');
     });
   });
 
-  describe('GET .../plans/:planId/builds', () => {
-    it('lists the plan\'s builds for the Export modal\'s picker', async () => {
+  describe('GET /api/v1/plans/:planId/runs', () => {
+    it('lists the plan\'s runs for the Export modal\'s picker', async () => {
       const { app, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
 
       const res = await app.inject({
         method: 'GET',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.builds.some((b: any) => b.id === seed.buildId)).toBe(true);
+      expect(body.runs.some((b: any) => b.id === seed.buildId)).toBe(true);
     });
   });
 });

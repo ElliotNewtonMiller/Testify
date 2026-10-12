@@ -23,8 +23,8 @@ import {
   type HierarchyPreviewNode,
   type SkippedCustomFieldValueWarning,
 } from '@testify/core';
-import { authenticateRequest, permissionsInProject, type AuthenticatedUser } from '../middleware/auth.js';
-import { sendTokenProjectMismatchError, isPublicError, publicErrorMessage, sendError } from '../errors.js';
+import { authenticateRequest, permissionsInProject } from '../middleware/auth.js';
+import { isPublicError, publicErrorMessage, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 /**
@@ -57,35 +57,6 @@ function sendImportTooLarge(reply: FastifyReply, err: any): boolean {
     return true;
   }
   return false;
-}
-
-/**
- * Resolves the project a request should import into, given the caller's identity and
- * whatever project id (if any) parseImportRequest found in the body/multipart fields.
- * A machine token's own bound project always wins (a mismatched body field is rejected
- * outright, closing the "token scoped to project A imports into project B" hole);
- * a human JWT caller must be explicit -- there is deliberately no fallback to an
- * arbitrary project anymore (see the removed fallback in parseImportRequest below).
- */
-function resolveImportProjectId(
-  user: AuthenticatedUser,
-  bodyProjectId: string | undefined,
-  reply: FastifyReply,
-  instance: string
-): string | null {
-  if (user.api_token) {
-    if (bodyProjectId && bodyProjectId !== user.api_token.project_id) {
-      sendTokenProjectMismatchError(reply, user.api_token.project_id, bodyProjectId, instance);
-      return null;
-    }
-    return user.api_token.project_id;
-  }
-
-  if (!bodyProjectId) {
-    sendError(reply, 400, 'target_project_id is required');
-    return null;
-  }
-  return bodyProjectId;
 }
 
 const PARSER_WARNING_MESSAGES: Record<string, string> = {
@@ -122,7 +93,6 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     let fileBuffer: Buffer | null = null;
     let filename = 'import_file';
     let format: string | undefined = undefined;
-    let targetProjectId: string | undefined = undefined;
     let configuration: ImportConfiguration = {};
 
     if (req.isMultipart()) {
@@ -134,9 +104,6 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
           filename = part.filename;
         } else if (part.type === 'field') {
           if (part.fieldname === 'format') format = part.value as string;
-          if (part.fieldname === 'target_project_id' || part.fieldname === 'project_id') {
-            targetProjectId = part.value as string;
-          }
           if (part.fieldname === 'configuration') {
             try {
               configuration = typeof part.value === 'string' ? JSON.parse(part.value) : (part.value as any);
@@ -153,7 +120,6 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       }
       filename = body.filename || 'import_file';
       format = body.format;
-      targetProjectId = body.target_project_id || body.project_id;
       if (body.configuration) {
         configuration = typeof body.configuration === 'string' ? JSON.parse(body.configuration) : body.configuration;
       }
@@ -162,12 +128,6 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     if (!fileBuffer) {
       throw new Error('No import file provided in request.');
     }
-
-    // targetProjectId may be undefined here -- this is a pure parser now. Which project
-    // to actually import into (and validating that a caller is allowed to use it) is
-    // resolved by resolveImportProjectId() in each route handler below, since that
-    // decision depends on the caller's authenticated identity (human vs. machine token),
-    // not just on what the request body happened to contain.
 
     // Select parser. JUnitXmlParser must be checked before SaxXmlParser for auto-sniffing --
     // SaxXmlParser's broad <testsuite>/<testsuites> match would otherwise greedily claim
@@ -193,11 +153,11 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       selectedParser = new SaxXmlParser(); // Default
     }
 
-    return { fileBuffer, filename, selectedParser, targetProjectId, configuration };
+    return { fileBuffer, filename, selectedParser, configuration };
   }
 
-  // POST /api/v1/imports/dry-run
-  app.post('/api/v1/imports/dry-run', {
+  // POST /api/v1/projects/:projectId/imports/dry-run
+  app.post('/api/v1/projects/:projectId/imports/dry-run', {
     bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
     onRequest: takeImportSlot,
     onResponse: releaseImportSlot,
@@ -210,8 +170,9 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     if (!user) return;
 
     try {
-      const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
-      const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
+      const { fileBuffer, filename, selectedParser, configuration } = await parseImportRequest(req);
+      // The project is in the address; authenticateRequest has already checked a token's project.
+      const targetProjectId: string | null = (req.params as { projectId: string }).projectId;
       if (!targetProjectId) return;
       // Checked in the target project, so per-project roles and overrides apply (a multipart
       // upload's project field is only known once the body has been read).
@@ -427,8 +388,8 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     }
   });
 
-  // POST /api/v1/imports/execute
-  app.post('/api/v1/imports/execute', {
+  // POST /api/v1/projects/:projectId/imports/execute
+  app.post('/api/v1/projects/:projectId/imports/execute', {
     bodyLimit: IMPORT_JSON_BODY_LIMIT_BYTES,
     onRequest: takeImportSlot,
     onResponse: releaseImportSlot,
@@ -442,8 +403,9 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
 
     const startTime = Date.now();
     try {
-      const { fileBuffer, filename, selectedParser, targetProjectId: bodyProjectId, configuration } = await parseImportRequest(req);
-      const targetProjectId = resolveImportProjectId(user, bodyProjectId, reply, req.url);
+      const { fileBuffer, filename, selectedParser, configuration } = await parseImportRequest(req);
+      // The project is in the address; authenticateRequest has already checked a token's project.
+      const targetProjectId: string | null = (req.params as { projectId: string }).projectId;
       if (!targetProjectId) return;
       // Checked in the target project, so per-project roles and overrides apply (a multipart
       // upload's project field is only known once the body has been read).
@@ -883,11 +845,11 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
     }
   });
 
-  // GET /api/v1/imports/custom-field-options -- lists the custom field definitions
+  // GET /api/v1/projects/:projectId/imports/custom-field-options -- lists the custom field definitions
   // (global ∪ the given project's own) visible for mapping an unmapped import column
   // against. Gated more permissively than /api/v1/admin/custom-fields: an importer needs
   // read access to the field catalog without needing full CUSTOM_FIELD_MANAGE rights.
-  app.get('/api/v1/imports/custom-field-options', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/v1/projects/:projectId/imports/custom-field-options', async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await authenticateRequest(req, reply, db, jwtSecret);
     if (!user) return;
     if (
@@ -898,13 +860,8 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       return sendError(reply, 403, 'Forbidden: Insufficient privileges', { required_permission: 'IMPORT_DATA' });
     }
 
-    const { target_project_id: targetProjectId, entity_type: entityTypeRaw } = req.query as {
-      target_project_id?: string;
-      entity_type?: string;
-    };
-    if (!targetProjectId) {
-      return sendError(reply, 400, 'target_project_id is required');
-    }
+    const targetProjectId = (req.params as { projectId: string }).projectId;
+    const { entity_type: entityTypeRaw } = req.query as { entity_type?: string };
     const entityType = entityTypeRaw === 'TestSuite' ? 'TestSuite' : 'TestCase';
 
     const customFieldRepo = new CustomFieldRepository(db);

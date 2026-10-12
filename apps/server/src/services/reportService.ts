@@ -121,15 +121,15 @@ export class ReportService {
       case 'overview':
         return this.overview(projectId, params as { days: number });
       case 'run_summary':
-        return this.runSummary(projectId, params as { run_id: string; compare_to?: string | null; filter?: unknown; limit: number });
+        return this.runSummary(projectId, params as { test_run_id: string; compare_to?: string | null; filter?: unknown; limit: number });
       case 'case_history':
-        return this.caseHistory(projectId, params as { case_id: string; limit: number; cursor?: string });
+        return this.caseHistory(projectId, params as { test_case_id: string; limit: number; cursor?: string });
       case 'plan_trend':
-        return this.planTrend(projectId, params as { plan_id: string; runs: number; filter?: unknown });
+        return this.planTrend(projectId, params as { test_plan_id: string; runs: number; filter?: unknown });
       case 'test_health':
-        return this.testHealth(projectId, params as { plan_id: string; runs: number; stale_days: number; filter?: unknown; limit: number });
+        return this.testHealth(projectId, params as { test_plan_id: string; runs: number; stale_days: number; filter?: unknown; limit: number });
       case 'breakdown':
-        return this.breakdown(projectId, params as { plan_id: string; run_id?: string | null; group_by: string; filter?: unknown });
+        return this.breakdown(projectId, params as { test_plan_id: string; test_run_id?: string | null; group_by: string; filter?: unknown });
       default:
         throw new ReportError(404, 'REPORT_NOT_FOUND', `Unknown report '${reportId}'`);
     }
@@ -158,7 +158,7 @@ export class ReportService {
     const ctx = await this.projectContext(projectId);
     const c =
       ctx.caseById.get(idOrExternalId) ?? ctx.cases.find((x) => x.external_id.toLowerCase() === idOrExternalId.toLowerCase());
-    if (!c) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${idOrExternalId}' not found in this project`, { param: 'case_id' });
+    if (!c) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${idOrExternalId}' not found in this project`, { param: 'test_case_id' });
     return { ...c, suite_path: ctx.suitePath.get(c.test_suite_id) ?? null };
   }
 
@@ -199,7 +199,7 @@ export class ReportService {
     };
   }
 
-  private async resolvePlan(projectId: string, planId: string, param = 'plan_id'): Promise<Plan> {
+  private async resolvePlan(projectId: string, planId: string, param = 'test_plan_id'): Promise<Plan> {
     const plan = await this.planRepo.findById(planId);
     if (!plan || plan.project_id !== projectId) {
       throw new ReportError(404, 'PLAN_NOT_FOUND', `Test plan '${planId}' not found in this project`, { param });
@@ -207,7 +207,7 @@ export class ReportService {
     return plan;
   }
 
-  private async resolveRun(projectId: string, runId: string, param = 'run_id'): Promise<{ run: Build; plan: Plan }> {
+  private async resolveRun(projectId: string, runId: string, param = 'test_run_id'): Promise<{ run: Build; plan: Plan }> {
     const run = await this.runRepo.findById(runId);
     const plan = run ? await this.planRepo.findById(run.test_plan_id) : undefined;
     if (!run || !plan || plan.project_id !== projectId) {
@@ -223,7 +223,7 @@ export class ReportService {
       status: run.status,
       created_at: run.created_at,
       release_date: run.release_date,
-      plan_id: plan.id,
+      test_plan_id: plan.id,
       plan_name: plan.name,
     };
   }
@@ -249,7 +249,7 @@ export class ReportService {
     const hasQ = typeof f.q === 'string' && f.q.trim() !== '';
     const hasFilters = Array.isArray(f.filters) && f.filters.length > 0;
     if (!hasQ && !hasFilters) return null;
-    const outcome = await this.caseFilter.evaluate(projectId, { q: f.q, filters: f.filters, plan_id: planId ?? undefined, build_id: runId ?? undefined });
+    const outcome = await this.caseFilter.evaluate(projectId, { q: f.q, filters: f.filters, test_plan_id: planId ?? undefined, test_run_id: runId ?? undefined });
     if (!outcome.ok) throw new ReportError(outcome.status === 404 ? 404 : 400, 'INVALID_FILTER', outcome.error, outcome.details);
     return new Set(outcome.case_ids);
   }
@@ -257,16 +257,16 @@ export class ReportService {
   private static groupByRun(rows: FinalResultRow[]): Map<string, FinalResultRow[]> {
     const map = new Map<string, FinalResultRow[]>();
     for (const r of rows) {
-      const list = map.get(r.run_id) ?? [];
+      const list = map.get(r.test_run_id) ?? [];
       list.push(r);
-      map.set(r.run_id, list);
+      map.set(r.test_run_id, list);
     }
     return map;
   }
 
   /** Per case, its final results across `runIds` in that order (null verdict = no result). */
   private static seriesByCase(rows: FinalResultRow[], runIds: string[]): Map<string, RunResult[]> {
-    const byKey = new Map(rows.map((r) => [`${r.run_id}|${r.test_case_id}`, r]));
+    const byKey = new Map(rows.map((r) => [`${r.test_run_id}|${r.test_case_id}`, r]));
     const caseIds = [...new Set(rows.map((r) => r.test_case_id))];
     const series = new Map<string, RunResult[]>();
     for (const caseId of caseIds) {
@@ -292,10 +292,10 @@ export class ReportService {
 
   async runSummary(
     projectId: string,
-    p: { run_id: string; compare_to?: string | null; filter?: unknown; limit: number }
+    p: { test_run_id: string; compare_to?: string | null; filter?: unknown; limit: number }
   ): Promise<ReportOutput<RunSummaryReport>> {
     const ctx = await this.projectContext(projectId);
-    const { run, plan } = await this.resolveRun(projectId, p.run_id);
+    const { run, plan } = await this.resolveRun(projectId, p.test_run_id);
 
     const planRuns = await this.runRepo.findByTestPlan(plan.id); // newest first
     const idx = planRuns.findIndex((r) => r.id === run.id);
@@ -368,7 +368,7 @@ export class ReportService {
       .filter((r) => isFailing(r.verdict))
       .map((r) => {
         const caseSeries = series.get(r.test_case_id) ?? [];
-        const since = failingSince(historyIds.map((runId, i) => ({ run_id: runId, verdict: caseSeries[i]?.verdict ?? null })));
+        const since = failingSince(historyIds.map((runId, i) => ({ test_run_id: runId, verdict: caseSeries[i]?.verdict ?? null })));
         const flaky = flipScore(caseSeries.slice(-FLAKY_WINDOW)).score >= FLAKY_FLAG_THRESHOLD || (r.had_pass && r.had_fail);
         return {
           ...this.caseRef(ctx, r.test_case_id),
@@ -379,7 +379,7 @@ export class ReportService {
           tested_by: r.tester_id ? names.get(r.tester_id) ?? r.tester_id : null,
           source: r.source,
           attempts: r.attempts,
-          failing_since: since ? { run_id: since.run_id, run_name: runName.get(since.run_id) ?? '', runs: since.runs } : null,
+          failing_since: since ? { test_run_id: since.test_run_id, run_name: runName.get(since.test_run_id) ?? '', runs: since.runs } : null,
           flaky,
           runner: parseJson(r.runner),
         };
@@ -435,24 +435,24 @@ export class ReportService {
     };
   }
 
-  async caseHistory(projectId: string, p: { case_id: string; limit: number; cursor?: string }): Promise<ReportOutput> {
+  async caseHistory(projectId: string, p: { test_case_id: string; limit: number; cursor?: string }): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
     const testCase =
-      ctx.caseById.get(p.case_id) ?? ctx.cases.find((c) => c.external_id.toLowerCase() === p.case_id.toLowerCase());
-    if (!testCase) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${p.case_id}' not found in this project`, { param: 'case_id' });
+      ctx.caseById.get(p.test_case_id) ?? ctx.cases.find((c) => c.external_id.toLowerCase() === p.test_case_id.toLowerCase());
+    if (!testCase) throw new ReportError(404, 'CASE_NOT_FOUND', `Test case '${p.test_case_id}' not found in this project`, { param: 'test_case_id' });
 
     const [page, timeline] = await Promise.all([
       this.resultRepo.getCaseHistory(testCase.id, { limit: p.limit, cursor: p.cursor }),
       this.resultRepo.getCaseVerdictTimeline(testCase.id),
     ]);
     const names = await this.actorNames(page.rows.map((r) => r.tester_id));
-    const executions = page.rows.map((r) => ({
-      execution_id: r.test_result_id,
+    const results = page.rows.map((r) => ({
+      test_result_id: r.test_result_id,
       executed_at: r.executed_at,
       verdict: r.verdict,
       status: r.status,
-      run: { id: r.run_id, name: r.run_name },
-      plan: { id: r.plan_id, name: r.plan_name },
+      run: { id: r.test_run_id, name: r.run_name },
+      plan: { id: r.test_plan_id, name: r.plan_name },
       version_number: r.version_number,
       duration_ms: r.duration_ms,
       tested_by: names.get(r.tester_id) ?? r.tester_id,
@@ -475,21 +475,21 @@ export class ReportService {
         version_status: testCase.latest_version?.status ?? null,
       },
       stats: computeCaseStats(timeline),
-      executions,
+      results,
       next_cursor: page.next_cursor,
     };
     return {
       data,
       csv: {
         columns: ['executed_at', 'verdict', 'run', 'plan', 'version_number', 'duration_ms', 'tested_by', 'source', 'failure_message', 'notes', 'runner', 'environment'],
-        rows: executions.map((e) => ({ ...e, run: e.run.name, plan: e.plan.name })),
+        rows: results.map((e) => ({ ...e, run: e.run.name, plan: e.plan.name })),
       },
     };
   }
 
-  async planTrend(projectId: string, p: { plan_id: string; runs: number; filter?: unknown }): Promise<ReportOutput> {
+  async planTrend(projectId: string, p: { test_plan_id: string; runs: number; filter?: unknown }): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
-    const plan = await this.resolvePlan(projectId, p.plan_id);
+    const plan = await this.resolvePlan(projectId, p.test_plan_id);
     const planRuns = await this.runRepo.findByTestPlan(plan.id);
     // One extra (older) run so the first point also gets a "new failures" count.
     const window = planRuns.slice(0, p.runs + 1).reverse();
@@ -501,14 +501,14 @@ export class ReportService {
 
     const points = computeTrendPoints(
       kept,
-      shown.map((r) => ({ run_id: r.id, run_name: r.name, status: r.status, created_at: r.created_at, release_date: r.release_date }))
+      shown.map((r) => ({ test_run_id: r.id, run_name: r.name, status: r.status, created_at: r.created_at, release_date: r.release_date }))
     ).map((point) => {
-      const i = window.findIndex((r) => r.id === point.run_id);
+      const i = window.findIndex((r) => r.id === point.test_run_id);
       const prev = i > 0 ? window[i - 1] : null;
       const counts = prev
         ? diffRuns(
             (byRun.get(prev.id) ?? []).map((r) => ({ test_case_id: r.test_case_id, verdict: r.verdict })),
-            (byRun.get(point.run_id) ?? []).map((r) => ({ test_case_id: r.test_case_id, verdict: r.verdict }))
+            (byRun.get(point.test_run_id) ?? []).map((r) => ({ test_case_id: r.test_case_id, verdict: r.verdict }))
           ).counts
         : null;
       return { ...point, new_failures: counts ? counts.new_failure : null, fixed: counts ? counts.fixed : null };
@@ -524,7 +524,7 @@ export class ReportService {
         points,
       },
       csv: {
-        columns: ['run_name', 'created_at', 'status', 'total', 'passed', 'failed', 'blocked', 'skipped', 'untested', 'other', 'pass_rate', 'completion', 'new_failures', 'fixed', 'run_id'],
+        columns: ['run_name', 'created_at', 'status', 'total', 'passed', 'failed', 'blocked', 'skipped', 'untested', 'other', 'pass_rate', 'completion', 'new_failures', 'fixed', 'test_run_id'],
         rows: points,
       },
     };
@@ -532,10 +532,10 @@ export class ReportService {
 
   async testHealth(
     projectId: string,
-    p: { plan_id: string; runs: number; stale_days: number; filter?: unknown; limit: number }
+    p: { test_plan_id: string; runs: number; stale_days: number; filter?: unknown; limit: number }
   ): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
-    const plan = await this.resolvePlan(projectId, p.plan_id);
+    const plan = await this.resolvePlan(projectId, p.test_plan_id);
     const runs = (await this.runRepo.findByTestPlan(plan.id)).slice(0, p.runs).reverse();
     const runIds = runs.map((r) => r.id);
     const [rows, pinned, lastExecuted] = await Promise.all([
@@ -578,11 +578,11 @@ export class ReportService {
 
       const failing = consecutiveFailures(s);
       if (failing >= ALWAYS_FAILING_MIN_RUNS) {
-        const since = failingSince(runIds.map((runId, i) => ({ run_id: runId, verdict: s[i].verdict })));
+        const since = failingSince(runIds.map((runId, i) => ({ test_run_id: runId, verdict: s[i].verdict })));
         alwaysFailing.push({
           ...ref,
           consecutive_failures: failing,
-          failing_since: since ? { run_id: since.run_id, run_name: runName.get(since.run_id) ?? '' } : null,
+          failing_since: since ? { test_run_id: since.test_run_id, run_name: runName.get(since.test_run_id) ?? '' } : null,
           last_failure_message: lastFailure.get(caseId) ?? null,
         });
       }
@@ -621,13 +621,13 @@ export class ReportService {
     };
   }
 
-  async breakdown(projectId: string, p: { plan_id: string; run_id?: string | null; group_by: string; filter?: unknown }): Promise<ReportOutput> {
+  async breakdown(projectId: string, p: { test_plan_id: string; test_run_id?: string | null; group_by: string; filter?: unknown }): Promise<ReportOutput> {
     const ctx = await this.projectContext(projectId);
-    const plan = await this.resolvePlan(projectId, p.plan_id);
+    const plan = await this.resolvePlan(projectId, p.test_plan_id);
     let run: Build | null = null;
-    if (p.run_id) {
-      const resolved = await this.resolveRun(projectId, p.run_id);
-      if (resolved.plan.id !== plan.id) throw new ReportError(400, 'INVALID_PARAMS', 'run_id must be a run of plan_id', { param: 'run_id' });
+    if (p.test_run_id) {
+      const resolved = await this.resolveRun(projectId, p.test_run_id);
+      if (resolved.plan.id !== plan.id) throw new ReportError(400, 'INVALID_PARAMS', 'test_run_id must be a run of test_plan_id', { param: 'test_run_id' });
       run = resolved.run;
     }
 
@@ -650,7 +650,7 @@ export class ReportService {
       if (!fieldDef) throw new ReportError(400, 'INVALID_PARAMS', `Unknown group_by '${groupBy}'`, { param: 'group_by' });
       label = fieldDef.field_label;
     }
-    if (groupBy === 'tester' && !run) throw new ReportError(400, 'INVALID_PARAMS', "group_by 'tester' needs run_id", { param: 'group_by' });
+    if (groupBy === 'tester' && !run) throw new ReportError(400, 'INVALID_PARAMS', "group_by 'tester' needs test_run_id", { param: 'group_by' });
 
     const [pinned, finals] = await Promise.all([
       this.planRepo.getPinnedCases(plan.id),

@@ -13,7 +13,7 @@ import { CaseFilterService } from '../services/caseFilterService.js';
 /** Smaller list sizes than the REST defaults, to keep agent context small. */
 const MCP_DEFAULT_LIMIT = 25;
 
-const INSTRUCTIONS = `Testify is a test case management system: projects contain test suites and test cases; a test plan selects cases to run; each test run (also called a build) of a plan records a result per case (PASSED, FAILED, BLOCKED, SKIPPED).
+const INSTRUCTIONS = `Testify is a test case management system: projects contain test suites and test cases; a test plan selects cases to run; each test run of a plan records a result per case (PASSED, FAILED, BLOCKED, SKIPPED).
 Every tool is read-only. Typical flow: list_projects -> list_plans_and_runs -> report_run_summary (what broke in a run, compared with the previous run, with error messages and how long each failure has been failing) -> report_case_history for a specific case -> report_test_health for flaky/slow/always-failing/stale cases.
 Use search_cases / list_report_fields to find cases; most reports take the same "filter" to limit them to matching cases. report_run_summary accepts format "markdown" for a ready-to-post summary.
 Rates are fractions between 0 and 1. ${REPORT_DEFINITIONS.flaky}`;
@@ -150,8 +150,8 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
           project_id: { type: 'string' },
           q: { type: 'string', description: 'Matches external id, title, or the name of the case\'s suite or any suite above it.' },
           filters: { type: 'array', items: { type: 'object' }, description: 'See list_report_fields.' },
-          plan_id: { type: 'string', description: "Needed for the 'in_plan' filter." },
-          run_id: { type: 'string', description: "Needed for the 'verdict' filter." },
+          test_plan_id: { type: 'string', description: "Needed for the 'in_plan' filter." },
+          test_run_id: { type: 'string', description: "Needed for the 'verdict' filter." },
           limit: { type: 'integer', minimum: 1, maximum: 500, default: MCP_DEFAULT_LIMIT },
         },
         required: ['project_id'],
@@ -159,7 +159,7 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
       },
       run: async (args, user) => {
         const projectId = await requireProject(user, args.project_id);
-        const outcome = await caseFilter.evaluate(projectId, { q: args.q, filters: args.filters, plan_id: args.plan_id, build_id: args.run_id });
+        const outcome = await caseFilter.evaluate(projectId, { q: args.q, filters: args.filters, test_plan_id: args.test_plan_id, test_run_id: args.test_run_id });
         if (!outcome.ok) throw new ToolError(`${outcome.error}${outcome.details ? `: ${JSON.stringify(outcome.details)}` : ''}`);
         const limit = Math.min(Math.max(Number(args.limit) || MCP_DEFAULT_LIMIT, 1), 500);
         return json({
@@ -174,13 +174,13 @@ export async function registerMcpRoutes(app: FastifyInstance, db: Kysely<Databas
       description: "One test case's content: title, suite, priority, latest version (status, summary, preconditions, steps with expected results) and custom field values.",
       inputSchema: {
         type: 'object',
-        properties: { project_id: { type: 'string' }, case_id: { type: 'string', description: 'Case id or external id such as SHOP-12.' } },
-        required: ['project_id', 'case_id'],
+        properties: { project_id: { type: 'string' }, test_case_id: { type: 'string', description: 'Case id or external id such as SHOP-12.' } },
+        required: ['project_id', 'test_case_id'],
         additionalProperties: false,
       },
       run: async (args, user) => {
         const projectId = await requireProject(user, args.project_id);
-        const c = await reports.findCase(projectId, String(args.case_id ?? ''));
+        const c = await reports.findCase(projectId, String(args.test_case_id ?? ''));
         const [version, values] = await Promise.all([
           versionRepo.findLatestVersion(c.id),
           customFieldRepo.getValuesForEntity('TestCase', c.id, projectId),

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 interface EmailSettings {
   smtp_host: string | null;
   smtp_port: number | null;
@@ -79,12 +80,12 @@ export function EmailSettingsPanel() {
   };
 
   const loadLastEmail = useCallback(async () => {
-    const res = await fetch("/api/v1/admin/email-last", { headers: authHeaders() });
+    const res = await fetch(api.admin.lastEmail, { headers: authHeaders() });
     if (res.ok) setLastEmail((await res.json()).email);
   }, []);
 
   useEffect(() => {
-    fetch("/api/v1/admin/email-settings", { headers: authHeaders() })
+    fetch(api.admin.emailSettings, { headers: authHeaders() })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Failed to load email settings (${r.status})`))))
       .then((d) => applySettings(d.settings))
       .catch((e) => setNotice({ ok: false, text: e.message }));
@@ -101,7 +102,7 @@ export function EmailSettingsPanel() {
     try {
       const body: Record<string, unknown> = { ...form, smtp_port: form.smtp_port || null };
       if (!passwordTouched) delete body.smtp_password;
-      const res = await fetch("/api/v1/admin/email-settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) });
+      const res = await fetch(api.admin.emailSettings, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorMessage(d) || "Couldn't save");
       applySettings(d.settings);
@@ -116,7 +117,7 @@ export function EmailSettingsPanel() {
   const sendTest = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/v1/admin/email-settings/test", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ to: testTo }) });
+      const res = await fetch(api.admin.emailSettingsTest, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ to: testTo }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorMessage(d) || "Couldn't send");
       if (d.email.status === "FAILED") flash(false, "Sending the test email failed -- see Last email below.");

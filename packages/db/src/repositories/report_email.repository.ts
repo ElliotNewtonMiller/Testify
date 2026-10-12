@@ -31,7 +31,7 @@ export class SystemSettingsRepository {
 
 export interface ReportScheduleSection {
   kind: 'overview' | 'latest_run' | 'test_health' | 'plan_trend';
-  plan_id?: string;
+  test_plan_id?: string;
   filter?: Record<string, unknown>;
 }
 

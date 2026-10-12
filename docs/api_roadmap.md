@@ -19,11 +19,10 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 
 **Weak:**
 1. **Mostly undocumented.** Only reports, MCP and the CI results format are written up ([reports_api_and_mcp.md](reports_api_and_mcp.md)). Everything else has to be learned from the code in `apps/server/src/routes/`.
-2. **Inconsistent, because it grew feature by feature:**
-   - Some addresses sit under a project (`/api/v1/projects/{projectId}/test-cases`), others don't (`/api/v1/test-cases/{caseId}/latest-version`, `/api/v1/test-plans/{planId}/cases`).
-   - Errors come in two shapes. Most routes send a plain `{ error, code }` (about 160 places). The shared helpers in `errors.ts` send problem details (`type`, `title`, `status`, `code`, `detail`, `invalid_params`); they're used for validation, conflicts and permission refusals.
-   - Test runs are still `builds` in addresses and fields.
-   - The single-result route lives in `server.ts`, not with the other routes.
+2. **Inconsistent, because it grew feature by feature.** Fixed by step 1 (stages 1-3, 2026-10-11/12): one address style, one error format, "runs" and "results" everywhere, one name per id. Stage 4 (documentation) is still to do.
+   - Before: some addresses sat under a project (`/api/v1/projects/{projectId}/test-cases`), others didn't (`/api/v1/test-cases/{caseId}/latest-version`, `/api/v1/test-plans/{planId}/cases`).
+   - Before: errors came in two shapes, plain `{ error, code }` and problem details.
+   - Before: test runs were `builds` in addresses and fields, and the single-result route lived in `server.ts`.
 3. **No paging.** Lists return everything at once. That's fine now, but will be slow with tens of thousands of cases or results.
 4. **No machine-readable description.** There's no OpenAPI spec. RFC 03 §1-4 describes an API that was never built that way.
 5. **Agents can only read.** MCP has no tools to create cases, record results or manage plans.
@@ -54,7 +53,7 @@ Many tools read that format, so the one file gives:
 
 ### 1. Make the API consistent
 
-**Status:** In progress. Stages 1 and 2 of 4 done (2026-10-11, 2026-10-12); see the stages below and the Decisions table.
+**Status:** In progress. Stages 1-3 of 4 done (2026-10-11, 2026-10-12, 2026-10-12); see the stages below and the Decisions table.
 
 **What:** decide the conventions, then change the routes to follow them:
 - one address style (everything under `/projects/{projectId}/...`, or flat resources);
@@ -72,10 +71,10 @@ Many tools read that format, so the one file gives:
 **Stages** (each its own commit, tested by Elliot before the next):
 1. **Database rename. Done 2026-10-11.** Migration `007`: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`, with their columns, constraints and indexes. The code that talks to them was renamed to match; the API was unchanged.
 2. **One error format. Done 2026-10-12.** Every error is problem details (`application/problem+json`, with `code` and `detail`), sent through `sendError` in `apps/server/src/errors.ts`; unknown addresses and Fastify's own errors too. The web app reads messages through `errorMessage()` in `apps/web/src/api/errors.ts`. `apps/server/tests/api_conventions.test.ts` checks the format for every kind of error.
-3. **Addresses, verbs and names.** Not started. The route map below; `PATCH` for partial updates; `201`/`200`/`204` for create/update/delete; `?force=true` for "delete anyway"; snake_case bodies; id fields named after the database columns (`test_plan_id`, `test_run_id`, ...); "run" and "result" instead of "build" and "execution" in addresses, fields, error codes and new audit rows (old audit rows keep their names). The web app's addresses move into one file (`apps/web/src/api/routes.ts`). A data migration renames `plan_id` to `test_plan_id` inside stored report schedules.
+3. **Addresses, verbs and names. Done 2026-10-12.** The route map below; `PATCH` for partial updates; `201`/`200`/`204` for create/update/delete; `?force=true` for "delete anyway"; snake_case bodies; id fields named after the database columns (`test_plan_id`, `test_run_id`, ...); "run" and "result" instead of "build" and "execution" in addresses, fields, error codes and new audit rows (old audit rows keep their names). The web app's addresses move into one file (`apps/web/src/api/routes.ts`). A data migration (`008`) renames `plan_id` to `test_plan_id` inside stored report schedules. Two kept `PUT`, because each replaces the whole thing: updating a report schedule and saving the email settings. Removing a whole suite from a plan answers 200 with counts (`added`, `removed`, `retired`, `skipped`) rather than 204. `api_conventions.test.ts` checks the new shapes, that no response says "build" or "execution", and that the old addresses answer 404.
 4. **Documentation.** Not started. RFC 03 §1-4 replaced with these conventions and the route map; the other docs updated.
 
-**Route map for stage 3** (all under `/api/v1`):
+**Route map** (all under `/api/v1`):
 
 | Area | Routes |
 | :--- | :--- |
@@ -88,10 +87,10 @@ Many tools read that format, so the one file gives:
 | Plans | `GET`/`POST /projects/{id}/plans`, `PATCH`/`DELETE /plans/{id}`, `GET /plans/{id}/cases?test_run_id=`, `POST /plans/{id}/cases`, `DELETE /plans/{id}/cases/{caseId}`, `POST`/`DELETE /plans/{id}/suites/{suiteId}/cases` |
 | Runs and results | `GET`/`POST /plans/{id}/runs`, `PATCH`/`DELETE /runs/{id}`, `POST /runs/{id}/results` (one result), `POST /runs/{id}/results/batch` (CI) |
 | Reports | `GET /projects/{id}/reports`, `POST /projects/{id}/reports/{reportId}` |
-| Report email | `POST /projects/{id}/report-emails`, `GET`/`POST /projects/{id}/report-schedules`, `PATCH`/`DELETE /report-schedules/{id}`, `POST /report-schedules/{id}/send-now` |
+| Report email | `POST /projects/{id}/report-emails`, `GET`/`POST /projects/{id}/report-schedules`, `PUT`/`DELETE /report-schedules/{id}`, `POST /report-schedules/{id}/send-now` |
 | Import and export | `POST /projects/{id}/imports/dry-run`, `/imports/execute`, `GET /projects/{id}/imports/custom-field-options`, `POST /projects/{id}/exports/definitions`, `POST /projects/{id}/exports/results` |
 | API tokens | `GET`/`POST /projects/{id}/api-tokens`, `DELETE /api-tokens/{id}` |
-| Admin | `/admin/users` (`PATCH /admin/users/{id}` for status; `PATCH …/roles`; `PUT …/permission-overrides`; `POST …/reset-password`), `PATCH /admin/roles/{id}`, `PATCH /admin/custom-fields/{id}`, `PATCH /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email`, `GET /admin/audit-logs`, `GET /admin/permissions` |
+| Admin | `/admin/users` (`PATCH /admin/users/{id}` for status; `PATCH …/roles`; `PUT …/permission-overrides`; `POST …/reset-password`), `PATCH /admin/roles/{id}`, `PATCH /admin/custom-fields/{id}`, `PUT /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email`, `GET /admin/audit-logs`, `GET /admin/permissions` |
 | Unchanged | `GET /api/v1/health`, `POST /mcp` |
 
 With items addressed by their own id, the server works out the project from the item. A request that also names a project must name the same one, or it's refused (`400 PROJECTS_DIFFER`).
@@ -203,3 +202,5 @@ With items addressed by their own id, the server works out the project from the 
 | 2026-10-11 | Rename in the database too: `builds` → `test_runs`, `executions` → `test_results`, `execution_steps` → `test_step_results`. | Migration `007`. |
 | 2026-10-11 | Id fields use the database column names (`test_plan_id`, `test_run_id`, ...) everywhere in the API. | One name per id, no translation layer. |
 | 2026-10-11 | No aliases: old addresses change outright; the cleaned-up API becomes the stable `/api/v1` (step 2). | Nothing outside Testify uses the API yet. |
+| 2026-10-12 | `PUT` stays for updates that replace the whole thing: report schedules and the email settings. Everything else that updates part of an item is `PATCH`. | Found while converting; a missing field in those bodies clears the value. |
+| 2026-10-12 | Removing a whole suite from a plan answers 200 with counts, not 204. | The counts (`removed`, `retired`, `skipped`) are what the web app shows. |

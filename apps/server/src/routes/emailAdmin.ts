@@ -16,7 +16,7 @@ import { sendError } from '../errors.js';
  *
  * GET/PUT /api/v1/admin/email-settings      -- the password is never returned, only has_password.
  * POST    /api/v1/admin/email-settings/test  { to }
- * GET     /api/v1/admin/email-last           -- the last email sent or captured (with its HTML), or null.
+ * GET     /api/v1/admin/last-email           -- the last email sent or captured (with its HTML), or null.
  */
 export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   const settingsRepo = new SystemSettingsRepository(db);
@@ -125,5 +125,5 @@ export async function registerEmailAdminRoutes(app: FastifyInstance, db: Kysely<
     return { email: { status: sent.status, error: sent.error } };
   });
 
-  app.get('/api/v1/admin/email-last', gate, async () => ({ email: (await lastEmailRepo.find()) ?? null }));
+  app.get('/api/v1/admin/last-email', gate, async () => ({ email: (await lastEmailRepo.find()) ?? null }));
 }

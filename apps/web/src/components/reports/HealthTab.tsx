@@ -37,7 +37,7 @@ export function HealthTab({ projectId, planId, filter, onOpenCase, onEmailContex
   const [runs, setRuns] = React.useState(10);
   const [staleDays, setStaleDays] = React.useState(30);
   const params = React.useMemo(
-    () => (planId ? { plan_id: planId, runs, stale_days: staleDays, limit: 50, ...(filter ? { filter } : {}) } : null),
+    () => (planId ? { test_plan_id: planId, runs, stale_days: staleDays, limit: 50, ...(filter ? { filter } : {}) } : null),
     [planId, runs, staleDays, filter]
   );
   const { data, error, loading } = useReport<HealthReport>(projectId, "test_health", params);

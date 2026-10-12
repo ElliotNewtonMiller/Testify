@@ -27,7 +27,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
   async function planQueue(app: any, token: string, seed: any): Promise<any[]> {
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`,
+      url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
@@ -67,11 +67,10 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const case1 = workspace.cases[0];
     const passRes = await app.inject({
       method: 'POST',
-      url: '/api/v1/executions',
+      url: `/api/v1/runs/${seed.buildId}/results`,
       headers: authHeaders,
       payload: {
-        build_id: seed.buildId,
-        test_plan_case_id: case1.plan_case_id,
+        test_plan_case_id: case1.test_plan_case_id,
         verdict: 'PASSED',
         status: 'COMPLETED',
         notes: 'Rapid single-key hotkey [p] pass submission',
@@ -85,17 +84,16 @@ describe('Core Operational Loop E2E Integration Test', () => {
 
     expect(passRes.statusCode).toBe(201);
     const passData = JSON.parse(passRes.body);
-    expect(passData.verdict).toBe('PASSED');
+    expect(passData.result.verdict).toBe('PASSED');
 
     // 3. Simulate Single-Key Hotkey 'f' (Fail) on Case 2 (SHOP-102)
     const case2 = workspace.cases[1];
     const failRes = await app.inject({
       method: 'POST',
-      url: '/api/v1/executions',
+      url: `/api/v1/runs/${seed.buildId}/results`,
       headers: authHeaders,
       payload: {
-        build_id: seed.buildId,
-        test_plan_case_id: case2.plan_case_id,
+        test_plan_case_id: case2.test_plan_case_id,
         verdict: 'FAILED',
         status: 'COMPLETED',
         notes: 'Regressed token secret assertion - step 2 failed',
@@ -109,23 +107,23 @@ describe('Core Operational Loop E2E Integration Test', () => {
 
     expect(failRes.statusCode).toBe(201);
     const failData = JSON.parse(failRes.body);
-    expect(failData.verdict).toBe('FAILED');
+    expect(failData.result.verdict).toBe('FAILED');
 
     // 4. Verify Immutable Database Snapshots & Audit Trail
     const verification: any = await readExecutionTables(db);
 
     expect(verification.total_executions).toBe(2);
 
-    const exec1 = verification.executions.find((e: any) => e.id === passData.id);
+    const exec1 = verification.executions.find((e: any) => e.id === passData.result.id);
     expect(exec1).toBeDefined();
     expect(exec1.verdict).toBe('PASSED');
     expect(exec1.status).toBe('COMPLETED');
     expect(exec1.test_run_id).toBe(seed.buildId);
-    expect(exec1.test_plan_case_id).toBe(case1.plan_case_id);
+    expect(exec1.test_plan_case_id).toBe(case1.test_plan_case_id);
     // tester_id is the real authenticated caller now, not the old hardcoded 'usr_tester_01' stub.
     expect(exec1.tester_id).toBe(adminId);
 
-    const exec2 = verification.executions.find((e: any) => e.id === failData.id);
+    const exec2 = verification.executions.find((e: any) => e.id === failData.result.id);
     expect(exec2).toBeDefined();
     expect(exec2.verdict).toBe('FAILED');
     expect(exec2.notes).toBe('Regressed token secret assertion - step 2 failed');
@@ -139,7 +137,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
 
     // Verify append-only audit trail entries
     expect(verification.auditLogs.length).toBe(2);
-    expect(verification.auditLogs[0].action).toBe('EXECUTION_RECORDED');
+    expect(verification.auditLogs[0].action).toBe('RESULT_RECORDED');
     // actor_id is the real authenticated caller now, not the old hardcoded 'usr_tester_01' stub.
     expect(verification.auditLogs[0].actor_id).toBe(adminId);
 
@@ -157,13 +155,12 @@ describe('Core Operational Loop E2E Integration Test', () => {
     const targetCase = (await planQueue(app, adminToken, seed))[0];
 
     const payload = {
-      build_id: seed.buildId,
-      test_plan_case_id: targetCase.plan_case_id,
+      test_plan_case_id: targetCase.test_plan_case_id,
       verdict: 'PASSED',
     };
 
     // No token at all.
-    const noAuthRes = await app.inject({ method: 'POST', url: '/api/v1/executions', payload });
+    const noAuthRes = await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, payload });
     expect(noAuthRes.statusCode).toBe(401);
 
     // Provision a Viewer (the one role without EXECUTE_RUN) and log in as them.
@@ -187,7 +184,7 @@ describe('Core Operational Loop E2E Integration Test', () => {
 
     const forbiddenRes = await app.inject({
       method: 'POST',
-      url: '/api/v1/executions',
+      url: `/api/v1/runs/${seed.buildId}/results`,
       headers: { authorization: `Bearer ${viewerToken}` },
       payload,
     });

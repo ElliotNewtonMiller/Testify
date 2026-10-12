@@ -38,13 +38,13 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
     app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload !== undefined ? { payload } : {}) });
 
   async function lastEmail(app: any, token: string) {
-    return JSON.parse((await call(app, token, 'GET', '/api/v1/admin/email-last')).payload).email;
+    return JSON.parse((await call(app, token, 'GET', '/api/v1/admin/last-email')).payload).email;
   }
 
   function scheduleBody(planId: string, extra: Record<string, unknown> = {}) {
     return {
       name: 'Weekly digest',
-      sections: [{ kind: 'overview' }, { kind: 'latest_run', plan_id: planId }],
+      sections: [{ kind: 'overview' }, { kind: 'latest_run', test_plan_id: planId }],
       recipients: 'boss@example.com, qa@example.com',
       frequency: 'WEEKLY',
       weekday: 1,
@@ -77,7 +77,7 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
 
       const { token: lead } = await createAndLoginAs(app, admin, 'Test Lead');
       expect((await call(app, lead, 'GET', '/api/v1/admin/email-settings')).statusCode).toBe(403);
-      expect((await call(app, lead, 'GET', '/api/v1/admin/email-last')).statusCode).toBe(403);
+      expect((await call(app, lead, 'GET', '/api/v1/admin/last-email')).statusCode).toBe(403);
     });
 
     it('test email: captured with no SMTP host, sent through the transport with one, failed when it errors', async () => {
@@ -116,7 +116,7 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       const admin = await loginAsAdmin(app);
       await call(app, admin, 'PUT', '/api/v1/admin/email-settings', { public_url: 'https://testify.example.com' });
       const url = `/api/v1/projects/${seed.projectId}/report-emails`;
-      const sections = [{ report_id: 'run_summary', params: { run_id: seed.buildId } }];
+      const sections = [{ report_id: 'run_summary', params: { test_run_id: seed.buildId } }];
 
       const preview = await call(app, admin, 'POST', url, { sections, preview: true });
       expect(preview.statusCode).toBe(200);
@@ -145,7 +145,7 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       expect(JSON.parse(badAddress.payload).invalid_params[0].name).toBe('recipients');
       const tooMany = Array.from({ length: 51 }, (_, i) => `u${i}@x.com`);
       expect((await call(app, admin, 'POST', url, { sections, recipients: tooMany })).statusCode).toBe(400);
-      expect((await call(app, admin, 'POST', url, { sections: [{ report_id: 'case_history', params: { case_id: 'SHOP-101' } }], recipients: 'a@b.co' })).statusCode).toBe(400);
+      expect((await call(app, admin, 'POST', url, { sections: [{ report_id: 'case_history', params: { test_case_id: 'SHOP-101' } }], recipients: 'a@b.co' })).statusCode).toBe(400);
       expect((await call(app, admin, 'POST', url, { sections: [{ report_id: 'run_summary', params: {} }], recipients: 'a@b.co' })).statusCode).toBe(400);
 
       const { token: tester } = await createAndLoginAs(app, admin, 'Tester');
@@ -180,18 +180,18 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       await bad({ recipients: '' }, 'recipients');
       await bad({ sections: [{ kind: 'nope' }] }, 'sections');
       const otherPlan = await new TestPlanRepository(db).create({ project_id: (await new ProjectRepository(db).create({ name: 'O', prefix: 'OO' })).id, name: 'x' });
-      await bad({ sections: [{ kind: 'latest_run', plan_id: otherPlan.id }] }, 'sections');
+      await bad({ sections: [{ kind: 'latest_run', test_plan_id: otherPlan.id }] }, 'sections');
 
       const list = JSON.parse((await call(app, admin, 'GET', base)).payload).schedules;
       expect(list).toHaveLength(1);
 
-      const updated = await call(app, admin, 'PUT', `${base}/${schedule.id}`, scheduleBody(seed.planId, { frequency: 'DAILY', enabled: false }));
+      const updated = await call(app, admin, 'PUT', `/api/v1/report-schedules/${schedule.id}`, scheduleBody(seed.planId, { frequency: 'DAILY', enabled: false }));
       expect(JSON.parse(updated.payload).schedule).toMatchObject({ frequency: 'DAILY', weekday: null, enabled: false });
 
       const { token: viewer } = await createAndLoginAs(app, admin, 'Viewer');
       expect((await call(app, viewer, 'GET', base)).statusCode).toBe(403);
 
-      expect(JSON.parse((await call(app, admin, 'DELETE', `${base}/${schedule.id}`)).payload).deleted).toBe(true);
+      expect((await call(app, admin, 'DELETE', `/api/v1/report-schedules/${schedule.id}`)).statusCode).toBe(204);
       expect(JSON.parse((await call(app, admin, 'GET', base)).payload).schedules).toHaveLength(0);
     });
 
@@ -224,16 +224,16 @@ describe('Report emails: settings, last email, manual sends and schedules', () =
       const base = `/api/v1/projects/${seed.projectId}/report-schedules`;
 
       const onlyNew = JSON.parse((await call(app, admin, 'POST', base, scheduleBody(seed.planId, { only_when_new_run: true }))).payload).schedule;
-      const first = JSON.parse((await call(app, admin, 'POST', `${base}/${onlyNew.id}/send-now`)).payload);
+      const first = JSON.parse((await call(app, admin, 'POST', `/api/v1/report-schedules/${onlyNew.id}/send-now`)).payload);
       expect(first.status).toBe('CAPTURED');
-      const second = JSON.parse((await call(app, admin, 'POST', `${base}/${onlyNew.id}/send-now`)).payload);
+      const second = JSON.parse((await call(app, admin, 'POST', `/api/v1/report-schedules/${onlyNew.id}/send-now`)).payload);
       expect(second).toMatchObject({ status: 'SKIPPED', error: 'No new run since the last email.' });
       expect(second.schedule.last_status).toBe('SKIPPED');
 
       const { token: lead, userId } = await createAndLoginAs(app, admin, 'Test Lead');
       const leads = JSON.parse((await call(app, lead, 'POST', base, scheduleBody(seed.planId))).payload).schedule;
-      await call(app, admin, 'PUT', `/api/v1/admin/users/${userId}/status`, { status: 'DISABLED' });
-      const failed = JSON.parse((await call(app, admin, 'POST', `${base}/${leads.id}/send-now`)).payload);
+      await call(app, admin, 'PATCH', `/api/v1/admin/users/${userId}`, { status: 'DISABLED' });
+      const failed = JSON.parse((await call(app, admin, 'POST', `/api/v1/report-schedules/${leads.id}/send-now`)).payload);
       expect(failed.status).toBe('FAILED');
       expect(failed.error).toContain('disabled');
     });

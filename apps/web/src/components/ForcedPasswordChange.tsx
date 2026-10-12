@@ -3,6 +3,7 @@ import type { UserProfile } from './AuthModal';
 import { jsonHeaders } from '../utils/session';
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 interface ForcedPasswordChangeProps {
   user: UserProfile;
   onChanged: (user: UserProfile) => void;
@@ -52,10 +53,10 @@ export function ForcedPasswordChange({ user, onChanged, onLogout }: ForcedPasswo
     }
     setSaving(true);
     try {
-      const res = await fetch('/api/v1/auth/credentials', {
-        method: 'PUT',
+      const res = await fetch(api.me, {
+        method: 'PATCH',
         headers: jsonHeaders(),
-        body: JSON.stringify({ newPassword, currentPassword }),
+        body: JSON.stringify({ password: newPassword, current_password: currentPassword }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {

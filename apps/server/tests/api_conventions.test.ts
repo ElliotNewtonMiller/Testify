@@ -57,8 +57,8 @@ describe('API conventions: one error format', () => {
     expectProblem(await call(admin, 'POST', '/api/v1/projects', { prefix: 'NONAME' }), 400);
     expectProblem(await call(null, 'POST', '/api/v1/auth/login', '{"username": ', { 'content-type': 'application/json' }), 400);
     const other = body(await call(admin, 'POST', '/api/v1/projects', { name: 'Conventions other', prefix: 'CONV' })).project;
-    const otherSuite = body(await call(admin, 'POST', `/api/v1/projects/${other.id}/test-suites`, { name: 'Elsewhere' })).suite;
-    const mixed = expectProblem(await call(admin, 'POST', `/api/v1/test-plans/${seed.planId}/suites/${otherSuite.id}/cascade`, { action: 'ADD' }), 400, 'PROJECTS_DIFFER');
+    const otherSuite = body(await call(admin, 'POST', `/api/v1/projects/${other.id}/suites`, { name: 'Elsewhere' })).suite;
+    const mixed = expectProblem(await call(admin, 'POST', `/api/v1/plans/${seed.planId}/suites/${otherSuite.id}/cases`), 400, 'PROJECTS_DIFFER');
     expect(mixed.project_ids).toHaveLength(2);
   });
 
@@ -70,7 +70,7 @@ describe('API conventions: one error format', () => {
   });
 
   it('404: an unknown item and an unknown address', async () => {
-    expectProblem(await call(admin, 'PUT', '/api/v1/projects/00000000-0000-0000-0000-000000000000', { name: 'x' }), 404);
+    expectProblem(await call(admin, 'PATCH', '/api/v1/projects/00000000-0000-0000-0000-000000000000', { name: 'x' }), 404);
     expectProblem(await call(admin, 'GET', '/api/v1/no-such-route'), 404, 'NOT_FOUND');
   });
 
@@ -81,24 +81,24 @@ describe('API conventions: one error format', () => {
   });
 
   it('422: recording a result in a closed run', async () => {
-    await call(admin, 'PUT', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`, { status: 'CLOSED' });
-    const planCase = body(await call(admin, 'GET', `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`)).cases[0];
+    await call(admin, 'PATCH', `/api/v1/runs/${seed.buildId}`, { status: 'CLOSED' });
+    const planCase = body(await call(admin, 'GET', `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`)).cases[0];
     expectProblem(
-      await call(admin, 'POST', '/api/v1/executions', { build_id: seed.buildId, test_plan_case_id: planCase.plan_case_id, verdict: 'PASSED' }),
+      await call(admin, 'POST', `/api/v1/runs/${seed.buildId}/results`, { test_plan_case_id: planCase.test_plan_case_id, verdict: 'PASSED' }),
       422,
-      'BUILD_CLOSED'
+      'RUN_CLOSED'
     );
-    await call(admin, 'PUT', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`, { status: 'OPEN' });
+    await call(admin, 'PATCH', `/api/v1/runs/${seed.buildId}`, { status: 'OPEN' });
   });
 
   it('400 with invalid_params as { name, reason }: a report with bad parameters', async () => {
     const b = expectProblem(await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/reports/run_summary`, { limit: 0 }), 400, 'INVALID_PARAMS');
-    expect(b.invalid_params).toEqual(expect.arrayContaining([{ name: 'run_id', reason: 'is required' }]));
+    expect(b.invalid_params).toEqual(expect.arrayContaining([{ name: 'test_run_id', reason: 'is required' }]));
   });
 
   it('413 and 429: a body too large, and a rate limit', async () => {
     expectProblem(
-      await call(admin, 'POST', '/api/v1/imports/dry-run', { target_project_id: seed.projectId, file_content: 'x'.repeat(6 * 1024 * 1024) }),
+      await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/imports/dry-run`, { file_content: 'x'.repeat(6 * 1024 * 1024) }),
       413
     );
     app.rateLimits.exports = new RateLimiter(1, 60 * 60_000);
@@ -113,5 +113,127 @@ describe('API conventions: one error format', () => {
     const b = expectProblem(await call(null, 'GET', '/api/v1/__conventions/bug'), 500, 'INTERNAL_ERROR');
     expect(b.request_id).toEqual(expect.any(String));
     expect(JSON.stringify(b)).not.toContain('Cannot read');
+  });
+});
+
+/**
+ * Addresses, verbs and names (docs/api_roadmap.md step 1, stage 3): lists and creation sit under
+ * the parent, each item has its own address; creating answers 201 with the item wrapped in its
+ * name, deleting answers 204 with no body; runs and results are never called builds or executions.
+ */
+describe('API conventions: addresses, verbs and names', () => {
+  let app: any;
+  let seed: any;
+  let admin: string;
+  const body = (res: any) => JSON.parse(res.payload || '{}');
+  const call = (method: string, url: string, payload?: unknown) =>
+    app.inject({ method, url, headers: { authorization: `Bearer ${admin}` }, ...(payload !== undefined ? { payload } : {}) });
+
+  beforeAll(async () => {
+    ({ app, seed } = await createServer());
+    admin = body(await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: 'admin', password: 'password' } })).token;
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const created = async (res: any, key: string) => {
+    expect(res.statusCode).toBe(201);
+    const item = body(res)[key];
+    expect(item?.id).toEqual(expect.any(String));
+    return item;
+  };
+  const deleted = (res: any) => {
+    expect(res.statusCode).toBe(204);
+    expect(res.payload).toBe('');
+  };
+
+  it('creating answers 201 with the item wrapped; deleting answers 204 with no body', async () => {
+    const project = await created(await call('POST', '/api/v1/projects', { name: 'Shape', prefix: 'SHAPE' }), 'project');
+    const plan = await created(await call('POST', `/api/v1/projects/${project.id}/plans`, { name: 'P' }), 'plan');
+    const run = await created(await call('POST', `/api/v1/plans/${plan.id}/runs`, { name: 'R' }), 'run');
+    const suite = await created(await call('POST', `/api/v1/projects/${project.id}/suites`, { name: 'S' }), 'suite');
+    const testCase = await created(await call('POST', `/api/v1/projects/${project.id}/cases`, { test_suite_id: suite.id, title: 'C' }), 'test_case');
+    const planCase = await created(await call('POST', `/api/v1/plans/${plan.id}/cases`, { test_case_id: testCase.id }), 'plan_case');
+    expect(planCase.test_case_id).toBe(testCase.id);
+    const field = await created(await call('POST', '/api/v1/admin/custom-fields', { entity_type: 'TestCase', name: 'shape_f', field_label: 'F', field_type: 'TEXT' }), 'definition');
+    const role = await created(await call('POST', '/api/v1/admin/roles', { name: 'Shape role', permission_keys: ['SPEC_VIEW'] }), 'role');
+    const token = await created(await call('POST', `/api/v1/projects/${project.id}/api-tokens`, { name: 't', capabilities: ['SPEC_VIEW'] }), 'token');
+    const schedule = await created(
+      await call('POST', `/api/v1/projects/${project.id}/report-schedules`, {
+        name: 'Daily', sections: [{ kind: 'overview' }], recipients: 'a@example.com', frequency: 'DAILY', time_of_day: '09:00', timezone: 'UTC',
+      }),
+      'schedule'
+    );
+    await created(await call('POST', '/api/v1/admin/users', { username: 'shape_u', email: 'shape_u@testify.local', password: 'SecurePass123!', global_role: 'Viewer' }), 'user');
+
+    deleted(await call('DELETE', `/api/v1/report-schedules/${schedule.id}`));
+    deleted(await call('DELETE', `/api/v1/api-tokens/${token.id}`));
+    deleted(await call('DELETE', `/api/v1/admin/roles/${role.id}`));
+    deleted(await call('DELETE', `/api/v1/admin/custom-fields/${field.id}`));
+    deleted(await call('DELETE', `/api/v1/plans/${plan.id}/cases/${testCase.id}`));
+    deleted(await call('DELETE', `/api/v1/runs/${run.id}`));
+    deleted(await call('DELETE', `/api/v1/plans/${plan.id}`));
+    deleted(await call('DELETE', `/api/v1/cases/${testCase.id}`));
+    deleted(await call('DELETE', `/api/v1/suites/${suite.id}`));
+    deleted(await call('DELETE', `/api/v1/projects/${project.id}`));
+  });
+
+  it('partial updates are PATCH; the old PUT updates are gone', async () => {
+    expect((await call('PATCH', `/api/v1/plans/${seed.planId}`, { name: 'Renamed' })).statusCode).toBe(200);
+    expect((await call('PUT', `/api/v1/plans/${seed.planId}`, { name: 'Renamed' })).statusCode).toBe(404);
+    expect((await call('PATCH', `/api/v1/runs/${seed.buildId}`, { name: 'Run renamed' })).statusCode).toBe(200);
+    expect((await call('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { priority: 'LOW' })).statusCode).toBe(200);
+    expect((await call('PATCH', `/api/v1/suites/${seed.suiteId}`, { description: 'd' })).statusCode).toBe(200);
+  });
+
+  it('no response calls a run a build or a result an execution', async () => {
+    const queue = body(await call('GET', `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`));
+    const one = body(await call('POST', `/api/v1/runs/${seed.buildId}/results`, { test_plan_case_id: queue.cases[0].test_plan_case_id, verdict: 'FAILED' }));
+    const batch = body(await call('POST', `/api/v1/runs/${seed.buildId}/results/batch`, { results: [{ case_identifier: { external_id: 'SHOP-102' }, verdict: 'PASSED' }] }));
+    const responses = {
+      queue,
+      one,
+      batch,
+      runs: body(await call('GET', `/api/v1/plans/${seed.planId}/runs`)),
+      specTree: body(await call('GET', `/api/v1/projects/${seed.projectId}/spec-tree?test_plan_id=${seed.planId}`)),
+      export: body(await call('POST', `/api/v1/projects/${seed.projectId}/exports/results`, { format: 'NATIVE_JSON', test_run_id: seed.buildId })),
+      summary: body(await call('POST', `/api/v1/projects/${seed.projectId}/reports/run_summary`, { test_run_id: seed.buildId })),
+      history: body(await call('POST', `/api/v1/projects/${seed.projectId}/reports/case_history`, { test_case_id: seed.caseIds[0] })),
+      catalog: body(await call('GET', `/api/v1/projects/${seed.projectId}/reports`)),
+    };
+    expect(one.run_status).toBe('OPEN');
+    const keys = new Set<string>();
+    const walk = (v: unknown) => {
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { keys.add(k); walk(x); }
+    };
+    walk(responses);
+    const bad = [...keys].filter((k) => /build|execution/i.test(k) && k !== 'execution_type');
+    expect(bad).toEqual([]);
+  });
+
+  it('the old addresses are gone (404)', async () => {
+    const old: Array<[string, string]> = [
+      ['GET', `/api/v1/test-plans/${seed.planId}/cases`],
+      ['POST', '/api/v1/executions'],
+      ['POST', `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`],
+      ['GET', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`],
+      ['PUT', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`],
+      ['POST', `/api/v1/projects/${seed.projectId}/test-cases`],
+      ['POST', `/api/v1/projects/${seed.projectId}/test-suites`],
+      ['GET', `/api/v1/test-cases/${seed.caseIds[0]}/latest-version`],
+      ['GET', `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values`],
+      ['POST', `/api/v1/test-plans/${seed.planId}/suites/${seed.suiteId}/cascade`],
+      ['POST', `/api/v1/projects/${seed.projectId}/spec-move`],
+      ['POST', '/api/v1/imports/dry-run'],
+      ['POST', `/api/v1/projects/${seed.projectId}/exports/execution-results`],
+      ['PUT', '/api/v1/auth/credentials'],
+      ['GET', '/api/v1/admin/email-last'],
+    ];
+    for (const [method, url] of old) {
+      const res = await call(method, url, method === 'GET' ? undefined : {});
+      expect([method, url, res.statusCode]).toEqual([method, url, 404]);
+    }
   });
 });

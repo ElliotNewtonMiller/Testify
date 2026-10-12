@@ -143,12 +143,12 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Kysely<Databa
     return reply.status(200).send({ user });
   });
 
-  // PUT /api/v1/auth/credentials - Self-service username & password update
-  app.put('/api/v1/auth/credentials', async (request, reply) => {
+  // PATCH /api/v1/auth/me - Self-service username, email & password update (only what the body names)
+  app.patch('/api/v1/auth/me', async (request, reply) => {
     const activeUser = await authenticateRequest(request, reply, db, jwtSecret);
     if (!activeUser) return;
 
-    const { newUsername, newPassword, newEmail, currentPassword } = (request.body as any) || {};
+    const { username: newUsername, password: newPassword, email: newEmail, current_password: currentPassword } = (request.body as any) || {};
 
     // A new password needs the current one, so a stolen session token alone can't take over
     // the account.

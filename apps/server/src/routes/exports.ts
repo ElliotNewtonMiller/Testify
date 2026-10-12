@@ -22,8 +22,8 @@ import {
   type DefinitionsExportScope,
   type ExportableSuite,
   type ExportableCase,
-  type ExecutionResultsExportBundle,
-  type ExportableExecution,
+  type TestResultsExportBundle,
+  type ExportableTestResult,
 } from '@testify/core';
 import { requirePermission, authenticateRequest, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { requestOrigin } from '../audit.js';
@@ -34,7 +34,7 @@ function pickSerializer(format: unknown): IFileSerializer {
 }
 
 /**
- * Data export -- suite/case definitions and Build execution results, in JSON or CSV.
+ * Data export -- suite/case definitions and Run execution results, in JSON or CSV.
  * Nested under /api/v1/projects/:projectId/exports/... (not a flat /api/v1/exports/...)
  * so requirePermission resolves the caller's project-scoped EXPORT_DATA the same way
  * apiTokens.ts/specEditing.ts already do, rather than ingestion.ts's ad hoc manual check.
@@ -50,19 +50,20 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   const customFieldRepo = new CustomFieldRepository(db);
   const userRepo = new UserRepository(db);
 
-  // GET .../plans/:planId/builds -- lightweight listing for the Export modal's Build
-  // picker. No existing route returns just a plan's builds (TestRunRepository.findByTestPlan
-  // is otherwise only ever called from inside the much heavier GET .../test-plans/:id/cases,
+  // GET /api/v1/plans/:planId/runs -- lightweight listing of a plan's runs (the header's Run
+  // picker, the Export modal). No other route returns just a plan's runs (TestRunRepository.findByTestPlan
+  // is otherwise only ever called from inside the much heavier GET /api/v1/plans/:planId/cases,
   // which also joins every case + step + latest execution -- too expensive just for a
   // dropdown). Needs SPEC_VIEW on the project, like every other read.
-  app.get('/api/v1/projects/:projectId/plans/:planId/builds', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
-    const { projectId, planId } = request.params as { projectId: string; planId: string };
+  app.get('/api/v1/plans/:planId/runs', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+    const { planId } = request.params as { planId: string };
+    const projectId = request.projectId ?? '';
     const plan = await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst();
     if (!plan || plan.project_id !== projectId) {
       return sendError(reply, 404, 'Test plan not found in this project');
     }
-    const builds = await runRepo.findByTestPlan(planId);
-    return reply.status(200).send({ builds });
+    const runs = await runRepo.findByTestPlan(planId);
+    return reply.status(200).send({ runs });
   });
 
   app.post(
@@ -85,21 +86,21 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
       let caseIdToVersionId: Map<string, string> | null = null; // set only for PLAN scope (pinned versions)
 
       if (scopeType === 'SUITE') {
-        const suiteId = scope.suite_id as string;
+        const suiteId = scope.test_suite_id as string;
         const rootSuite = await suiteRepo.findById(suiteId);
         if (!rootSuite || rootSuite.project_id !== projectId) {
           return sendError(reply, 404, `Suite ${suiteId} not found in project ${projectId}`);
         }
         suiteTree = await suiteRepo.getTree(projectId, suiteId);
-        exportScope = { type: 'SUITE', suite_id: suiteId, suite_name: rootSuite.name };
+        exportScope = { type: 'SUITE', test_suite_id: suiteId, suite_name: rootSuite.name };
       } else if (scopeType === 'PLAN') {
-        const planId = scope.plan_id as string;
+        const planId = scope.test_plan_id as string;
         const plan = await planRepo.findById(planId);
         if (!plan || plan.project_id !== projectId) {
           return sendError(reply, 404, `Plan ${planId} not found in project ${projectId}`);
         }
         suiteTree = await suiteRepo.getTree(projectId);
-        exportScope = { type: 'PLAN', plan_id: planId, plan_name: plan.name };
+        exportScope = { type: 'PLAN', test_plan_id: planId, plan_name: plan.name };
         const pinned = await planRepo.getPinnedCases(planId);
         caseIdToVersionId = new Map(pinned.map((p) => [p.test_case_id, p.test_case_version_id]));
       } else {
@@ -187,7 +188,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         });
       }
 
-      // Build the exportable suite tree, attaching each suite's own cases.
+      // Run the exportable suite tree, attaching each suite's own cases.
       const casesBySuiteId = new Map<string, ExportableCase[]>();
       for (const c of scopedCases) {
         const exportable = exportableCaseByCaseId.get(c.id);
@@ -270,38 +271,37 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
   );
 
   app.post(
-    '/api/v1/projects/:projectId/exports/execution-results',
+    '/api/v1/projects/:projectId/exports/results',
     { preHandler: requirePermission('EXPORT_DATA', db, jwtSecret) },
     async (request, reply) => {
       if (!withinRateLimit(request, reply, app.rateLimits.exports, 'exports')) return reply;
       const actor = request.user!;
       const { projectId } = request.params as { projectId: string };
-      const { format, plan_id: planId, build_id: buildId } = (request.body as any) || {};
+      const { format, test_run_id: runId } = (request.body as any) || {};
 
-      const buildPlanInfo = await db
+      const runPlanInfo = await db
         .selectFrom('test_runs')
         .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select([
           'test_runs.id as test_run_id',
-          'test_runs.name as build_name',
-          'test_runs.status as build_status',
+          'test_runs.name as run_name',
+          'test_runs.status as run_status',
           'test_runs.release_date',
           'test_plans.id as plan_id',
           'test_plans.name as plan_name',
           'test_plans.project_id',
         ])
-        .where('test_runs.id', '=', buildId)
-        .where('test_runs.test_plan_id', '=', planId)
+        .where('test_runs.id', '=', typeof runId === 'string' ? runId : '')
         .executeTakeFirst();
 
-      if (!buildPlanInfo || buildPlanInfo.project_id !== projectId) {
-        return sendError(reply, 404, `Build ${buildId} not found under Plan ${planId} in Project ${projectId}`);
+      if (!runPlanInfo || runPlanInfo.project_id !== projectId) {
+        return sendError(reply, 404, 'Test run not found in this project', { invalid_params: [{ name: 'test_run_id', reason: 'is not a test run in this project' }] });
       }
 
       const project = await projectRepo.findById(projectId);
       if (!project) return sendError(reply, 404, 'Project not found');
 
-      const executions = await resultRepo.findByRun(buildId);
+      const executions = await resultRepo.findByRun(runId);
       const executionIds = executions.map((e) => e.id);
       const stepsByExecution = await resultRepo.getStepResultsForResults(executionIds);
 
@@ -323,7 +323,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
       const allUsers = await userRepo.findAll();
       const usernameById = new Map(allUsers.map((u) => [u.id, u.username]));
 
-      const exportableExecutions: ExportableExecution[] = executions.map((ex) => {
+      const exportableExecutions: ExportableTestResult[] = executions.map((ex) => {
         const planCase = planCaseById.get(ex.test_plan_case_id);
         const testCase = planCase ? caseById.get(planCase.test_case_id) : undefined;
         const version = planCase ? versionById.get(planCase.test_case_version_id) : undefined;
@@ -354,31 +354,31 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
           tester_username: usernameById.get(ex.tester_id) || null,
           status: ex.status,
           verdict: ex.verdict,
-          execution_duration_ms: ex.duration_ms,
+          duration_ms: ex.duration_ms,
           notes: ex.notes,
-          execution_timestamp: ex.executed_at,
+          executed_at: ex.executed_at,
           environment_tags: environmentTags,
           step_results: steps,
         };
       });
 
-      const bundle: ExecutionResultsExportBundle = {
-        object: 'execution_results_export_bundle',
+      const bundle: TestResultsExportBundle = {
+        object: 'test_results_export_bundle',
         exported_at: new Date().toISOString(),
         project: { id: project.id, name: project.name, prefix: project.prefix },
-        plan: { id: buildPlanInfo.plan_id, name: buildPlanInfo.plan_name },
-        build: {
-          id: buildPlanInfo.test_run_id,
-          name: buildPlanInfo.build_name,
-          status: buildPlanInfo.build_status,
-          release_date: buildPlanInfo.release_date,
+        plan: { id: runPlanInfo.plan_id, name: runPlanInfo.plan_name },
+        run: {
+          id: runPlanInfo.test_run_id,
+          name: runPlanInfo.run_name,
+          status: runPlanInfo.run_status,
+          release_date: runPlanInfo.release_date,
         },
-        executions: exportableExecutions,
-        record_count: { execution_count: exportableExecutions.length },
+        results: exportableExecutions,
+        record_count: { result_count: exportableExecutions.length },
       };
 
       const serializer = pickSerializer(format);
-      const body = serializer.serializeExecutionResults(bundle);
+      const body = serializer.serializeTestResults(bundle);
 
       await db
         .insertInto('audit_logs')
@@ -387,14 +387,14 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
           actor_id: actor.id,
           actor_type: actor.api_token ? 'SERVICE_ACCOUNT' : 'USER',
           action: 'DATA_EXPORTED',
-          resource_type: 'build',
-          resource_id: buildId,
+          resource_type: 'run',
+          resource_id: runId,
           project_id: projectId,
           diff: JSON.stringify({
-            export_kind: 'EXECUTION_RESULTS',
+            export_kind: 'TEST_RESULTS',
             format: serializer.formatId,
-            plan_id: planId,
-            build_id: buildId,
+            test_plan_id: runPlanInfo.plan_id,
+            test_run_id: runId,
             record_count: bundle.record_count,
           }),
           ...requestOrigin(request),
@@ -402,7 +402,7 @@ export async function registerExportRoutes(app: FastifyInstance, db: Kysely<Data
         })
         .execute();
 
-      const filename = `testify_execution_results_${buildId}_${Date.now()}.${serializer.fileExtension}`;
+      const filename = `testify_execution_results_${runId}_${Date.now()}.${serializer.fileExtension}`;
       return reply
         .header('Content-Type', serializer.contentType)
         .header('Content-Disposition', `attachment; filename="${filename}"`)

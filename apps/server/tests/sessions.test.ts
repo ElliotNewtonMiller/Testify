@@ -49,15 +49,15 @@ describe('Sessions', () => {
     const laptop = await login('admin', 'password');
     const phone = await login('admin', 'password');
 
-    let res = await call(laptop, 'PUT', '/api/v1/auth/credentials', { newPassword: 'a-brand-new-passphrase' });
+    let res = await call(laptop, 'PATCH', '/api/v1/auth/me', { password: 'a-brand-new-passphrase' });
     expect(res.statusCode).toBe(400);
     expect(body(res).code).toBe('CURRENT_PASSWORD_REQUIRED');
-    res = await call(laptop, 'PUT', '/api/v1/auth/credentials', { newPassword: 'a-brand-new-passphrase', currentPassword: 'wrong' });
+    res = await call(laptop, 'PATCH', '/api/v1/auth/me', { password: 'a-brand-new-passphrase', current_password: 'wrong' });
     expect(res.statusCode).toBe(403);
     expect(body(res).code).toBe('CURRENT_PASSWORD_INCORRECT');
     expect(await me(phone)).toBe(200); // refused attempts change nothing
 
-    res = await call(laptop, 'PUT', '/api/v1/auth/credentials', { newPassword: 'a-brand-new-passphrase', currentPassword: 'password' });
+    res = await call(laptop, 'PATCH', '/api/v1/auth/me', { password: 'a-brand-new-passphrase', current_password: 'password' });
     expect(res.statusCode).toBe(200);
     expect(await me(laptop)).toBe(200); // the session that made the change stays
     expect(await me(phone)).toBe(401);
@@ -67,7 +67,7 @@ describe('Sessions', () => {
 
     // Changing only the email doesn't need the password, and ends nothing.
     const tablet = await login('admin', 'a-brand-new-passphrase');
-    expect((await call(laptop, 'PUT', '/api/v1/auth/credentials', { newEmail: 'root@testify.local' })).statusCode).toBe(200);
+    expect((await call(laptop, 'PATCH', '/api/v1/auth/me', { email: 'root@testify.local' })).statusCode).toBe(200);
     expect(await me(tablet)).toBe(200);
   });
 
@@ -94,8 +94,8 @@ describe('Sessions', () => {
     const readerToken = await login('reader', 'Reader-Pass-123');
     expect(await me(readerToken)).toBe(200);
 
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${userId}/status`, { status: 'DISABLED' });
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${userId}/status`, { status: 'ACTIVE' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${userId}`, { status: 'DISABLED' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${userId}`, { status: 'ACTIVE' });
     expect(await me(readerToken)).toBe(401);
     expect(await me(await login('reader', 'Reader-Pass-123'))).toBe(200);
   });

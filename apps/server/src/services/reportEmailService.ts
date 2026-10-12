@@ -29,7 +29,7 @@ const TAB_FOR_REPORT: Record<string, string> = {
 function reportLink(publicUrl: string | null, projectId: string, reportId: string, data: any): string | null {
   if (!publicUrl) return null;
   const q = new URLSearchParams({ project: projectId });
-  const planId = data?.run?.plan_id ?? data?.plan?.id;
+  const planId = data?.run?.test_plan_id ?? data?.plan?.id;
   const runId = reportId === 'run_summary' ? data?.run?.id : data?.run?.id ?? null;
   if (planId) q.set('plan', planId);
   if (runId) q.set('run', runId);
@@ -64,7 +64,7 @@ export class ReportEmailService {
   }
 
   /** Runs each requested report and renders one email. Throws ReportError for bad input. */
-  async build(
+  async run(
     projectId: string,
     requests: EmailReportRequest[],
     opts: { title?: string; message?: string | null; sentBy?: string | null }
@@ -102,14 +102,14 @@ export class ReportEmailService {
       if (section.kind === 'overview') {
         requests.push({ report_id: 'overview', params: { days: 7 } });
       } else if (section.kind === 'latest_run') {
-        const [latest] = await this.runRepo.findByTestPlan(section.plan_id!);
+        const [latest] = await this.runRepo.findByTestPlan(section.test_plan_id!);
         if (!latest) continue; // the plan has no runs yet -- nothing to summarize
         runIds.push(latest.id);
-        requests.push({ report_id: 'run_summary', params: { run_id: latest.id, limit: 50, ...filter } });
+        requests.push({ report_id: 'run_summary', params: { test_run_id: latest.id, limit: 50, ...filter } });
       } else if (section.kind === 'test_health') {
-        requests.push({ report_id: 'test_health', params: { plan_id: section.plan_id, runs: 10, stale_days: 30, limit: 10, ...filter } });
+        requests.push({ report_id: 'test_health', params: { test_plan_id: section.test_plan_id, runs: 10, stale_days: 30, limit: 10, ...filter } });
       } else if (section.kind === 'plan_trend') {
-        requests.push({ report_id: 'plan_trend', params: { plan_id: section.plan_id, runs: 10, ...filter } });
+        requests.push({ report_id: 'plan_trend', params: { test_plan_id: section.test_plan_id, runs: 10, ...filter } });
       }
     }
     return { requests, runIds };
@@ -148,7 +148,7 @@ export class ReportEmailService {
           result = { status: 'SKIPPED', error: 'No new run since the last email.' };
         } else {
           const creator = await this.userRepo.findById(schedule.created_by);
-          const email = await this.build(schedule.project_id, requests, { title: schedule.name, message: schedule.message, sentBy: creator?.username ?? null });
+          const email = await this.run(schedule.project_id, requests, { title: schedule.name, message: schedule.message, sentBy: creator?.username ?? null });
           const sent = await sendEmail(this.db, {
             to: schedule.recipients,
             subject: email.subject,
@@ -180,7 +180,7 @@ export class ReportEmailService {
     } catch (err) {
       // Shown in the schedules list: report errors ("run not found") are fine to show; anything
       // unexpected (e.g. a database error) is logged and summarised.
-      const error = err instanceof ReportError ? err.message : publicErrorMessage(err, 'Could not build the email (see the server log).');
+      const error = err instanceof ReportError ? err.message : publicErrorMessage(err, 'Could not run the email (see the server log).');
       result = { status: 'FAILED', error };
     }
     await this.scheduleRepo.recordResult(schedule.id, { status: result.status, error: result.error });
@@ -223,10 +223,10 @@ export async function parseScheduleSections(
     if (!SCHEDULE_SECTION_KINDS.includes(kind)) return { ok: false, error: `sections[${i}].kind must be one of ${SCHEDULE_SECTION_KINDS.join(', ')}` };
     const section: ReportScheduleSection = { kind };
     if (kind !== 'overview') {
-      const planId = (s as any).plan_id;
+      const planId = (s as any).test_plan_id;
       const plan = typeof planId === 'string' ? await planRepo.findById(planId) : undefined;
-      if (!plan || plan.project_id !== projectId) return { ok: false, error: `sections[${i}].plan_id must be a test plan of this project` };
-      section.plan_id = planId;
+      if (!plan || plan.project_id !== projectId) return { ok: false, error: `sections[${i}].test_plan_id must be a test plan of this project` };
+      section.test_plan_id = planId;
       const filter = (s as any).filter;
       if (filter !== undefined && filter !== null) {
         if (typeof filter !== 'object' || Array.isArray(filter)) return { ok: false, error: `sections[${i}].filter must be an object` };

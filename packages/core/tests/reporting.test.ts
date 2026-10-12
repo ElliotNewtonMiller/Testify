@@ -85,13 +85,13 @@ describe('run diff', () => {
 
   it('failing since: earliest run of the unbroken failing streak, skipping runs with no result', () => {
     const since = failingSince([
-      { run_id: 'r1', verdict: 'PASSED' },
-      { run_id: 'r2', verdict: 'FAILED' },
-      { run_id: 'r3', verdict: null },
-      { run_id: 'r4', verdict: 'BLOCKED' },
+      { test_run_id: 'r1', verdict: 'PASSED' },
+      { test_run_id: 'r2', verdict: 'FAILED' },
+      { test_run_id: 'r3', verdict: null },
+      { test_run_id: 'r4', verdict: 'BLOCKED' },
     ]);
-    expect(since).toEqual({ run_id: 'r2', runs: 2 });
-    expect(failingSince([{ run_id: 'r1', verdict: 'FAILED' }, { run_id: 'r2', verdict: 'PASSED' }])).toBeNull();
+    expect(since).toEqual({ test_run_id: 'r2', runs: 2 });
+    expect(failingSince([{ test_run_id: 'r1', verdict: 'FAILED' }, { test_run_id: 'r2', verdict: 'PASSED' }])).toBeNull();
   });
 });
 
@@ -133,13 +133,13 @@ describe('test health', () => {
 describe('case stats', () => {
   it('uses the final result per run for pass rate and streak, but every execution for last pass/fail', () => {
     const stats = computeCaseStats([
-      { run_id: 'r1', verdict: 'PASSED', executed_at: '2026-01-01T00:00:00Z' },
-      { run_id: 'r2', verdict: 'PASSED', executed_at: '2026-01-02T00:00:00Z' },
-      { run_id: 'r2', verdict: 'FAILED', executed_at: '2026-01-02T01:00:00Z' }, // final for r2
-      { run_id: 'r3', verdict: 'FAILED', executed_at: '2026-01-03T00:00:00Z' },
+      { test_run_id: 'r1', verdict: 'PASSED', executed_at: '2026-01-01T00:00:00Z' },
+      { test_run_id: 'r2', verdict: 'PASSED', executed_at: '2026-01-02T00:00:00Z' },
+      { test_run_id: 'r2', verdict: 'FAILED', executed_at: '2026-01-02T01:00:00Z' }, // final for r2
+      { test_run_id: 'r3', verdict: 'FAILED', executed_at: '2026-01-03T00:00:00Z' },
     ]);
     expect(stats).toMatchObject({
-      total_executions: 4,
+      total_results: 4,
       runs: 3,
       pass_rate: 0.3333,
       last_passed_at: '2026-01-02T00:00:00Z',
@@ -169,15 +169,15 @@ describe('breakdown and trend', () => {
   it('one zero-filled trend point per run, in the given order', () => {
     const points = computeTrendPoints(
       [
-        { run_id: 'b', verdict: 'PASSED' },
-        { run_id: 'b', verdict: null },
+        { test_run_id: 'b', verdict: 'PASSED' },
+        { test_run_id: 'b', verdict: null },
       ],
       [
-        { run_id: 'a', run_name: 'A', status: 'CLOSED', created_at: '1', release_date: null },
-        { run_id: 'b', run_name: 'B', status: 'OPEN', created_at: '2', release_date: null },
+        { test_run_id: 'a', run_name: 'A', status: 'CLOSED', created_at: '1', release_date: null },
+        { test_run_id: 'b', run_name: 'B', status: 'OPEN', created_at: '2', release_date: null },
       ]
     );
-    expect(points.map((p) => p.run_id)).toEqual(['a', 'b']);
+    expect(points.map((p) => p.test_run_id)).toEqual(['a', 'b']);
     expect(points[0]).toMatchObject({ total: 0, pass_rate: 0 });
     expect(points[1]).toMatchObject({ total: 2, passed: 1, untested: 1, pass_rate: 1, completion: 0.5 });
   });
@@ -194,8 +194,8 @@ describe('formats', () => {
       report: 'run_summary',
       generated_at: '2026-01-01T00:00:00Z',
       project: { id: 'p', name: 'P' },
-      run: { id: 'r2', name: 'v2', status: 'OPEN', created_at: '', release_date: null, plan_id: 'pl', plan_name: 'Regression' },
-      compared_to: { id: 'r1', name: 'v1', status: 'CLOSED', created_at: '', release_date: null, plan_id: 'pl', plan_name: 'Regression' },
+      run: { id: 'r2', name: 'v2', status: 'OPEN', created_at: '', release_date: null, test_plan_id: 'pl', plan_name: 'Regression' },
+      compared_to: { id: 'r1', name: 'v1', status: 'CLOSED', created_at: '', release_date: null, test_plan_id: 'pl', plan_name: 'Regression' },
       filter_applied: false,
       summary: { total: 3, passed: 1, failed: 1, blocked: 0, skipped: 0, untested: 1, other: 0, pass_rate: 0.5, completion: 0.6667, attempts: 2, automated_duration_ms: null },
       diff: {
@@ -213,7 +213,7 @@ describe('formats', () => {
       failures: [
         {
           test_case_id: 'c1', external_id: 'T-1', title: 'Login', suite_path: null, verdict: 'FAILED', failure_message: 'Expected 200 | got 500',
-          notes: null, executed_at: null, tested_by: null, source: 'API', attempts: 1, failing_since: { run_id: 'r2', run_name: 'v2', runs: 1 }, flaky: true, runner: null,
+          notes: null, executed_at: null, tested_by: null, source: 'API', attempts: 1, failing_since: { test_run_id: 'r2', run_name: 'v2', runs: 1 }, flaky: true, runner: null,
         },
       ],
       failures_truncated: false,
@@ -241,9 +241,9 @@ describe('report catalog', () => {
 
   it('validates params: required, unknown, types, bounds, and applies defaults', () => {
     const health = findReport('test_health')!;
-    expect(validateReportParams(health, { plan_id: 'p1' })).toEqual({
+    expect(validateReportParams(health, { test_plan_id: 'p1' })).toEqual({
       ok: true,
-      params: { plan_id: 'p1', runs: 10, stale_days: 30, limit: 20 },
+      params: { test_plan_id: 'p1', runs: 10, stale_days: 30, limit: 20 },
     });
     const bad = validateReportParams(health, { runs: 99, nope: 1, filter: 'x' });
     expect(bad.ok).toBe(false);
@@ -251,14 +251,14 @@ describe('report catalog', () => {
       expect(bad.errors).toEqual(
         expect.arrayContaining([
           { param: 'nope', reason: 'unknown parameter' },
-          { param: 'plan_id', reason: 'is required' },
+          { param: 'test_plan_id', reason: 'is required' },
           { param: 'runs', reason: 'must be at most 50' },
           { param: 'filter', reason: 'must be an object' },
         ])
       );
     }
     // nullable params accept an explicit null (run_summary's "no comparison")
-    const summary = validateReportParams(findReport('run_summary')!, { run_id: 'r', compare_to: null });
+    const summary = validateReportParams(findReport('run_summary')!, { test_run_id: 'r', compare_to: null });
     expect(summary.ok && summary.params.compare_to).toBeNull();
     expect(validateReportParams(findReport('overview')!, [1]).ok).toBe(false);
   });

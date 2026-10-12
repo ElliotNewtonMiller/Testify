@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { authHeaders, jsonHeaders } from "../utils/session";
+import { api } from "../api/routes";
+import { errorMessage as apiErrorMessage } from "../api/errors";
 
 interface ProjectItem {
   id: string;
@@ -12,7 +14,7 @@ interface PlanItem {
   name: string;
 }
 
-interface BuildItem {
+interface RunItem {
   id: string;
   name: string;
 }
@@ -106,8 +108,8 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [plans, setPlans] = useState<PlanItem[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
-  const [builds, setBuilds] = useState<BuildItem[]>([]);
-  const [selectedBuildId, setSelectedBuildId] = useState<string>("");
+  const [runs, setRuns] = useState<RunItem[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [format, setFormat] = useState<ExportFormat>("NATIVE_JSON");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
@@ -130,7 +132,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
     }
   }, [isOpen]);
 
-  // Switching the target project invalidates whatever Plan/Build was selected for the
+  // Switching the target project invalidates whatever Plan/Run was selected for the
   // previous one -- without this, the Plan <select> just shows blank (its value won't match
   // any option in the new project's plans list) while selectedPlanId silently keeps pointing
   // at the old, wrong project's plan, so exporting without re-touching that dropdown would
@@ -138,9 +140,9 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
   useEffect(() => {
     if (!isOpen) return;
     setSelectedPlanId("");
-    setSelectedBuildId("");
+    setSelectedRunId("");
     setPlans([]);
-    setBuilds([]);
+    setRuns([]);
   }, [isOpen, targetProjectId]);
 
   // Suite picker data -- reuses the existing spec-tree route's suite list rather than
@@ -149,7 +151,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
     if (!(isOpen && exportKind === "DEFINITIONS" && scopeType === "SUITE" && targetProjectId)) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/spec-tree`, { headers: authHeaders() });
+        const res = await fetch(api.specTree(targetProjectId), { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setSuites(data.suites || []);
       } catch {
@@ -164,7 +166,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
     if (!(isOpen && targetProjectId && (exportKind === "EXECUTION_RESULTS" || (exportKind === "DEFINITIONS" && scopeType === "PLAN")))) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans`, { headers: authHeaders() });
+        const res = await fetch(api.projectPlans(targetProjectId), { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setPlans(data.plans || []);
       } catch {
@@ -174,21 +176,21 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, exportKind, scopeType, targetProjectId]);
 
-  // Build picker data -- only for EXECUTION_RESULTS, once a plan is chosen. Resets
-  // selectedBuildId/builds unconditionally first, whenever this effect re-runs for any
-  // reason (plan changed, project changed, kind changed) -- a build is plan-scoped, so a
+  // Run picker data -- only for EXECUTION_RESULTS, once a plan is chosen. Resets
+  // selectedRunId/runs unconditionally first, whenever this effect re-runs for any
+  // reason (plan changed, project changed, kind changed) -- a run is plan-scoped, so a
   // stale selection from a previous plan must never survive into this one.
   useEffect(() => {
-    setSelectedBuildId("");
-    setBuilds([]);
+    setSelectedRunId("");
+    setRuns([]);
     if (!(isOpen && exportKind === "EXECUTION_RESULTS" && targetProjectId && selectedPlanId)) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${targetProjectId}/plans/${selectedPlanId}/builds`, { headers: authHeaders() });
+        const res = await fetch(api.planRuns(selectedPlanId), { headers: authHeaders() });
         const data = await res.json();
-        if (res.ok) setBuilds(data.builds || []);
+        if (res.ok) setRuns(data.runs || []);
       } catch {
-        setBuilds([]);
+        setRuns([]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -209,15 +211,15 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
       if (exportKind === "DEFINITIONS") {
         const scope =
           scopeType === "SUITE"
-            ? { type: "SUITE", suite_id: selectedSuiteId }
+            ? { type: "SUITE", test_suite_id: selectedSuiteId }
             : scopeType === "PLAN"
-            ? { type: "PLAN", plan_id: selectedPlanId }
+            ? { type: "PLAN", test_plan_id: selectedPlanId }
             : { type: "PROJECT" };
-        path = `/api/v1/projects/${targetProjectId}/exports/definitions`;
+        path = api.exportDefinitions(targetProjectId);
         payload = { format, scope, status_filter: statusFilter };
       } else {
-        path = `/api/v1/projects/${targetProjectId}/exports/execution-results`;
-        payload = { format, plan_id: selectedPlanId, build_id: selectedBuildId };
+        path = api.exportResults(targetProjectId);
+        payload = { format, test_run_id: selectedRunId };
       }
 
       const res = await fetch(path, {
@@ -228,7 +230,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || errBody.detail || `Export failed (${res.status})`);
+        throw new Error(apiErrorMessage(errBody) || `Export failed (${res.status})`);
       }
 
       const blob = await res.blob();
@@ -257,7 +259,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
   const scopeIsReady =
     exportKind === "DEFINITIONS"
       ? (scopeType !== "SUITE" || Boolean(selectedSuiteId)) && (scopeType !== "PLAN" || Boolean(selectedPlanId))
-      : Boolean(selectedPlanId && selectedBuildId);
+      : Boolean(selectedPlanId && selectedRunId);
   const canExport = !isLoading && Boolean(targetProjectId) && scopeIsReady;
 
   return (
@@ -398,7 +400,7 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
                 value={selectedPlanId}
                 onChange={(e) => {
                   setSelectedPlanId(e.target.value);
-                  setSelectedBuildId("");
+                  setSelectedRunId("");
                 }}
                 style={{ ...selectStyle, marginBottom: "10px" }}
               >
@@ -410,15 +412,15 @@ export function ExportModal({ isOpen, onClose, projects, defaultProjectId }: Exp
                 ))}
               </select>
 
-              <label style={labelStyle}>BUILD</label>
+              <label style={labelStyle}>RUN</label>
               <select
-                value={selectedBuildId}
-                onChange={(e) => setSelectedBuildId(e.target.value)}
+                value={selectedRunId}
+                onChange={(e) => setSelectedRunId(e.target.value)}
                 disabled={!selectedPlanId}
                 style={{ ...selectStyle, marginBottom: "14px" }}
               >
-                <option value="">Select a build...</option>
-                {builds.map((b) => (
+                <option value="">Select a run...</option>
+                {runs.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>

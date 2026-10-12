@@ -110,12 +110,12 @@ describe('Auth & Admin API Integration Tests', () => {
 
     // 1. Attempt update with weak password (<8 chars)
     const weakRes = await app.inject({
-      method: 'PUT',
-      url: '/api/v1/auth/credentials',
+      method: 'PATCH',
+      url: '/api/v1/auth/me',
       headers: authHeaders,
       payload: {
-        newPassword: 'weak',
-        currentPassword: 'password',
+        password: 'weak',
+        current_password: 'password',
       },
     });
 
@@ -124,12 +124,12 @@ describe('Auth & Admin API Integration Tests', () => {
 
     // 2. Update with valid password (>=16 chars)
     const validRes = await app.inject({
-      method: 'PUT',
-      url: '/api/v1/auth/credentials',
+      method: 'PATCH',
+      url: '/api/v1/auth/me',
       headers: authHeaders,
       payload: {
-        newPassword: 'correct horse battery staple 2026',
-        currentPassword: 'password',
+        password: 'correct horse battery staple 2026',
+        current_password: 'password',
       },
     });
 
@@ -180,13 +180,13 @@ describe('Auth & Admin API Integration Tests', () => {
 
     // 3. Attempt username change as regular non-admin user -> 403 Forbidden
     const forbiddenRes = await app.inject({
-      method: 'PUT',
-      url: '/api/v1/auth/credentials',
+      method: 'PATCH',
+      url: '/api/v1/auth/me',
       headers: {
         authorization: `Bearer ${testerToken}`,
       },
       payload: {
-        newUsername: 'hacker_username',
+        username: 'hacker_username',
       },
     });
 
@@ -227,7 +227,7 @@ describe('Auth & Admin API Integration Tests', () => {
 
     // 3. Delegate Admin role & USER_MANAGE to qa_alice
     const roleRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/users/${newUserId}/roles`,
       headers: authHeaders,
       payload: {

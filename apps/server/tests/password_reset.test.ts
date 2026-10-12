@@ -47,7 +47,7 @@ describe('Admin password reset', () => {
     expect(res.statusCode).toBe(200);
     const temp = body(res).temporary_password;
     expect(temp).toMatch(/^[A-Za-z0-9_-]{24}$/);
-    expect(body(res)).toMatchObject({ must_change_password: true, sessions_ended: 1 });
+    expect(body(res)).toMatchObject({ user: { id: userId, must_change_password: true }, sessions_ended: 1 });
 
     expect((await call(oldSession, 'GET', '/api/v1/auth/me')).statusCode).toBe(401);
     expect((await login('forgetful', 'SecurePass123!')).statusCode).toBe(401);
@@ -58,7 +58,7 @@ describe('Admin password reset', () => {
     expect(body(signedIn).user.must_change_password).toBe(true);
     expect((await call(token, 'GET', '/api/v1/projects')).statusCode).toBe(403);
 
-    const changed = await call(token, 'PUT', '/api/v1/auth/credentials', { currentPassword: temp, newPassword: 'MyOwnPass456!' });
+    const changed = await call(token, 'PATCH', '/api/v1/auth/me', { current_password: temp, password: 'MyOwnPass456!' });
     expect(changed.statusCode).toBe(200);
     expect((await call(token, 'GET', '/api/v1/projects')).statusCode).toBe(200);
 
@@ -98,7 +98,7 @@ describe('Admin password reset', () => {
     const testerId = await createUser('plain_tester', 'Tester');
     const projectAdminId = await createUser('project_admin_x', 'Viewer');
     expect(
-      (await call(adminToken, 'PUT', `/api/v1/admin/users/${projectAdminId}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Admin' }] })).statusCode
+      (await call(adminToken, 'PATCH', `/api/v1/admin/users/${projectAdminId}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Admin' }] })).statusCode
     ).toBe(200);
 
     expect((await reset(managerToken, testerId)).statusCode).toBe(200);

@@ -4,6 +4,7 @@ import type { ActionType, EntityItem, EntityType } from "../components/EntityMan
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface ScopeOptions {
   currentUser: UserProfile | null;
   showToast: (msg: string) => void;
@@ -33,7 +34,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   const [deleteProjectPrompt, setDeleteProjectPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
 
   // Starts empty, like the project and plan lists -- a Run can never exist
-  // without a real Test Plan (builds.test_plan_id is NOT NULL), so starting empty and
+  // without a real Test Plan (test_runs.test_plan_id is NOT NULL), so starting empty and
   // relying on refreshExecutionWorkspace's real per-plan fetch (or the clearing effect
   // below, when there's no plan at all) means the dropdown never shows a run that isn't
   // genuinely tied to the currently selected plan.
@@ -53,7 +54,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   // handleDeletePlanClick after a non-force delete comes back 409 (bypasses
   // EntityManagementModal entirely, so this is the only confirmation dialog ever shown).
   const [deletePlanPrompt, setDeletePlanPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
-  // Same shape one level down, for test runs (builds) -- see handleDeleteRunClick.
+  // Same shape one level down, for test runs -- see handleDeleteRunClick.
   const [deleteRunPrompt, setDeleteRunPrompt] = useState<{ id: string; name: string; detail: string } | null>(null);
   // Shown in the same banner slot as deletePlanPrompt/deleteRunPrompt when the "+ Create New
   // Test Run" button is clicked with no plan selected -- a Run can never exist without one.
@@ -61,8 +62,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
 
   // Shared by BOTH refreshExecutionWorkspace and refreshRunsList -- they're two different
   // ways of populating the same runsList/selectedRunId state (the heavier one, used in
-  // Execution mode, gets builds "for free" alongside the case queue it also fetches; the
-  // lighter one, used in Specification mode, fetches just the builds), and a stale in-flight
+  // Execution mode, gets runs "for free" alongside the case queue it also fetches; the
+  // lighter one, used in Specification mode, fetches just the runs), and a stale in-flight
   // call from EITHER one must be able to invalidate the other's write, not just its own --
   // e.g. switching Spec (plan A) -> Execute (still A) -> a different plan B while still in
   // Execute mode must not let plan A's now-abandoned Spec-mode fetch resolve later and
@@ -99,12 +100,12 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
     item: EntityItem,
   ) => {
     if (entityType === "PROJECT") {
-      // Real backend calls (POST/PUT /api/v1/projects[/:id], apps/server/src/routes/projects.ts).
+      // Real backend calls (POST /api/v1/projects, PATCH /api/v1/projects/:id; apps/server/src/routes/projects.ts).
       // DELETE bypasses this modal -- see handleDeleteProjectClick below.
       if (actionType === "CREATE") {
         (async () => {
           try {
-            const res = await fetch("/api/v1/projects", {
+            const res = await fetch(api.projects, {
               method: "POST",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
@@ -124,8 +125,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       } else if (actionType === "EDIT") {
         (async () => {
           try {
-            const res = await fetch(`/api/v1/projects/${item.id}`, {
-              method: "PUT",
+            const res = await fetch(api.project(item.id), {
+              method: "PATCH",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, prefix: item.prefix }),
             });
@@ -142,8 +143,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
         })();
       }
     } else if (entityType === "PLAN") {
-      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT/DELETE
-      // .../plans routes. Like PROJECT above and RUN below, Test Plan create/edit/delete
+      // Real backend calls -- see apps/server/src/routes/projects.ts's plan routes
+      // (POST /projects/:id/plans, PATCH/DELETE /plans/:id). Like PROJECT above and RUN below, Test Plan create/edit/delete
       // actually persists.
       // DELETE is handled by handleDeletePlanClick below instead of here -- it bypasses this
       // modal entirely (see that function's comment for why).
@@ -151,7 +152,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       if (actionType === "CREATE") {
         (async () => {
           try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans`, {
+            const res = await fetch(api.projectPlans(selectedProjectId), {
               method: "POST",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status || "ACTIVE" }),
@@ -169,8 +170,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       } else if (actionType === "EDIT") {
         (async () => {
           try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${item.id}`, {
-              method: "PUT",
+            const res = await fetch(api.plan(item.id), {
+              method: "PATCH",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
@@ -187,8 +188,8 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
         })();
       }
     } else if (entityType === "RUN") {
-      // Real backend calls -- see apps/server/src/routes/projects.ts's POST/PUT
-      // .../plans/:planId/builds routes. A run always belongs to whichever plan is currently
+      // Real backend calls -- see apps/server/src/routes/projects.ts's run routes
+      // (POST /plans/:id/runs, PATCH /runs/:id). A run always belongs to whichever plan is currently
       // selected (there's no plan-picker in the modal -- matches how creating a Suite
       // implicitly uses the selected project, not a picker). DELETE is handled by
       // handleDeleteRunClick below instead of here, same reasoning as Plan delete above.
@@ -196,14 +197,14 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       if (actionType === "CREATE") {
         (async () => {
           try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`, {
+            const res = await fetch(api.planRuns(selectedPlanId), {
               method: "POST",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status || "OPEN" }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(errorMessage(data) || "Failed to create test run");
-            const created = data.build;
+            const created = data.run;
             setRunsList((prev) => [...prev, { id: created.id, name: created.name, status: created.status }]);
             setSelectedRunId(created.id);
             showToast(`Created New Test Run: ${created.name}`);
@@ -214,14 +215,14 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       } else if (actionType === "EDIT") {
         (async () => {
           try {
-            const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${item.id}`, {
-              method: "PUT",
+            const res = await fetch(api.run(item.id), {
+              method: "PATCH",
               headers: jsonHeaders(),
               body: JSON.stringify({ name: item.name, status: item.status }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(errorMessage(data) || "Failed to update test run");
-            const updatedRun = data.build;
+            const updatedRun = data.run;
             setRunsList((prev) =>
               prev.map((r) => (r.id === updatedRun.id ? { id: updatedRun.id, name: updatedRun.name, status: updatedRun.status } : r)),
             );
@@ -251,7 +252,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
         // effect re-fires and refetches without a plan_id, immediately showing every case
         // as not-in-plan instead of stale "In Plan" badges from the deleted plan.
         setSelectedPlanId("");
-        // The deleted plan's builds are genuinely gone too (deleteWithForce cascades them
+        // The deleted plan's runs are genuinely gone too (deleteWithForce cascades them
         // server-side) -- without this, runsList/selectedRunId are never touched again, since
         // refreshExecutionWorkspace itself no-ops once selectedPlanId is empty, leaving a
         // stale, now-nonexistent Run showing in the dropdown forever.
@@ -280,7 +281,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
     const project = projectsList.find((p) => p.id === selectedProjectId);
     if (!project) return;
     try {
-      const res = await fetch(`/api/v1/projects/${project.id}`, { method: "DELETE", headers: authHeaders() });
+      const res = await fetch(api.project(project.id), { method: "DELETE", headers: authHeaders() });
       if (res.status === 409) {
         const data = await res.json();
         setDeleteProjectPrompt({ id: project.id, name: project.name, detail: data.detail || "This project still contains content." });
@@ -301,7 +302,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   const handleConfirmDeleteProject = useCallback(async () => {
     if (!deleteProjectPrompt) return;
     try {
-      const res = await fetch(`/api/v1/projects/${deleteProjectPrompt.id}?force=true`, {
+      const res = await fetch(api.project(deleteProjectPrompt.id, true), {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -323,7 +324,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       if (!selectedProjectId) return;
       const planName = plansList.find((p) => p.id === planId)?.name || "";
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${planId}`, {
+        const res = await fetch(api.plan(planId), {
           method: "DELETE",
           headers: authHeaders(),
         });
@@ -349,7 +350,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   const handleConfirmDeletePlan = useCallback(async () => {
     if (!deletePlanPrompt || !selectedProjectId) return;
     try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${deletePlanPrompt.id}?force=true`, {
+      const res = await fetch(api.plan(deletePlanPrompt.id, true), {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -386,7 +387,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       if (!selectedProjectId || !selectedPlanId) return;
       const runName = runsList.find((r) => r.id === runId)?.name || "";
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${runId}`, {
+        const res = await fetch(api.run(runId), {
           method: "DELETE",
           headers: authHeaders(),
         });
@@ -412,10 +413,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   const handleConfirmDeleteRun = useCallback(async () => {
     if (!deleteRunPrompt || !selectedProjectId || !selectedPlanId) return;
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${deleteRunPrompt.id}?force=true`,
-        { method: "DELETE", headers: authHeaders() },
-      );
+      const res = await fetch(api.run(deleteRunPrompt.id, true), { method: "DELETE", headers: authHeaders() });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as any);
         throw new Error(errorMessage(data) || "Failed to delete test run");
@@ -456,7 +454,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   // here -- prj_01/02/03, pln_01/02/03 -- none of which exist in the DB).
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/projects", { headers: authHeaders() });
+      const res = await fetch(api.projects, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         // Always apply the real list, even when it's empty (a fresh install has no projects).
@@ -482,7 +480,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
     // project no longer selected) can overwrite the current project's plansList.
     const seq = ++plansRequestSeq.current;
     try {
-      const res = await fetch(`/api/v1/projects/${projectId}/plans`, {
+      const res = await fetch(api.projectPlans(projectId), {
         headers: authHeaders(),
       });
       if (plansRequestSeq.current !== seq) return;
@@ -527,9 +525,9 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   // correct while in Spec mode. Without this, switching Project/Plan while in Spec mode left
   // the Run dropdown frozen on whatever it last showed in Execution mode -- refreshExecutionWorkspace
   // was the ONLY code path that ever refreshed it, and the shared effect below only calls that
-  // one in Execution mode. Hits the same lightweight GET .../plans/:planId/builds route
-  // ExportModal already uses for its own Build picker (apps/server/src/routes/exports.ts) --
-  // returns the exact same Build shape refreshExecutionWorkspace already maps into runItems,
+  // one in Execution mode. Hits the same lightweight GET /plans/:planId/runs route
+  // ExportModal already uses for its own Run picker (apps/server/src/routes/exports.ts) --
+  // returns the exact same run shape refreshExecutionWorkspace already maps into runItems,
   // just without the expensive case/step join. Shares runsListRequestSeq with
   // refreshExecutionWorkspace (see that ref's own comment) rather than using its own counter,
   // so a stale in-flight call from either function can never win over a newer one from either.
@@ -546,17 +544,14 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
       return;
     }
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds`,
-        { headers: authHeaders() },
-      );
+      const res = await fetch(api.planRuns(selectedPlanId), { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
-        const builds = data.builds || [];
+        const runs = data.runs || [];
         // Same shape/behavior as refreshExecutionWorkspace's own runItems mapping -- an empty
-        // builds array must still positively clear the list, not leave stale data showing.
-        const runItems: EntityItem[] = builds.map((b: any) => ({
+        // runs array must still positively clear the list, not leave stale data showing.
+        const runItems: EntityItem[] = runs.map((b: any) => ({
           id: b.id,
           name: (b.name || "").replace(/^Build\s+/i, "Run "),
           status: b.status,
@@ -582,20 +577,17 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
   const selectedProjectPermissions = projectsList.find((p) => p.id === selectedProjectId)?.permissions ?? null;
 
   // Close Run / Open Run (Execute mode, next to "+ Filter"). RUN_MANAGE-gated, same as
-  // every other run edit (PUT .../plans/:planId/builds/:buildId).
+  // every other run edit (PATCH /runs/:runId).
   const handleToggleRunClosed = useCallback(async () => {
     if (!selectedProjectId || !selectedPlanId || !selectedRunId || !selectedRun) return;
     const nextStatus = selectedRun.status === "CLOSED" ? "OPEN" : "CLOSED";
     setIsTogglingRun(true);
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/plans/${selectedPlanId}/builds/${selectedRunId}`,
-        {
-          method: "PUT",
-          headers: jsonHeaders(),
-          body: JSON.stringify({ status: nextStatus }),
-        },
-      );
+      const res = await fetch(api.run(selectedRunId), {
+        method: "PATCH",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ status: nextStatus }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401) {
@@ -635,7 +627,7 @@ export function useScope({ currentUser, showToast, handleAuthExpiry, initial, on
     }
   }, [currentUser, selectedProjectId, loadPlans]);
 
-  // A Run can never exist without a real Test Plan (builds.test_plan_id is NOT NULL), so
+  // A Run can never exist without a real Test Plan (test_runs.test_plan_id is NOT NULL), so
   // runsList/selectedRunId must never show anything once there's no plan selected -- e.g.
   // switching to a project with zero plans, not just the plan-delete path (which already
   // clears these explicitly in applyPlanDeletedLocally). This reactive effect is the single

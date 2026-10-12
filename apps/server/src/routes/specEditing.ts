@@ -64,7 +64,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   // ---- Test Suites ----
 
   app.post(
-    '/api/v1/projects/:projectId/test-suites',
+    '/api/v1/projects/:projectId/suites',
     { preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
@@ -103,12 +103,13 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.put(
-    '/api/v1/projects/:projectId/test-suites/:suiteId',
+  app.patch(
+    '/api/v1/suites/:suiteId',
     { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, suiteId } = request.params as { projectId: string; suiteId: string };
+      const { suiteId } = request.params as { suiteId: string };
+      const projectId = request.projectId ?? '';
       const { name, description, position, parent_suite_id: parentSuiteId } = (request.body as any) || {};
 
       const existing = await suiteRepo.findById(suiteId);
@@ -156,11 +157,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   );
 
   app.delete(
-    '/api/v1/projects/:projectId/test-suites/:suiteId',
+    '/api/v1/suites/:suiteId',
     { preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, suiteId } = request.params as { projectId: string; suiteId: string };
+      const { suiteId } = request.params as { suiteId: string };
+      const projectId = request.projectId ?? '';
       const { force } = request.query as { force?: string };
 
       const existing = await suiteRepo.findById(suiteId);
@@ -177,7 +179,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
             subSuites: result.blockedSubSuiteCount,
             cases: result.blockedCaseCount,
             planLinks: result.blockedPlanLinkCount,
-            executions: result.blockedResultCount,
+            results: result.blockedResultCount,
           },
           request.url,
           existing.name
@@ -201,7 +203,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   // ---- Test Cases ----
 
   app.post(
-    '/api/v1/projects/:projectId/test-cases',
+    '/api/v1/projects/:projectId/cases',
     { preHandler: requirePermission('SPEC_CREATE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
@@ -294,12 +296,13 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.put(
-    '/api/v1/projects/:projectId/test-cases/:caseId',
+  app.patch(
+    '/api/v1/cases/:caseId',
     { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, caseId } = request.params as { projectId: string; caseId: string };
+      const { caseId } = request.params as { caseId: string };
+      const projectId = request.projectId ?? '';
       const { title, priority, execution_type: executionType, test_suite_id: testSuiteId } = (request.body as any) || {};
 
       const existing = await caseRepo.findById(caseId);
@@ -340,11 +343,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   );
 
   app.delete(
-    '/api/v1/projects/:projectId/test-cases/:caseId',
+    '/api/v1/cases/:caseId',
     { preHandler: requirePermission('SPEC_DELETE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, caseId } = request.params as { projectId: string; caseId: string };
+      const { caseId } = request.params as { caseId: string };
+      const projectId = request.projectId ?? '';
       const { force } = request.query as { force?: string };
 
       const existing = await caseRepo.findById(caseId);
@@ -357,7 +361,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         return sendCaseInUseError(
           reply,
           caseId,
-          { planLinks: result.blockedPlanLinkCount, executions: result.blockedResultCount },
+          { planLinks: result.blockedPlanLinkCount, results: result.blockedResultCount },
           request.url
         );
       }
@@ -376,11 +380,11 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  // POST /api/v1/projects/:projectId/spec-move -- drag-and-drop move of suites and/or cases
+  // POST /api/v1/projects/:projectId/move -- drag-and-drop move of suites and/or cases
   // into a suite (or suites to the top level with target_suite_id: null), all-or-nothing in
   // one transaction. Backs Spec mode's multi-select drag; equally usable from the API.
   app.post(
-    '/api/v1/projects/:projectId/spec-move',
+    '/api/v1/projects/:projectId/move',
     { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
@@ -491,11 +495,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   // ---- Test Case Versions ----
 
   app.post(
-    '/api/v1/projects/:projectId/test-cases/:caseId/versions/draft',
+    '/api/v1/cases/:caseId/versions',
     { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, caseId } = request.params as { projectId: string; caseId: string };
+      const { caseId } = request.params as { caseId: string };
+      const projectId = request.projectId ?? '';
 
       const existing = await caseRepo.findById(caseId);
       if (!existing || existing.project_id !== projectId) {
@@ -534,12 +539,13 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.put(
-    '/api/v1/projects/:projectId/test-case-versions/:versionId',
+  app.patch(
+    '/api/v1/versions/:versionId',
     { preHandler: requirePermission('SPEC_EDIT', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, versionId } = request.params as { projectId: string; versionId: string };
+      const { versionId } = request.params as { versionId: string };
+      const projectId = request.projectId ?? '';
       const { summary, preconditions, steps } = (request.body as any) || {};
 
       const version = await versionRepo.findById(versionId);
@@ -580,11 +586,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
   );
 
   app.post(
-    '/api/v1/projects/:projectId/test-case-versions/:versionId/approve',
+    '/api/v1/versions/:versionId/approve',
     { preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, versionId } = request.params as { projectId: string; versionId: string };
+      const { versionId } = request.params as { versionId: string };
+      const projectId = request.projectId ?? '';
 
       const version = await versionRepo.findById(versionId);
       if (!version) {
@@ -653,11 +660,12 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
     { path: 'restore', from: 'DEPRECATED', to: 'APPROVED', action: 'CASE_VERSION_RESTORED' },
   ] as const) {
     app.post(
-      `/api/v1/projects/:projectId/test-case-versions/:versionId/${transition.path}`,
+      `/api/v1/versions/:versionId/${transition.path}`,
       { preHandler: requirePermission('SPEC_APPROVE', db, jwtSecret) },
       async (request, reply) => {
         const actor = request.user!;
-        const { projectId, versionId } = request.params as { projectId: string; versionId: string };
+        const { versionId } = request.params as { versionId: string };
+        const projectId = request.projectId ?? '';
 
         const version = await versionRepo.findById(versionId);
         if (!version) {

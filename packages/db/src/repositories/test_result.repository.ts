@@ -62,7 +62,7 @@ export interface TestResultWithSteps extends TestResult {
  * requested run; `verdict: null` (and every other result field null) means it has no
  * result in that run yet (UNTESTED). See getFinalResultsForRuns. */
 export interface FinalResultRow {
-  run_id: string;
+  test_run_id: string;
   plan_case_id: string;
   test_case_id: string;
   test_result_id: string | null;
@@ -86,9 +86,9 @@ export interface FinalResultRow {
 /** One result in a case's history, with the run/plan it belongs to. */
 export interface CaseHistoryRow {
   test_result_id: string;
-  run_id: string;
+  test_run_id: string;
   run_name: string;
-  plan_id: string;
+  test_plan_id: string;
   plan_name: string;
   version_number: number | null;
   verdict: string;
@@ -106,7 +106,7 @@ export interface CaseHistoryRow {
 
 /** Minimal per-result row for a case's whole history (stats are computed from these). */
 export interface CaseVerdictTimelineRow {
-  run_id: string;
+  test_run_id: string;
   verdict: string;
   executed_at: string;
 }
@@ -251,7 +251,7 @@ export class TestResultRepository {
           .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
           .select((eb) => [
             'e.id as test_result_id',
-            'e.test_run_id as run_id',
+            'e.test_run_id as test_run_id',
             'e.test_plan_case_id as plan_case_id',
             'e.verdict as verdict',
             'e.duration_ms as duration_ms',
@@ -283,7 +283,7 @@ export class TestResultRepository {
       .where('rn', '=', 1)
       .execute();
 
-    const byKey = new Map(ranked.map((r) => [`${r.run_id}|${r.plan_case_id}`, r]));
+    const byKey = new Map(ranked.map((r) => [`${r.test_run_id}|${r.plan_case_id}`, r]));
     const results: FinalResultRow[] = [];
     for (const runId of runIds) {
       // One row per case (see the doc comment above): its latest result in this run from any
@@ -297,7 +297,7 @@ export class TestResultRepository {
         const r = withResults.sort((x, y) => (y.executed_at ?? '').localeCompare(x.executed_at ?? ''))[0];
         results.push({
           removed_from_plan: !active,
-          run_id: runId,
+          test_run_id: runId,
           plan_case_id: active ? active.plan_case_id : r!.plan_case_id,
           test_case_id: testCaseId,
           test_result_id: r?.test_result_id ?? null,
@@ -335,9 +335,9 @@ export class TestResultRepository {
       .leftJoin('test_case_versions as v', 'v.id', 'tpc.test_case_version_id')
       .select([
         'e.id as test_result_id',
-        'b.id as run_id',
+        'b.id as test_run_id',
         'b.name as run_name',
-        'p.id as plan_id',
+        'p.id as test_plan_id',
         'p.name as plan_name',
         'v.version_number as version_number',
         'e.verdict as verdict',
@@ -384,7 +384,7 @@ export class TestResultRepository {
     return await this.db
       .selectFrom('test_results as e')
       .innerJoin('test_plan_cases as tpc', 'tpc.id', 'e.test_plan_case_id')
-      .select(['e.test_run_id as run_id', 'e.verdict as verdict', 'e.executed_at as executed_at'])
+      .select(['e.test_run_id as test_run_id', 'e.verdict as verdict', 'e.executed_at as executed_at'])
       .where('tpc.test_case_id', '=', testCaseId)
       .orderBy('e.executed_at', 'asc')
       .orderBy('e.created_at', 'asc')

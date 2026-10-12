@@ -94,7 +94,7 @@ export class CaseFilterService {
         options: toOptions(VERSION_STATUS_VALUES),
         strict_options: true,
       },
-      { key: 'in_plan', label: 'In Plan', kind: 'BOOLEAN', source: 'builtin', requires: 'plan_id' },
+      { key: 'in_plan', label: 'In Plan', kind: 'BOOLEAN', source: 'builtin', requires: 'test_plan_id' },
       {
         key: 'verdict',
         label: 'Verdict',
@@ -102,7 +102,7 @@ export class CaseFilterService {
         source: 'builtin',
         options: toOptions(VERDICT_VALUES),
         strict_options: false,
-        requires: 'build_id',
+        requires: 'test_run_id',
       },
     ];
 
@@ -132,12 +132,12 @@ export class CaseFilterService {
   }
 
   /**
-   * Evaluates { q?, filters?, plan_id?, build_id? } against a project's cases (the project
+   * Evaluates { q?, filters?, test_plan_id?, test_run_id? } against a project's cases (the project
    * must exist -- callers check). suite_ids is every suite containing a match plus all of its
    * ancestors (what a tree view needs to stay navigable); when only suite filters are active,
    * suites that match on their own values are included too, even if they hold no cases.
    */
-  async evaluate(projectId: string, body: { q?: unknown; filters?: unknown; plan_id?: unknown; build_id?: unknown }): Promise<CaseFilterOutcome> {
+  async evaluate(projectId: string, body: { q?: unknown; filters?: unknown; test_plan_id?: unknown; test_run_id?: unknown }): Promise<CaseFilterOutcome> {
     const cases = await this.caseRepo.findByProjectWithLatestVersion(projectId);
     const catalog = await this.fieldCatalog(projectId, cases);
     const validation = validateCaseFilterRequest(body, new Map(catalog.map((f) => [f.key, f])));
@@ -147,28 +147,28 @@ export class CaseFilterService {
     const { request: filterRequest } = validation;
     const usedFields = new Set(filterRequest.filters.map((f) => f.field));
 
-    // Resolve plan/build, rejecting ids that belong to a different project.
-    let planId = typeof body.plan_id === 'string' && body.plan_id ? body.plan_id : null;
-    const buildId = typeof body.build_id === 'string' && body.build_id ? body.build_id : null;
+    // Resolve plan/run, rejecting ids that belong to a different project.
+    let planId = typeof body.test_plan_id === 'string' && body.test_plan_id ? body.test_plan_id : null;
+    const runId = typeof body.test_run_id === 'string' && body.test_run_id ? body.test_run_id : null;
     if (planId) {
       const plan = await this.planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
         return { ok: false, status: 404, error: 'Test plan not found in this project' };
       }
     }
-    if (buildId) {
-      const build = await this.runRepo.findById(buildId);
-      const buildPlan = build ? await this.planRepo.findById(build.test_plan_id) : null;
-      if (!build || !buildPlan || buildPlan.project_id !== projectId || (planId && build.test_plan_id !== planId)) {
-        return { ok: false, status: 404, error: 'Build not found in this project/plan' };
+    if (runId) {
+      const run = await this.runRepo.findById(runId);
+      const runPlan = run ? await this.planRepo.findById(run.test_plan_id) : null;
+      if (!run || !runPlan || runPlan.project_id !== projectId || (planId && run.test_plan_id !== planId)) {
+        return { ok: false, status: 404, error: 'Test run not found in this project or plan' };
       }
-      planId = planId ?? build.test_plan_id;
+      planId = planId ?? run.test_plan_id;
     }
     if (usedFields.has('in_plan') && !planId) {
-      return { ok: false, status: 400, error: 'INVALID_FILTER', details: ["'in_plan' requires plan_id"] };
+      return { ok: false, status: 400, error: 'INVALID_FILTER', details: ["'in_plan' requires test_plan_id"] };
     }
-    if (usedFields.has('verdict') && !buildId) {
-      return { ok: false, status: 400, error: 'INVALID_FILTER', details: ["'verdict' requires build_id"] };
+    if (usedFields.has('verdict') && !runId) {
+      return { ok: false, status: 400, error: 'INVALID_FILTER', details: ["'verdict' requires test_run_id"] };
     }
 
     // Suite parent map (for suite_cf: inheritance and suite_ids ancestry).
@@ -209,7 +209,7 @@ export class CaseFilterService {
         ? this.planRepo.getPinnedCases(planId!)
         : Promise.resolve([]),
       usedFields.has('verdict')
-        ? this.resultRepo.getFinalResultsForRuns(planId!, [buildId!])
+        ? this.resultRepo.getFinalResultsForRuns(planId!, [runId!])
         : Promise.resolve([]),
     ]);
 

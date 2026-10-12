@@ -31,7 +31,7 @@ describe('Case external ids', () => {
       Array.from({ length: 12 }, (_, i) =>
         app.inject({
           method: 'POST',
-          url: `/api/v1/projects/${seed.projectId}/test-cases`,
+          url: `/api/v1/projects/${seed.projectId}/cases`,
           headers,
           payload: { test_suite_id: seed.suiteId, title: `Parallel ${i}`, steps: [{ action: 'a', expected_result: 'b' }] },
         })
@@ -59,12 +59,11 @@ describe('Case external ids', () => {
       `</testsuite></testsuites>`;
     const res = await app.inject({
       method: 'POST',
-      url: '/api/v1/imports/execute',
+      url: `/api/v1/projects/${seed.projectId}/imports/execute`,
       headers,
       payload: {
         file_content: xml,
         format: 'TESTLINK_XML',
-        target_project_id: seed.projectId,
         configuration: { duplicate_resolution: { default_action: 'CREATE_NEW' } },
       },
     });

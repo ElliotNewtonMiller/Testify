@@ -114,11 +114,12 @@ export async function registerApiTokenRoutes(app: FastifyInstance, db: Kysely<Da
   );
 
   app.delete(
-    '/api/v1/projects/:projectId/api-tokens/:id',
+    '/api/v1/api-tokens/:tokenId',
     { preHandler: requirePermission('API_TOKEN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
-      const { projectId, id } = request.params as { projectId: string; id: string };
+      const { tokenId: id } = request.params as { tokenId: string };
+      const projectId = request.projectId ?? '';
 
       const revoked = await tokenRepo.revoke(id, projectId);
       if (!revoked) {

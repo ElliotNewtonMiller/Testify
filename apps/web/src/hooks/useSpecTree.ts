@@ -3,6 +3,7 @@ import type { SpecTreeData } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface SpecTreeOptions {
   selectedProjectId: string;
   selectedPlanId: string;
@@ -43,7 +44,7 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
   // selected plan's inclusion state. Also drives Pane 1's suite tree in BOTH modes (see
   // suiteNodes in App), fixing the tree's pre-existing flat/fake-count display.
   const refreshSpecTree = useCallback(async () => {
-    // plan_id is genuinely optional on this route (apps/server/src/routes/testPlanCases.ts) --
+    // test_plan_id is genuinely optional on this route (apps/server/src/routes/testPlanCases.ts) --
     // omitted, every case just comes back in_plan: false rather than 404ing. That's what makes
     // it safe to still fetch (and show real suites/cases, correctly annotated as not-in-plan)
     // when the project currently has no test plan at all, instead of leaving whatever was
@@ -56,11 +57,7 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
     }
     const seq = ++specTreeRequestSeq.current;
     try {
-      const params = new URLSearchParams();
-      if (selectedPlanId) params.set("plan_id", selectedPlanId);
-      if (showDeprecated) params.set("include_deprecated", "true");
-      const qs = params.toString();
-      const url = `/api/v1/projects/${selectedProjectId}/spec-tree${qs ? `?${qs}` : ""}`;
+      const url = api.specTree(selectedProjectId, { test_plan_id: selectedPlanId || undefined, include_deprecated: showDeprecated });
       const res = await fetch(url, { headers: authHeaders() });
       const data = res.ok ? await res.json() : null;
       if (specTreeRequestSeq.current === seq) setSpecData(data);
@@ -81,9 +78,7 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
       setPendingToggleId(testCaseId);
       try {
         const res = await fetch(
-          include
-            ? `/api/v1/test-plans/${selectedPlanId}/cases`
-            : `/api/v1/test-plans/${selectedPlanId}/cases/${testCaseId}${force ? "?force=true" : ""}`,
+          include ? api.planCases(selectedPlanId) : api.planCase(selectedPlanId, testCaseId, force),
           {
             method: include ? "POST" : "DELETE",
             // Content-Type: application/json on a bodyless DELETE trips Fastify's JSON body
@@ -122,14 +117,11 @@ export function useSpecTree({ selectedProjectId, selectedPlanId, showToast }: Sp
       }
       setPendingToggleId(suiteId);
       try {
-        const res = await fetch(
-          `/api/v1/test-plans/${selectedPlanId}/suites/${suiteId}/cascade`,
-          {
-            method: "POST",
-            headers: jsonHeaders(),
-            body: JSON.stringify({ action, ...(force ? { force: true } : {}) }),
-          },
-        );
+        // POST adds every case in the suite's subtree; DELETE removes them (no body).
+        const res = await fetch(api.planSuiteCases(selectedPlanId, suiteId, action === "REMOVE" && force), {
+          method: action === "ADD" ? "POST" : "DELETE",
+          headers: authHeaders(),
+        });
         if (res.ok) {
           const body = await res.json();
           const parts: string[] = [];

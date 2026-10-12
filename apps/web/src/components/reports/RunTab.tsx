@@ -41,7 +41,7 @@ interface Failure extends CaseRef {
   tested_by: string | null;
   source: string | null;
   attempts: number;
-  failing_since: { run_id: string; run_name: string; runs: number } | null;
+  failing_since: { test_run_id: string; run_name: string; runs: number } | null;
   flaky: boolean;
   runner: Record<string, string> | null;
 }
@@ -95,7 +95,7 @@ export function RunTab({
 }) {
   const params = React.useMemo(() => {
     if (!runId) return null;
-    const p: Record<string, unknown> = { run_id: runId, limit: 500 };
+    const p: Record<string, unknown> = { test_run_id: runId, limit: 500 };
     if (compareTo === "none") p.compare_to = null;
     else if (compareTo !== "previous") p.compare_to = compareTo;
     if (filter) p.filter = filter;
@@ -184,7 +184,7 @@ export function RunTab({
             )}
             {ciLinks.slice(0, 5).map((r) => (
               <a key={r.url} href={r.url} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>
-                {r.name || "CI"} {r.run_id ? `#${r.run_id}` : ""} ↗
+                {r.name || "CI"} {r.test_run_id ? `#${r.test_run_id}` : ""} ↗
               </a>
             ))}
           </div>
@@ -192,7 +192,7 @@ export function RunTab({
       </Section>
 
       {data.compared_to && (
-        <Section title={`Changes since: ${runLabel(data.compared_to.name)}`} subtitle={data.compared_to.plan_id !== data.run.plan_id ? `Plan: ${data.compared_to.plan_name}` : undefined}>
+        <Section title={`Changes since: ${runLabel(data.compared_to.name)}`} subtitle={data.compared_to.test_plan_id !== data.run.test_plan_id ? `Plan: ${data.compared_to.plan_name}` : undefined}>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
             {DIFF_LABELS.filter((d) => (d.key !== "added" && d.key !== "removed") || data.diff.counts[d.key] > 0).map((d) => (
               <button

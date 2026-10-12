@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { authHeaders } from "../utils/session";
 
 import { errorMessage as apiErrorMessage } from "../api/errors";
+import { api, withQuery } from "../api/routes";
 interface ProjectItem {
   id: string;
   name: string;
@@ -223,7 +224,6 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
   const buildImportForm = (): FormData => {
     const form = new FormData();
     if (format) form.append("format", format);
-    form.append("target_project_id", targetProjectId);
     form.append(
       "configuration",
       JSON.stringify({
@@ -239,7 +239,7 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch("/api/v1/imports/dry-run", {
+      const res = await fetch(api.importDryRun(targetProjectId), {
         method: "POST",
         // No Content-Type: the browser sets multipart/form-data with its boundary.
         headers: authHeaders(),
@@ -276,10 +276,7 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
 
   const fetchFieldOptions = async (projectId: string) => {
     try {
-      const res = await fetch(
-        `/api/v1/imports/custom-field-options?target_project_id=${encodeURIComponent(projectId)}&entity_type=TestCase`,
-        { headers: authHeaders() }
-      );
+      const res = await fetch(withQuery(api.importFieldOptions(projectId), { entity_type: "TestCase" }), { headers: authHeaders() });
       const data = await readJsonResponse(res);
       if (res.ok) {
         setFieldOptions(data.definitions || []);
@@ -315,7 +312,7 @@ export function ImportWizardModal({ isOpen, onClose, projects, defaultProjectId,
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch("/api/v1/imports/execute", {
+      const res = await fetch(api.importExecute(targetProjectId), {
         method: "POST",
         // No Content-Type: the browser sets multipart/form-data with its boundary.
         headers: authHeaders(),

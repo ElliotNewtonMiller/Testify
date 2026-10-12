@@ -3,6 +3,7 @@ import type { EntityItem } from "../components/EntityManagementModal";
 import type { Scope } from "./useScope";
 import type { ExecWorkspaceStatus, WorkspaceData } from "../types";
 import { authHeaders } from "../utils/session";
+import { api } from "../api/routes";
 
 // Execute mode before (or without) a loaded plan: nothing to show. (This used to be two
 // made-up cases, TFY-101/102, which appeared whenever no plan was selected or a load failed.)
@@ -10,7 +11,7 @@ export const EMPTY_WORKSPACE: WorkspaceData = {
   project: { id: "", name: "", prefix: "" },
   suites: [],
   plan: { id: "", name: "", status: "" },
-  build: { id: "", name: "", status: "" },
+  run: { id: "", name: "", status: "" },
   cases: [],
 };
 
@@ -53,15 +54,12 @@ export function useExecutionWorkspace(scope: Scope) {
     // Only a different plan shows "Loading" -- a refresh of the same plan keeps its cases up.
     setExecWorkspaceStatus((prev) => (prev === "READY" && workspaceRef.current?.plan.id === selectedPlanId ? prev : "LOADING"));
     try {
-      const url = selectedRunId
-        ? `/api/v1/test-plans/${selectedPlanId}/cases?build_id=${encodeURIComponent(selectedRunId)}`
-        : `/api/v1/test-plans/${selectedPlanId}/cases`;
-      const res = await fetch(url, { headers: authHeaders() });
+      const res = await fetch(api.planCases(selectedPlanId, { test_run_id: selectedRunId || undefined }), { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (runsListRequestSeq.current !== seq) return; // a newer request already resolved
         const projectEntity = projectsList.find((p) => p.id === selectedProjectId);
-        const builds = data.builds || [];
+        const runs = data.runs || [];
 
         setWorkspace({
           project: projectEntity
@@ -73,12 +71,12 @@ export function useExecutionWorkspace(scope: Scope) {
             : EMPTY_WORKSPACE.project,
           suites: [],
           plan: { id: data.plan.id, name: data.plan.name, status: data.plan.status },
-          build: builds[0]
-            ? { id: builds[0].id, name: builds[0].name, status: builds[0].status }
-            : EMPTY_WORKSPACE.build,
+          run: runs[0]
+            ? { id: runs[0].id, name: runs[0].name, status: runs[0].status }
+            : EMPTY_WORKSPACE.run,
           cases: data.cases.map((c: any) => ({
-            plan_case_id: c.plan_case_id,
-            case_id: c.case_id,
+            test_plan_case_id: c.test_plan_case_id,
+            test_case_id: c.test_case_id,
             test_suite_id: c.test_suite_id,
             external_id: c.external_id,
             title: c.title,
@@ -89,20 +87,20 @@ export function useExecutionWorkspace(scope: Scope) {
             preconditions: c.preconditions,
             steps: c.steps,
             latest_verdict: c.latest_verdict || "UNTESTED",
-            latest_execution_id: c.latest_execution_id || null,
+            latest_test_result_id: c.latest_test_result_id || null,
             latest_notes: c.latest_notes || null,
             removed_from_plan: Boolean(c.removed_from_plan),
           })),
         });
         setExecWorkspaceStatus("READY");
 
-        // Always update runsList/selectedRunId, even when builds is empty -- a plan that
+        // Always update runsList/selectedRunId, even when runs is empty -- a plan that
         // genuinely has zero runs must clear the dropdown, not leave the *previous* plan's
-        // runs showing (the old `if (builds.length > 0)` guard here skipped both setters
+        // runs showing (the old `if (runs.length > 0)` guard here skipped both setters
         // entirely on an empty result, which is the same staleness bug already fixed for
         // loadPlans/the selectedPlanId-empty case, just triggered here by switching to a
         // *real* plan that has no runs rather than having no plan at all).
-        const runItems: EntityItem[] = builds.map((b: any) => ({
+        const runItems: EntityItem[] = runs.map((b: any) => ({
           id: b.id,
           name: (b.name || "").replace(/^Build\s+/i, "Run "),
           status: b.status,

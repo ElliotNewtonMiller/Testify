@@ -54,7 +54,7 @@ describe('Sign-in limits', () => {
     // The admin sees the lock, and the lock is in the Security Audit Log.
     const listed = body(await call(adminToken, 'GET', '/api/v1/admin/users')).users.find((u: any) => u.id === userId);
     expect(listed.locked_until).toBeTruthy();
-    const unlock = await call(adminToken, 'PUT', `/api/v1/admin/users/${userId}/status`, { status: 'ACTIVE' });
+    const unlock = await call(adminToken, 'PATCH', `/api/v1/admin/users/${userId}`, { status: 'ACTIVE' });
     expect(unlock.statusCode).toBe(200);
     const actions = body(await call(adminToken, 'GET', '/api/v1/admin/audit-logs')).audit_logs.map((l: any) => l.action);
     expect(actions).toContain('ACCOUNT_LOCKED');
@@ -87,11 +87,11 @@ describe('Sign-in limits', () => {
     await createUser(adminToken, 'carol');
     const token = body(await login('carol', 'Right-Pass-123')).token;
     for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i++) {
-      const res = await call(token, 'PUT', '/api/v1/auth/credentials', { newPassword: 'a-new-long-passphrase', currentPassword: `guess-${i}` });
+      const res = await call(token, 'PATCH', '/api/v1/auth/me', { password: 'a-new-long-passphrase', current_password: `guess-${i}` });
       expect(res.statusCode).toBe(403);
     }
     // Locked now: even the right current password is refused, and so is signing in.
-    const res = await call(token, 'PUT', '/api/v1/auth/credentials', { newPassword: 'a-new-long-passphrase', currentPassword: 'Right-Pass-123' });
+    const res = await call(token, 'PATCH', '/api/v1/auth/me', { password: 'a-new-long-passphrase', current_password: 'Right-Pass-123' });
     expect(res.statusCode).toBe(429);
     expect(body(res).code).toBe('ACCOUNT_LOCKED');
     expect((await login('carol', 'Right-Pass-123')).statusCode).toBe(429);

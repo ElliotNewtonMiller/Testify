@@ -2,15 +2,15 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import type { Kysely } from 'kysely';
 import type { Database } from '@testify/db';
-import { sendPlanLockedError, sendBuildClosedError, sendTokenProjectMismatchError, sendProblemDetails, sendError } from '../errors.js';
+import { sendPlanLockedError, sendRunClosedError, sendTokenProjectMismatchError, sendProblemDetails, sendError } from '../errors.js';
 import { MAX_BATCH_RESULTS, validateBatchItem, type InvalidParam } from '../services/resultValidation.js';
 import { resolveCaseLinkability } from './testPlanCases.js';
 import { authenticateRequest } from '../middleware/auth.js';
-import { autoCloseBuildIfComplete } from '../buildAutoClose.js';
+import { autoCloseRunIfComplete } from '../runAutoClose.js';
 import type {
-  BatchExecutionRequest,
-  BatchExecutionResponse,
-  BatchExecutionSingleResult,
+  BatchResultsRequest,
+  BatchResultsResponse,
+  BatchResultOutcome,
 } from '@testify/core';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from '../services/resultOverwrite.js';
 import { requestOrigin } from '../audit.js';
@@ -31,12 +31,12 @@ class AtomicRejection extends Error {
 
 export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kysely<Database>, jwtSecret: string) {
   app.post(
-    '/api/v1/test-plans/:planId/builds/:buildId/executions/batch',
+    '/api/v1/runs/:runId/results/batch',
     async (
       req: FastifyRequest<{
-        Params: { planId: string; buildId: string };
+        Params: { runId: string };
         Querystring: { all_or_nothing?: string | boolean };
-        Body: BatchExecutionRequest;
+        Body: BatchResultsRequest;
       }>,
       reply: FastifyReply
     ) => {
@@ -47,43 +47,43 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       }
 
       const startTime = Date.now();
-      const { planId, buildId } = req.params;
+      const { runId } = req.params;
       const allOrNothing =
         req.query.all_or_nothing === true ||
         req.query.all_or_nothing === 'true' ||
         req.query.all_or_nothing === '1';
 
-      const body = req.body || { executions: [] };
-      const executions = body.executions || [];
+      const body = req.body || { results: [] };
+      const executions = body.results || [];
 
-      // 1. Verify build and test plan lock state
-      const buildPlanInfo = await db
+      // 1. Verify run and test plan lock state
+      const runPlanInfo = await db
         .selectFrom('test_runs')
         .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select([
           'test_runs.id as test_run_id',
-          'test_runs.status as build_status',
+          'test_runs.status as run_status',
           'test_plans.id as plan_id',
           'test_plans.status as plan_status',
           'test_plans.project_id',
         ])
-        .where('test_runs.id', '=', buildId)
-        .where('test_runs.test_plan_id', '=', planId)
+        .where('test_runs.id', '=', runId)
         .executeTakeFirst();
 
-      if (!buildPlanInfo) {
-        return sendError(reply, 404, `Build ID ${buildId} not found under Test Plan ${planId}`);
+      if (!runPlanInfo) {
+        return sendError(reply, 404, 'Test run not found');
       }
+      const planId = runPlanInfo.plan_id;
 
-      if (buildPlanInfo.plan_status === 'LOCKED' || buildPlanInfo.plan_status === 'ARCHIVED') {
+      if (runPlanInfo.plan_status === 'LOCKED' || runPlanInfo.plan_status === 'ARCHIVED') {
         return sendPlanLockedError(reply, planId, req.url);
       }
 
-      if (buildPlanInfo.build_status === 'CLOSED') {
-        return sendBuildClosedError(reply, buildId, req.url);
+      if (runPlanInfo.run_status === 'CLOSED') {
+        return sendRunClosedError(reply, runId, req.url);
       }
 
-      const projectId = buildPlanInfo.project_id;
+      const projectId = runPlanInfo.project_id;
 
       if (user.api_token && user.api_token.project_id !== projectId) {
         return sendTokenProjectMismatchError(reply, user.api_token.project_id, projectId, req.url);
@@ -94,13 +94,13 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
 
       // Every item is checked up front (shape, verdict, status, steps given as numbers or ids);
       // whether its case and steps exist is checked against the plan below.
-      if (!Array.isArray(body.executions) || body.executions.length === 0 || body.executions.length > MAX_BATCH_RESULTS) {
+      if (!Array.isArray(body.results) || body.results.length === 0 || body.results.length > MAX_BATCH_RESULTS) {
         return sendProblemDetails(reply, {
           status: 400,
           title: 'Bad Request',
           code: 'INVALID_RESULT',
-          detail: `executions must be a list of 1 to ${MAX_BATCH_RESULTS} results`,
-          invalid_params: [{ name: 'executions', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
+          detail: `results must be a list of 1 to ${MAX_BATCH_RESULTS} results`,
+          invalid_params: [{ name: 'results', reason: `must be a list of 1 to ${MAX_BATCH_RESULTS} results` }],
           instance: req.url,
         });
       }
@@ -133,7 +133,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       // the audit row -- is written in one transaction. In all-or-nothing mode a refused item
       // throws AtomicRejection, which rolls all of it back (auto-links included). Otherwise
       // the accepted items are saved together and the refused ones are reported per item.
-      let outcome: { results: BatchExecutionSingleResult[]; successCount: number; failedCount: number };
+      let outcome: { results: BatchResultOutcome[]; successCount: number; failedCount: number };
       try {
         outcome = await db.transaction().execute(async (trx) => {
           const existingPlanCases = await trx
@@ -171,7 +171,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
           // in this run before this request can only get a different one with the permission.
           // Several results for one case within this request are retries, not overwrites.
           const mayOverwrite = canOverwriteResults(user.permissions);
-          const priorResults = mayOverwrite ? new Map() : await latestResultsInRun(trx, buildId);
+          const priorResults = mayOverwrite ? new Map() : await latestResultsInRun(trx, runId);
           const casesInThisRequest = new Set<string>();
 
           const planCasesByExternalId = new Map<string, PlanCase>();
@@ -196,7 +196,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             return stepsByVersion.get(versionId)!;
           };
 
-          const results: BatchExecutionSingleResult[] = [];
+          const results: BatchResultOutcome[] = [];
           const executionRows: any[] = [];
           const stepRows: any[] = [];
           let successCount = 0;
@@ -208,7 +208,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
               throw new AtomicRejection(status, code, `Batch execution failed in atomic mode: item at index ${i}: ${reason}`, invalid_params);
             }
             failedCount++;
-            results.push({ index: i, status, code, error: reason, invalid_params });
+            results.push({ index: i, status, code, detail: reason, invalid_params });
           };
 
           for (let i = 0; i < executions.length; i++) {
@@ -279,7 +279,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
                 ? `${removedFromPlan} was removed from this test plan; no new results can be recorded for it`
                 : 'Case identifier not found in test plan';
               refuse(i, 422, removedFromPlan ? 'CASE_REMOVED_FROM_PLAN' : 'CASE_NOT_FOUND', reason, [
-                { name: `executions[${i}].case_identifier`, reason },
+                { name: `results[${i}].case_identifier`, reason },
               ]);
               continue;
             }
@@ -290,7 +290,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
               isOverwrite(priorResults.get(resolvedPlanCase.test_case_id), user.id, item.verdict)
             ) {
               refuse(i, 403, 'RESULT_OVERWRITE_NOT_PERMITTED', RESULT_OVERWRITE_MESSAGE, [
-                { name: `executions[${i}].case_identifier`, reason: RESULT_OVERWRITE_MESSAGE },
+                { name: `results[${i}].case_identifier`, reason: RESULT_OVERWRITE_MESSAGE },
               ]);
               continue;
             }
@@ -301,7 +301,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             const resolvedSteps: Array<{ id: string; step_number: number }> = [];
             const stepProblems: InvalidParam[] = [];
             item.step_results.forEach((sr, j) => {
-              const name = `executions[${i}].step_results[${j}]`;
+              const name = `results[${i}].step_results[${j}]`;
               const step = sr.test_step_id
                 ? versionSteps.find((st) => st.id === sr.test_step_id)
                 : versionSteps.find((st) => st.step_number === sr.step_number);
@@ -349,7 +349,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             const envTags = item.environment_tags ?? (defaultEnvironment ? { environment: defaultEnvironment } : null);
             executionRows.push({
               id: execId,
-              test_run_id: buildId,
+              test_run_id: runId,
               test_plan_case_id: resolvedPlanCase.plan_case_id,
               tester_id: user.id,
               status: item.status,
@@ -382,8 +382,8 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
             results.push({
               index: i,
               status: 201,
-              execution_id: execId,
-              case_id: resolvedPlanCase.test_case_id,
+              test_result_id: execId,
+              test_case_id: resolvedPlanCase.test_case_id,
               verdict: item.verdict,
             });
           }
@@ -404,11 +404,11 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
               id: uuidv4(),
               actor_id: user.id,
               actor_type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
-              action: 'BATCH_EXECUTION_RECORDED',
-              resource_type: 'build',
-              resource_id: buildId,
+              action: 'RESULTS_BATCH_RECORDED',
+              resource_type: 'run',
+              resource_id: runId,
               project_id: projectId,
-              diff: JSON.stringify({ successful: successCount, failed: failedCount, plan_id: planId }),
+              diff: JSON.stringify({ successful: successCount, failed: failedCount, test_plan_id: planId }),
               ...requestOrigin(req),
               created_at: now,
             })
@@ -429,8 +429,8 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       }
       const { results, successCount, failedCount } = outcome;
 
-      const responsePayload: BatchExecutionResponse = {
-        object: 'batch_execution_result',
+      const responsePayload: BatchResultsResponse = {
+        object: 'batch_results',
         summary: {
           total_submitted: executions.length,
           successful: successCount,
@@ -441,7 +441,7 @@ export async function registerBatchExecutionRoutes(app: FastifyInstance, db: Kys
       };
 
       // Auto-close the run once every case in its plan has a result (after the commit).
-      responsePayload.build_status = await autoCloseBuildIfComplete(db, buildId, {
+      responsePayload.run_status = await autoCloseRunIfComplete(db, runId, {
         id: user.id,
         type: user.api_token ? 'SERVICE_ACCOUNT' : 'USER',
       }, requestOrigin(req));

@@ -111,22 +111,17 @@ export function sendProblemDetails(reply: FastifyReply, options: ProblemDetailsO
 export function sendPlanLockedError(reply: FastifyReply, planId: string, instance?: string) {
   return sendProblemDetails(reply, {
     code: 'PLAN_LOCKED',
-    detail: `Test Plan (ID: ${planId}) is locked. Plan specifications and execution states are frozen.`,
+    detail: `Test Plan (ID: ${planId}) is locked. Its cases and results can't be changed.`,
     instance,
   });
 }
 
-export function sendBuildClosedError(reply: FastifyReply, buildId: string, instance?: string) {
+export function sendRunClosedError(reply: FastifyReply, runId: string, instance?: string) {
   return sendProblemDetails(reply, {
-    code: 'BUILD_CLOSED',
-    detail: `Build (ID: ${buildId}) is closed. Executions cannot be added or modified on a closed build.`,
+    code: 'RUN_CLOSED',
+    detail: `Test run (ID: ${runId}) is closed. Results can't be added to a closed run; reopen it first.`,
     instance,
-    invalid_params: [
-      {
-        name: 'build_id',
-        reason: 'Build status is CLOSED',
-      },
-    ],
+    invalid_params: [{ name: 'test_run_id', reason: 'the run is CLOSED' }],
   });
 }
 
@@ -209,7 +204,7 @@ export function sendCaseRemovedFromPlanError(reply: FastifyReply, label: string,
 export function sendSuiteInUseError(
   reply: FastifyReply,
   suiteId: string,
-  counts: { subSuites: number; cases: number; planLinks: number; executions: number },
+  counts: { subSuites: number; cases: number; planLinks: number; results: number },
   instance?: string,
   suiteName?: string
 ) {
@@ -217,7 +212,7 @@ export function sendSuiteInUseError(
   if (counts.subSuites > 0) parts.push(`${counts.subSuites} sub-suite${counts.subSuites === 1 ? '' : 's'}`);
   if (counts.cases > 0) parts.push(`${counts.cases} case${counts.cases === 1 ? '' : 's'}`);
   if (counts.planLinks > 0) parts.push(`${counts.planLinks} plan link${counts.planLinks === 1 ? '' : 's'}`);
-  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+  if (counts.results > 0) parts.push(`${counts.results} recorded result${counts.results === 1 ? '' : 's'}`);
 
   const suiteRef = suiteName ? suiteName : `(ID: ${suiteId})`;
 
@@ -227,22 +222,22 @@ export function sendSuiteInUseError(
     title: 'Conflict',
     detail: `Suite ${suiteRef} still contains ${counts.cases} case${counts.cases === 1 ? '' : 's'}. They will all be deleted.`,
     instance,
-    invalid_params: [{ name: 'suite_id', reason: `Contains ${parts.join(', ')}` }],
+    invalid_params: [{ name: 'test_suite_id', reason: `Contains ${parts.join(', ')}` }],
   });
 }
 
 export function sendPlanInUseError(
   reply: FastifyReply,
   planId: string,
-  counts: { builds: number; caseLinks: number; executions: number },
+  counts: { runs: number; caseLinks: number; results: number },
   instance?: string,
   planName?: string
 ) {
   const planRef = planName ? planName : `(ID: ${planId})`;
   const parts: string[] = [];
-  if (counts.builds > 0) parts.push(`${counts.builds} build${counts.builds === 1 ? '' : 's'}`);
+  if (counts.runs > 0) parts.push(`${counts.runs} test run${counts.runs === 1 ? '' : 's'}`);
   if (counts.caseLinks > 0) parts.push(`${counts.caseLinks} plan-linked case${counts.caseLinks === 1 ? '' : 's'}`);
-  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+  if (counts.results > 0) parts.push(`${counts.results} recorded result${counts.results === 1 ? '' : 's'}`);
 
   return sendProblemDetails(reply, {
     code: 'PLAN_IN_USE',
@@ -250,38 +245,38 @@ export function sendPlanInUseError(
     title: 'Conflict',
     detail: `Test Plan ${planRef} still contains ${counts.caseLinks} test case${counts.caseLinks === 1 ? '' : 's'}. Are you sure you want to delete the test plan with its test runs and links to test cases?`,
     instance,
-    invalid_params: [{ name: 'plan_id', reason: `Contains ${parts.join(', ')}` }],
+    invalid_params: [{ name: 'test_plan_id', reason: `Contains ${parts.join(', ')}` }],
   });
 }
 
-export function sendBuildInUseError(
+export function sendRunInUseError(
   reply: FastifyReply,
-  buildId: string,
-  counts: { executions: number },
+  runId: string,
+  counts: { results: number },
   instance?: string,
-  buildName?: string
+  runName?: string
 ) {
-  const buildRef = buildName ? buildName : `(ID: ${buildId})`;
-
+  const runRef = runName ? runName : `(ID: ${runId})`;
+  const n = counts.results;
   return sendProblemDetails(reply, {
-    code: 'BUILD_IN_USE',
+    code: 'RUN_IN_USE',
     status: 409,
     title: 'Conflict',
-    detail: `Test Run ${buildRef} still contains ${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}. Are you sure you want to delete the test run with its recorded executions?`,
+    detail: `Test Run ${runRef} still contains ${n} recorded result${n === 1 ? '' : 's'}. Are you sure you want to delete the test run with its results?`,
     instance,
-    invalid_params: [{ name: 'build_id', reason: `Has ${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}` }],
+    invalid_params: [{ name: 'test_run_id', reason: `has ${n} recorded result${n === 1 ? '' : 's'}` }],
   });
 }
 
 export function sendCaseInUseError(
   reply: FastifyReply,
   caseId: string,
-  counts: { planLinks: number; executions: number },
+  counts: { planLinks: number; results: number },
   instance?: string
 ) {
   const parts: string[] = [];
   if (counts.planLinks > 0) parts.push(`${counts.planLinks} plan link${counts.planLinks === 1 ? '' : 's'}`);
-  if (counts.executions > 0) parts.push(`${counts.executions} recorded execution${counts.executions === 1 ? '' : 's'}`);
+  if (counts.results > 0) parts.push(`${counts.results} recorded result${counts.results === 1 ? '' : 's'}`);
 
   return sendProblemDetails(reply, {
     code: 'CASE_IN_USE',
@@ -289,7 +284,7 @@ export function sendCaseInUseError(
     title: 'Conflict',
     detail: `Test Case (ID: ${caseId}) has ${parts.join(', ')}. Pass force=true to delete it anyway and permanently discard that history.`,
     instance,
-    invalid_params: [{ name: 'case_id', reason: `Has ${parts.join(', ')}` }],
+    invalid_params: [{ name: 'test_case_id', reason: `Has ${parts.join(', ')}` }],
   });
 }
 
@@ -424,7 +419,7 @@ export function sendCapabilityCeilingExceededError(
 export function sendProjectInUseError(
   reply: FastifyReply,
   projectId: string,
-  counts: { suites: number; cases: number; plans: number; runs: number; executions: number },
+  counts: { suites: number; cases: number; plans: number; runs: number; results: number },
   instance?: string,
   projectName?: string
 ) {
@@ -435,7 +430,7 @@ export function sendProjectInUseError(
   if (counts.cases > 0) parts.push(plural(counts.cases, 'test case'));
   if (counts.plans > 0) parts.push(plural(counts.plans, 'test plan'));
   if (counts.runs > 0) parts.push(plural(counts.runs, 'test run'));
-  if (counts.executions > 0) parts.push(plural(counts.executions, 'recorded result'));
+  if (counts.results > 0) parts.push(plural(counts.results, 'recorded result'));
 
   return sendProblemDetails(reply, {
     code: 'PROJECT_IN_USE',

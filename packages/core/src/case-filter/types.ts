@@ -42,7 +42,7 @@ export interface CaseFilterFieldDescriptor {
    * can come from imports. */
   strict_options?: boolean;
   /** Request-level parameter this field needs to be meaningful. */
-  requires?: 'plan_id' | 'build_id';
+  requires?: 'test_plan_id' | 'test_run_id';
 }
 
 export interface CaseFilter {

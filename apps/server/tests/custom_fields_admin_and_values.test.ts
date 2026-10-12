@@ -52,7 +52,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const attempts = [
       { method: 'GET', url: '/api/v1/admin/custom-fields' },
       { method: 'POST', url: '/api/v1/admin/custom-fields', payload: { entity_type: 'TestCase', name: 'x', field_label: 'X', field_type: 'TEXT' } },
-      { method: 'PUT', url: '/api/v1/admin/custom-fields/nonexistent', payload: { field_label: 'X' } },
+      { method: 'PATCH', url: '/api/v1/admin/custom-fields/nonexistent', payload: { field_label: 'X' } },
       { method: 'DELETE', url: '/api/v1/admin/custom-fields/nonexistent' },
     ] as const;
 
@@ -82,7 +82,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     expect(definition.field_type).toBe('NUMBER');
 
     const updateRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { field_label: 'Story Points (Fibonacci)' },
@@ -148,7 +148,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const setRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'hello' },
     });
@@ -165,7 +165,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // Still there.
     const getValuesRes = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+      url: `/api/v1/cases/${caseId}/custom-fields`,
       headers: { authorization: `Bearer ${token}` },
     });
     const values = JSON.parse(getValuesRes.payload).values;
@@ -195,14 +195,14 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const getAsViewer = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+      url: `/api/v1/cases/${caseId}/custom-fields`,
       headers: { authorization: `Bearer ${viewerToken}` },
     });
     expect(getAsViewer.statusCode).toBe(200);
 
     const putAsViewer = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${viewerToken}` },
       payload: { value: 'nope' },
     });
@@ -210,7 +210,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const deleteAsViewer = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${viewerToken}` },
     });
     expect(deleteAsViewer.statusCode).toBe(403);
@@ -231,7 +231,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const res = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'not-a-number' },
     });
@@ -260,7 +260,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const res = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'Platform Team' },
     });
@@ -283,7 +283,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const setRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-suites/${suiteId}/custom-field-values/${definition.id}`,
+      url: `/api/v1/suites/${suiteId}/custom-fields/${definition.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'Platform Team' },
     });
@@ -291,7 +291,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const getRes = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-suites/${suiteId}/custom-field-values`,
+      url: `/api/v1/suites/${suiteId}/custom-fields`,
       headers: { authorization: `Bearer ${token}` },
     });
     const values = JSON.parse(getRes.payload).values;
@@ -362,11 +362,11 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // A required field must have a default value always, not just at creation: making an
     // existing optional field required with no default is blocked, and so is clearing an
     // already-required field's default.
-    const makeRequired = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true } });
+    const makeRequired = await app.inject({ method: 'PATCH', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true } });
     expect(makeRequired.statusCode).toBe(422);
-    const makeRequiredWithDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true, default_value: 'x' } });
+    const makeRequiredWithDefault = await app.inject({ method: 'PATCH', url: `/api/v1/admin/custom-fields/${optionalId}`, headers: auth, payload: { is_required: true, default_value: 'x' } });
     expect(makeRequiredWithDefault.statusCode).toBe(200);
-    const clearDefault = await app.inject({ method: 'PUT', url: `/api/v1/admin/custom-fields/${requiredId}`, headers: auth, payload: { default_value: null } });
+    const clearDefault = await app.inject({ method: 'PATCH', url: `/api/v1/admin/custom-fields/${requiredId}`, headers: auth, payload: { default_value: null } });
     expect(clearDefault.statusCode).toBe(422);
   });
 
@@ -399,7 +399,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     // Same rule on update: flipping to an empty-array default is blocked too.
     const clearedViaUpdate = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${fieldId}`,
       headers: auth,
       payload: { default_value: '[]' },
@@ -435,14 +435,14 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // json_value null, not "never touched".
     const clearRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definitionId}`,
       headers: auth,
       payload: { value: [] },
     });
     expect(clearRes.statusCode).toBe(200);
 
     const updateRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definitionId}`,
       headers: auth,
       payload: { is_required: true, default_value: '["A","B"]' },
@@ -452,7 +452,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const valuesAfter = JSON.parse(
       (
-        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+        await app.inject({ method: 'GET', url: `/api/v1/cases/${caseId}/custom-fields`, headers: auth })
       ).payload,
     ).values;
     expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toEqual(['A', 'B']);
@@ -485,7 +485,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const setRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definitionId}`,
       headers: auth,
       payload: { value: ['fire', 'water'] },
     });
@@ -493,7 +493,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     // Delete "water" from the field's options (dropping it from the options list entirely).
     const removeOptionRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definitionId}`,
       headers: auth,
       payload: {
@@ -508,7 +508,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // The case's stored value must already reflect the removal -- "water" dropped, "fire" kept.
     const valuesAfterRemoval = JSON.parse(
       (
-        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+        await app.inject({ method: 'GET', url: `/api/v1/cases/${caseId}/custom-fields`, headers: auth })
       ).payload,
     ).values;
     expect(valuesAfterRemoval.find((v: any) => v.definition.id === definitionId).value).toEqual(['fire']);
@@ -518,7 +518,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // now-deleted "water" and fail with INVALID_FIELD_VALUE. It must succeed now.
     const laterEditRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definitionId}`,
       headers: auth,
       payload: { value: ['fire', 'air'] },
     });
@@ -554,7 +554,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const setRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definitionId}`,
       headers: auth,
       payload: { value: 'High' },
     });
@@ -562,7 +562,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     // Delete "High" -- the case's currently-selected option.
     const removeOptionRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definitionId}`,
       headers: auth,
       payload: {
@@ -580,7 +580,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const valuesAfter = JSON.parse(
       (
-        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+        await app.inject({ method: 'GET', url: `/api/v1/cases/${caseId}/custom-fields`, headers: auth })
       ).payload,
     ).values;
     expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toBe('Medium');
@@ -604,7 +604,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const caseId = seed.caseIds[0];
     const valuesRes = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+      url: `/api/v1/cases/${caseId}/custom-fields`,
       headers: auth,
     });
     const values = JSON.parse(valuesRes.payload).values;
@@ -613,7 +613,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // Editing the field's default afterward must not retroactively change the case's already-
     // frozen value -- the whole point of seeding real rows at creation time.
     const updateRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${created.definition.id}`,
       headers: auth,
       payload: { default_value: 'High' },
@@ -624,7 +624,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       (
         await app.inject({
           method: 'GET',
-          url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+          url: `/api/v1/cases/${caseId}/custom-fields`,
           headers: auth,
         })
       ).payload,
@@ -635,7 +635,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // it still picks up whatever the default is right now (the existing read-time fallback).
     const newCaseRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: auth,
       payload: { test_suite_id: seed.suiteId, title: 'New case after field exists' },
     });
@@ -644,7 +644,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
       (
         await app.inject({
           method: 'GET',
-          url: `/api/v1/test-cases/${newCaseId}/custom-field-values`,
+          url: `/api/v1/cases/${newCaseId}/custom-fields`,
           headers: auth,
         })
       ).payload,
@@ -680,21 +680,21 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // value, not "never touched".
     const clearRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${caseId}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${caseId}/custom-fields/${definitionId}`,
       headers: auth,
       payload: { value: '' },
     });
     expect(clearRes.statusCode).toBe(200);
     const clearedValues = JSON.parse(
       (
-        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+        await app.inject({ method: 'GET', url: `/api/v1/cases/${caseId}/custom-fields`, headers: auth })
       ).payload,
     ).values;
     expect(clearedValues.find((v: any) => v.definition.id === definitionId).value).toBeNull();
 
     // Flip it to required with a usable default.
     const updateRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definitionId}`,
       headers: auth,
       payload: { is_required: true, default_value: 'High' },
@@ -704,7 +704,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     const valuesAfter = JSON.parse(
       (
-        await app.inject({ method: 'GET', url: `/api/v1/test-cases/${caseId}/custom-field-values`, headers: auth })
+        await app.inject({ method: 'GET', url: `/api/v1/cases/${caseId}/custom-fields`, headers: auth })
       ).payload,
     ).values;
     expect(valuesAfter.find((v: any) => v.definition.id === definitionId).value).toBe('High');
@@ -734,7 +734,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
 
     // ...and can't be changed to a broken one later.
     const badUpdate = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/custom-fields/${definitionId}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { validation_regex: '(' },
@@ -746,7 +746,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     const started = Date.now();
     const slow = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${seed.caseIds[0]}/custom-fields/${definitionId}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'a'.repeat(40) + '!' },
     });
@@ -757,7 +757,7 @@ describe('Custom Fields: admin definition CRUD & Spec-mode value CRUD', () => {
     // Ordinary values still work.
     const ok = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${seed.caseIds[0]}/custom-fields/${definitionId}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'aaaa' },
     });

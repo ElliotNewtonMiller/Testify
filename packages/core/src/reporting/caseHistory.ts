@@ -1,13 +1,13 @@
 import { isFailing, roundRate } from './verdicts.js';
 
 export interface CaseTimelineEntry {
-  run_id: string;
+  test_run_id: string;
   verdict: string;
   executed_at: string;
 }
 
 export interface CaseStats {
-  total_executions: number;
+  total_results: number;
   runs: number;
   /** Over the case's final result in each run it was executed in (retries don't count twice). */
   pass_rate: number;
@@ -28,8 +28,8 @@ export function computeCaseStats(timeline: CaseTimelineEntry[]): CaseStats {
     if (isFailing(e.verdict)) lastFailed = e.executed_at;
     // Re-inserting moves the run to the end, so the map ends up ordered by each run's
     // final execution -- the run order the streak needs.
-    finalByRun.delete(e.run_id);
-    finalByRun.set(e.run_id, e);
+    finalByRun.delete(e.test_run_id);
+    finalByRun.set(e.test_run_id, e);
   }
   const finals = [...finalByRun.values()];
   const counted = finals.filter((f) => f.verdict !== 'SKIPPED' && f.verdict !== 'UNTESTED');
@@ -44,7 +44,7 @@ export function computeCaseStats(timeline: CaseTimelineEntry[]): CaseStats {
   }
 
   return {
-    total_executions: timeline.length,
+    total_results: timeline.length,
     runs: finals.length,
     pass_rate: counted.length > 0 ? roundRate(passed / counted.length) : 0,
     last_executed_at: timeline.length > 0 ? timeline[timeline.length - 1].executed_at : null,

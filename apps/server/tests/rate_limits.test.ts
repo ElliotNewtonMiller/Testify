@@ -62,8 +62,7 @@ describe('Rate limits', () => {
 
     // An import authenticates twice internally; it still counts as one request.
     const xml = `<?xml version="1.0"?><testsuites><testsuite name="S"><testcase name="C"><summary>s</summary></testcase></testsuite></testsuites>`;
-    const dry = await call(token, 'POST', '/api/v1/imports/dry-run', {
-      target_project_id: seed.projectId,
+    const dry = await call(token, 'POST', `/api/v1/projects/${seed.projectId}/imports/dry-run`, {
       format: 'TESTLINK_XML',
       file_content: Buffer.from(xml).toString('base64'),
     });
@@ -94,7 +93,7 @@ describe('Rate limits', () => {
     expectRateLimited(await call(admin, 'POST', url, payload), /Too many exports: the limit is 2 per hour\. Try again in \d+ minutes?\./);
     // The other export route shares the allowance.
     expectRateLimited(
-      await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/exports/execution-results`, { format: 'JSON', plan_id: seed.planId, build_id: seed.buildId }),
+      await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/exports/results`, { format: 'JSON', test_run_id: seed.buildId }),
       /exports/
     );
 
@@ -106,7 +105,7 @@ describe('Rate limits', () => {
   it('limits sending report emails, but not previews; Send now and the test email share the limit', async () => {
     app.rateLimits.reportEmails = new RateLimiter(2, 60 * 60_000);
     const url = `/api/v1/projects/${seed.projectId}/report-emails`;
-    const sections = [{ report_id: 'run_summary', params: { run_id: seed.buildId } }];
+    const sections = [{ report_id: 'run_summary', params: { test_run_id: seed.buildId } }];
 
     for (let i = 0; i < 4; i++) expect((await call(admin, 'POST', url, { sections, preview: true })).statusCode).toBe(200);
     expect((await call(admin, 'POST', url, { sections, recipients: ['qa@example.com'] })).statusCode).toBe(201);
@@ -121,10 +120,10 @@ describe('Rate limits', () => {
         timezone: 'UTC',
       })
     ).schedule;
-    expect((await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/report-schedules/${schedule.id}/send-now`)).statusCode).toBe(200);
+    expect((await call(admin, 'POST', `/api/v1/report-schedules/${schedule.id}/send-now`)).statusCode).toBe(200);
 
     expectRateLimited(await call(admin, 'POST', url, { sections, recipients: ['qa@example.com'] }), /Too many report emails: the limit is 2 per hour/);
-    expectRateLimited(await call(admin, 'POST', `/api/v1/projects/${seed.projectId}/report-schedules/${schedule.id}/send-now`), /report emails/);
+    expectRateLimited(await call(admin, 'POST', `/api/v1/report-schedules/${schedule.id}/send-now`), /report emails/);
     expectRateLimited(await call(admin, 'POST', '/api/v1/admin/email-settings/test', { to: 'qa@example.com' }), /Too many emails/);
     // Previews still work.
     expect((await call(admin, 'POST', url, { sections, preview: true })).statusCode).toBe(200);

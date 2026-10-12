@@ -66,10 +66,10 @@ describe('Server errors', () => {
     expect(JSON.parse(badJson.payload).detail).toBeTruthy();
 
     const weak = await app.inject({
-      method: 'PUT',
-      url: '/api/v1/auth/credentials',
+      method: 'PATCH',
+      url: '/api/v1/auth/me',
       headers: { authorization: `Bearer ${token}` },
-      payload: { newPassword: 'weak', currentPassword: 'password' },
+      payload: { password: 'weak', current_password: 'password' },
     });
     expect(weak.statusCode).toBe(400);
     expect(JSON.parse(weak.payload).detail).toContain('PASSWORD_POLICY_VIOLATION');

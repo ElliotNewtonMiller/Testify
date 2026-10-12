@@ -62,7 +62,7 @@ describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
   }
 
   // 1. Dry-Run Import Preview Tests
-  describe('POST /api/v1/imports/dry-run', () => {
+  describe('POST /api/v1/projects/:projectId/imports/dry-run', () => {
     it('accepts an import larger than Fastify\'s default 1 MB body limit (real TestLink exports)', async () => {
       const { app, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
@@ -78,9 +78,9 @@ describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { file_content: xmlPayload, filename: 'big.xml', target_project_id: seed.projectId },
+        payload: { file_content: xmlPayload, filename: 'big.xml' },
       });
       expect(res.statusCode).toBe(200);
     });
@@ -118,13 +118,12 @@ describe('Batch Execution & Multi-Format XML/JSON/CSV Ingestion API', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: xmlPayload,
           filename: 'security_suite.xml',
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             duplicate_resolution: { default_action: 'VERSION_UP' },
           },
@@ -157,13 +156,12 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: csvPayload,
           filename: 'cases.csv',
           format: 'STANDARD_CSV',
-          target_project_id: seed.projectId,
         },
       });
 
@@ -181,14 +179,14 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
       const { token: adminToken } = await loginAsAdmin(app);
       const { token: viewerToken } = await createAndLoginAs(app, adminToken, 'Viewer');
 
-      const payload = { file_content: '<testsuites></testsuites>', format: 'TESTLINK_XML', target_project_id: seed.projectId };
+      const payload = { file_content: '<testsuites></testsuites>', format: 'TESTLINK_XML' };
 
-      const noAuthRes = await app.inject({ method: 'POST', url: '/api/v1/imports/dry-run', payload });
+      const noAuthRes = await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/imports/dry-run`, payload });
       expect(noAuthRes.statusCode).toBe(401);
 
       const viewerRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${viewerToken}` },
         payload,
       });
@@ -197,7 +195,7 @@ Auth / Login,Password Login,TC-CSV-1,Verify pass login,HIGH,AUTOMATED,2,Click su
   });
 
   // 2. Import Execution Tests
-  describe('POST /api/v1/imports/execute', () => {
+  describe('POST /api/v1/projects/:projectId/imports/execute', () => {
     it('AUTO_CREATE as SINGLE_SELECT / MULTI_SELECT builds the options from the column\'s values', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
@@ -221,9 +219,9 @@ ${tc('SEL-4', 'Done', '')}
 
       const dry = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { file_content: xmlPayload, format: 'TESTLINK_XML', target_project_id: seed.projectId },
+        payload: { file_content: xmlPayload, format: 'TESTLINK_XML' },
       });
       expect(dry.statusCode).toBe(200);
       const status = JSON.parse(dry.payload).unmapped_custom_fields.find((f: any) => f.incoming_key === 'automationStatus');
@@ -235,12 +233,11 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: xmlPayload,
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             field_mappings: [
               { incoming_key: 'automationStatus', action: 'AUTO_CREATE', field_type: 'SINGLE_SELECT' },
@@ -273,7 +270,7 @@ ${tc('SEL-4', 'Done', '')}
       const caseId = (await db.selectFrom('test_cases').select('id').where('external_id', '=', 'SEL-3').executeTakeFirstOrThrow()).id;
       const values = await app.inject({
         method: 'GET',
-        url: `/api/v1/test-cases/${caseId}/custom-field-values`,
+        url: `/api/v1/cases/${caseId}/custom-fields`,
         headers: { authorization: `Bearer ${token}` },
       });
       const byName = Object.fromEntries(JSON.parse(values.payload).values.map((v: any) => [v.definition.name, v.value]));
@@ -313,13 +310,12 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: xmlPayload,
           filename: 'payments.xml',
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             field_mappings: [
               {
@@ -364,14 +360,14 @@ ${tc('SEL-4', 'Done', '')}
       // entity_id is the case's own id, not a version id -- values are never
       // version-locked, matching every other Spec-mode custom field value in this app.
       // This is also what makes the value visible through the existing
-      // GET /api/v1/test-cases/:caseId/custom-field-values read path with zero
+      // GET /api/v1/cases/:caseId/custom-fields read path with zero
       // special-casing.
       expect(cfVal?.entity_type).toBe('TestCase');
       expect(cfVal?.entity_id).toBe(caseInDb!.id);
 
       const valuesRes = await app.inject({
         method: 'GET',
-        url: `/api/v1/test-cases/${caseInDb!.id}/custom-field-values`,
+        url: `/api/v1/cases/${caseInDb!.id}/custom-fields`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(valuesRes.statusCode).toBe(200);
@@ -422,12 +418,11 @@ ${tc('SEL-4', 'Done', '')}
 
       await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: xmlPayload,
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
         },
       });
 
@@ -444,12 +439,11 @@ ${tc('SEL-4', 'Done', '')}
 
       const res2 = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: secondPayload,
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             duplicate_resolution: { default_action: 'VERSION_UP' },
           },
@@ -472,29 +466,7 @@ ${tc('SEL-4', 'Done', '')}
       expect(versions[1].summary).toBe('Updated version v2');
     });
 
-    it('rejects a request with no target_project_id anywhere (previously silently picked an arbitrary project)', async () => {
-      const { app, db } = serverInstance;
-      const { token } = await loginAsAdmin(app);
-
-      const before = await db.selectFrom('test_cases').select(db.fn.count('id').as('cnt')).executeTakeFirst();
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/v1/imports/execute',
-        headers: { authorization: `Bearer ${token}` },
-        payload: {
-          file_content: '<testsuites><testsuite name="X"><testcase name="Y"><externalid>NOPROJ-1</externalid></testcase></testsuite></testsuites>',
-          format: 'TESTLINK_XML',
-          // no target_project_id / project_id anywhere
-        },
-      });
-
-      expect(res.statusCode).toBe(400);
-      const after = await db.selectFrom('test_cases').select(db.fn.count('id').as('cnt')).executeTakeFirst();
-      expect(Number(after?.cnt)).toBe(Number(before?.cnt));
-    });
-
-    it('a machine token defaults to its own bound project when none is given, and is rejected for a mismatched one', async () => {
+    it('a machine token can import into its own project, and is rejected for another one', async () => {
       const { app, db, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
       const { plaintext: apiToken } = await mintApiToken(app, adminToken, seed.projectId, ['IMPORT_DATA']);
@@ -504,9 +476,9 @@ ${tc('SEL-4', 'Done', '')}
 
       const okRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${apiToken}` },
-        payload: { file_content: xmlPayload, format: 'TESTLINK_XML' }, // no target_project_id
+        payload: { file_content: xmlPayload, format: 'TESTLINK_XML' },
       });
       expect(okRes.statusCode).toBe(200);
       const caseInDb = await db.selectFrom('test_cases').selectAll().where('external_id', '=', 'TOK-1').executeTakeFirst();
@@ -515,9 +487,9 @@ ${tc('SEL-4', 'Done', '')}
       const otherProject = await new ProjectRepository(db).create({ name: 'Other Project', prefix: 'OTHR' });
       const mismatchRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${otherProject.id}/imports/execute`,
         headers: { authorization: `Bearer ${apiToken}` },
-        payload: { file_content: xmlPayload, format: 'TESTLINK_XML', target_project_id: otherProject.id },
+        payload: { file_content: xmlPayload, format: 'TESTLINK_XML' },
       });
       expect(mismatchRes.statusCode).toBe(403);
       expect(JSON.parse(mismatchRes.payload).code).toBe('TOKEN_PROJECT_MISMATCH');
@@ -531,13 +503,12 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content:
             '<testsuites><testsuite name="Atomicity Suite"><testcase name="Atomicity Case"><externalid>ATOM-1</externalid><custom_fields><custom_field><name><![CDATA[cf_a]]></name><value><![CDATA[x]]></value></custom_field><custom_field><name><![CDATA[cf_b]]></name><value><![CDATA[y]]></value></custom_field></custom_fields></testcase></testsuite></testsuites>',
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             field_mappings: [
               { incoming_key: 'cf_a', action: 'AUTO_CREATE', field_type: 'TEXT' },
@@ -574,13 +545,12 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content:
             '<testsuites><testsuite name="Skip Suite"><testcase name="Skip Case"><externalid>SKIP-1</externalid><custom_fields><custom_field><name><![CDATA[cf_env]]></name><value><![CDATA[production]]></value></custom_field></custom_fields></testcase></testsuite></testsuites>',
           format: 'TESTLINK_XML',
-          target_project_id: seed.projectId,
           configuration: {
             field_mappings: [{ incoming_key: 'cf_env', action: 'ROUTE_TO_EXISTING', target_field_id: selectField.id }],
           },
@@ -617,9 +587,9 @@ ${tc('SEL-4', 'Done', '')}
 
       const dryRunRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { file_content: junitPayload, format: 'JUNIT_XML', target_project_id: seed.projectId },
+        payload: { file_content: junitPayload, format: 'JUNIT_XML' },
       });
       expect(dryRunRes.statusCode).toBe(200);
       const dryRunBody = JSON.parse(dryRunRes.payload);
@@ -629,12 +599,11 @@ ${tc('SEL-4', 'Done', '')}
 
       const execRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: junitPayload,
           format: 'JUNIT_XML',
-          target_project_id: seed.projectId,
           configuration: {
             field_mappings: [
               { incoming_key: 'junit_status', action: 'AUTO_CREATE', field_type: 'TEXT' },
@@ -651,8 +620,8 @@ ${tc('SEL-4', 'Done', '')}
 
       // No Execution-mode records are created by a JUnit import (case-level custom fields
       // only) -- confirms the locked-in "custom fields only" design decision.
-      const executionCount = await db.selectFrom('test_results').select(db.fn.count('id').as('cnt')).executeTakeFirst();
-      expect(Number(executionCount?.cnt)).toBe(0);
+      const resultCount = await db.selectFrom('test_results').select(db.fn.count('id').as('cnt')).executeTakeFirst();
+      expect(Number(resultCount?.cnt)).toBe(0);
     });
 
     it('requires TESTRAIL_CSV to be explicitly selected -- it is never auto-detected', async () => {
@@ -665,9 +634,9 @@ ${tc('SEL-4', 'Done', '')}
       // rather than being recognized as TestRail's shape.
       const autoRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { file_content: testRailCsv, filename: 'export.csv', target_project_id: seed.projectId },
+        payload: { file_content: testRailCsv, filename: 'export.csv' },
       });
       expect(autoRes.statusCode).toBe(200);
       const autoCase = await db.selectFrom('test_cases').selectAll().where('title', '=', 'TR Case').executeTakeFirst();
@@ -680,13 +649,12 @@ ${tc('SEL-4', 'Done', '')}
       // Explicit selection works and folds priority correctly.
       const explicitRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/imports/execute',
+        url: `/api/v1/projects/${seed.projectId}/imports/execute`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           file_content: testRailCsv,
           filename: 'export2.csv',
           format: 'TESTRAIL_CSV',
-          target_project_id: seed.projectId,
           configuration: { duplicate_resolution: { default_action: 'CREATE_NEW' } },
         },
       });
@@ -694,7 +662,7 @@ ${tc('SEL-4', 'Done', '')}
     });
   });
 
-  describe('GET /api/v1/imports/custom-field-options', () => {
+  describe('GET /api/v1/projects/:projectId/imports/custom-field-options', () => {
     it('401s with no auth, 403s for a Viewer, and 200s with a global+project-scoped merged list for an IMPORT_DATA holder', async () => {
       const { app, db, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
@@ -709,36 +677,37 @@ ${tc('SEL-4', 'Done', '')}
         field_type: 'TEXT',
       });
 
-      const noAuthRes = await app.inject({ method: 'GET', url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}` });
+      const noAuthRes = await app.inject({ method: 'GET', url: `/api/v1/projects/${seed.projectId}/imports/custom-field-options` });
       expect(noAuthRes.statusCode).toBe(401);
 
       const viewerRes = await app.inject({
         method: 'GET',
-        url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}`,
+        url: `/api/v1/projects/${seed.projectId}/imports/custom-field-options`,
         headers: { authorization: `Bearer ${viewerToken}` },
       });
       expect(viewerRes.statusCode).toBe(403);
 
       const okRes = await app.inject({
         method: 'GET',
-        url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}`,
+        url: `/api/v1/projects/${seed.projectId}/imports/custom-field-options`,
         headers: { authorization: `Bearer ${adminToken}` },
       });
       expect(okRes.statusCode).toBe(200);
       const names = JSON.parse(okRes.payload).definitions.map((d: any) => d.name);
       expect(names).toEqual(expect.arrayContaining(['global_opt', 'project_opt']));
 
-      const missingProjectRes = await app.inject({
+      // The old address (project in the query string) is gone.
+      const oldAddressRes = await app.inject({
         method: 'GET',
-        url: '/api/v1/imports/custom-field-options',
+        url: `/api/v1/imports/custom-field-options?target_project_id=${seed.projectId}`,
         headers: { authorization: `Bearer ${adminToken}` },
       });
-      expect(missingProjectRes.statusCode).toBe(400);
+      expect(oldAddressRes.statusCode).toBe(404);
     });
   });
 
   // 3. Batch Execution Ingestion Tests
-  describe('POST /api/v1/test-plans/:planId/builds/:buildId/executions/batch', () => {
+  describe('POST /api/v1/runs/:runId/results/batch', () => {
     it('processes batch of 1,000 execution results with high throughput in non-atomic mode', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
@@ -763,19 +732,19 @@ ${tc('SEL-4', 'Done', '')}
       const startTime = Date.now();
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch?all_or_nothing=false`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch?all_or_nothing=false`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           environment: 'staging-us-east-1',
           runner_info: { name: 'GitHub Actions', run_id: '98124712' },
-          executions: executionsPayload,
+          results: executionsPayload,
         },
       });
       const elapsedTime = Date.now() - startTime;
 
       expect(res.statusCode).toBe(201);
       const data = JSON.parse(res.body);
-      expect(data.object).toBe('batch_execution_result');
+      expect(data.object).toBe('batch_results');
       expect(data.summary.total_submitted).toBe(1000);
       expect(data.summary.successful).toBe(1000);
       expect(data.summary.failed).toBe(0);
@@ -792,10 +761,10 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch?all_or_nothing=false`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch?all_or_nothing=false`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
-          executions: [
+          results: [
             {
               case_identifier: { external_id: 'SHOP-101' },
               verdict: 'PASSED',
@@ -815,7 +784,7 @@ ${tc('SEL-4', 'Done', '')}
       expect(data.summary.failed).toBe(1);
       expect(data.results[0].status).toBe(201);
       expect(data.results[1].status).toBe(422);
-      expect(data.results[1].error).toBeDefined();
+      expect(data.results[1].detail).toBeDefined();
     });
 
     it('rejects entire batch with HTTP 422 in atomic mode (all_or_nothing=true) on error', async () => {
@@ -824,10 +793,10 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch?all_or_nothing=true`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch?all_or_nothing=true`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
-          executions: [
+          results: [
             {
               case_identifier: { external_id: 'SHOP-101' },
               verdict: 'PASSED',
@@ -868,10 +837,10 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch?all_or_nothing=false`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch?all_or_nothing=false`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
-          executions: [
+          results: [
             {
               case_identifier: { external_id: 'SHOP-BATCH-DRAFT-1' },
               verdict: 'PASSED',
@@ -898,8 +867,8 @@ ${tc('SEL-4', 'Done', '')}
       const { app, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
       const { token: viewerToken } = await createAndLoginAs(app, adminToken, 'Viewer');
-      const payload = { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] };
-      const url = `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`;
+      const payload = { results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] };
+      const url = `/api/v1/runs/${seed.buildId}/results/batch`;
 
       const noAuthRes = await app.inject({ method: 'POST', url, payload });
       expect(noAuthRes.statusCode).toBe(401);
@@ -914,15 +883,15 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           runner_info: { name: 'a-client-supplied-lie' },
-          executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
+          results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
         },
       });
       expect(res.statusCode).toBe(201);
-      const execId = JSON.parse(res.payload).results[0].execution_id;
+      const execId = JSON.parse(res.payload).results[0].test_result_id;
       const execRow = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirst();
       expect(execRow?.tester_id).toBe(userId);
       expect(execRow?.tester_id).not.toBe('usr_ci_runner');
@@ -931,7 +900,7 @@ ${tc('SEL-4', 'Done', '')}
       const auditRow = await db
         .selectFrom('audit_logs')
         .selectAll()
-        .where('action', '=', 'BATCH_EXECUTION_RECORDED')
+        .where('action', '=', 'RESULTS_BATCH_RECORDED')
         .where('resource_id', '=', seed.buildId)
         .executeTakeFirst();
       expect(auditRow).toBeDefined();
@@ -946,12 +915,12 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${apiToken}` },
-        payload: { executions: [{ case_identifier: { external_id: 'SHOP-102' }, verdict: 'PASSED' }] },
+        payload: { results: [{ case_identifier: { external_id: 'SHOP-102' }, verdict: 'PASSED' }] },
       });
       expect(res.statusCode).toBe(201);
-      const execId = JSON.parse(res.payload).results[0].execution_id;
+      const execId = JSON.parse(res.payload).results[0].test_result_id;
       const execRow = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirst();
       expect(execRow?.tester_id).toBe(apiTokenId);
 
@@ -962,9 +931,9 @@ ${tc('SEL-4', 'Done', '')}
 
       const mismatchRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${otherPlan.id}/builds/${otherBuild.id}/executions/batch`,
+        url: `/api/v1/runs/${otherBuild.id}/results/batch`,
         headers: { authorization: `Bearer ${apiToken}` },
-        payload: { executions: [{ case_identifier: { external_id: 'anything' }, verdict: 'PASSED' }] },
+        payload: { results: [{ case_identifier: { external_id: 'anything' }, verdict: 'PASSED' }] },
       });
       expect(mismatchRes.statusCode).toBe(403);
       expect(JSON.parse(mismatchRes.payload).code).toBe('TOKEN_PROJECT_MISMATCH');
@@ -972,7 +941,7 @@ ${tc('SEL-4', 'Done', '')}
   });
 
   // 4. Locked Plan & Closed Build HTTP 422 RFC 7807 Problem Details Tests
-  describe('HTTP 422 Problem Details Standards (PLAN_LOCKED, BUILD_CLOSED, CASE_VERSION_LOCKED)', () => {
+  describe('HTTP 422 Problem Details Standards (PLAN_LOCKED, RUN_CLOSED, CASE_VERSION_LOCKED)', () => {
     it('returns HTTP 422 PLAN_LOCKED problem details when test plan is locked', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
@@ -982,10 +951,10 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
-          executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
+          results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
         },
       });
 
@@ -998,7 +967,7 @@ ${tc('SEL-4', 'Done', '')}
       expect(err.detail).toContain('locked');
     });
 
-    it('returns HTTP 422 BUILD_CLOSED problem details when build is closed', async () => {
+    it('returns HTTP 422 RUN_CLOSED problem details when build is closed', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
 
@@ -1007,20 +976,20 @@ ${tc('SEL-4', 'Done', '')}
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
-          executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
+          results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }],
         },
       });
 
       expect(res.statusCode).toBe(422);
       expect(res.headers['content-type']).toContain('application/problem+json');
       const err = JSON.parse(res.body);
-      expect(err.code).toBe('BUILD_CLOSED');
+      expect(err.code).toBe('RUN_CLOSED');
       expect(err.status).toBe(422);
-      expect(err.type).toBe('https://api.testify.dev/errors/BUILD_CLOSED');
-      expect(err.invalid_params[0].name).toBe('build_id');
+      expect(err.type).toBe('https://api.testify.dev/errors/RUN_CLOSED');
+      expect(err.invalid_params[0].name).toBe('test_run_id');
     });
 
     it('returns HTTP 422 CASE_VERSION_LOCKED when editing an approved case version', async () => {
@@ -1038,8 +1007,8 @@ ${tc('SEL-4', 'Done', '')}
       expect(ver).toBeDefined();
 
       const res = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/test-case-versions/${ver!.id}`,
+        method: 'PATCH',
+        url: `/api/v1/versions/${ver!.id}`,
         headers: { authorization: `Bearer ${token}` },
         payload: { summary: 'Attempting to edit approved version' },
       });

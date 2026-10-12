@@ -51,7 +51,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     const attempts = [
       { method: 'POST', url: `/api/v1/projects/${seed.projectId}/api-tokens`, payload: { name: 'X', capabilities: ['SPEC_VIEW'] } },
       { method: 'GET', url: `/api/v1/projects/${seed.projectId}/api-tokens` },
-      { method: 'DELETE', url: `/api/v1/projects/${seed.projectId}/api-tokens/nonexistent` },
+      { method: 'DELETE', url: `/api/v1/api-tokens/nonexistent` },
     ] as const;
 
     for (const attempt of attempts) {
@@ -170,7 +170,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     expect(body.issuer_capability_ceiling).toContain('EXECUTE_RUN');
   });
 
-  it('DELETE revokes (204), the token shows as revoked (not removed) on the next GET, and a wrong-project DELETE 404s', async () => {
+  it('DELETE revokes (204), the token shows as revoked (not removed) on the next GET, and an unknown token 404s', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
@@ -182,16 +182,16 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
     });
     const tokenId = JSON.parse(createRes.payload).token.id;
 
-    const otherProjectRes = await app.inject({
+    const unknownRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/nonexistent-project/api-tokens/${tokenId}`,
+      url: '/api/v1/api-tokens/00000000-0000-0000-0000-000000000000',
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(otherProjectRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
 
     const deleteRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/api-tokens/${tokenId}`,
+      url: `/api/v1/api-tokens/${tokenId}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(deleteRes.statusCode).toBe(204);
@@ -222,7 +222,7 @@ describe('Machine API tokens: definition CRUD, capability ceiling, and audit tra
 
     await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/api-tokens/${tokenId}`,
+      url: `/api/v1/api-tokens/${tokenId}`,
       headers: { authorization: `Bearer ${token}` },
     });
 

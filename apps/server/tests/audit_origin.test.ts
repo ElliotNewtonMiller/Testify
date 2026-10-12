@@ -34,21 +34,21 @@ describe('Audit log origin', () => {
     // A spread of audited actions across different routes and helpers.
     const project = body(await send('POST', '/api/v1/projects', { name: 'Audited', prefix: 'AUD' }, token)).project;
     const plan = body(await send('POST', `/api/v1/projects/${project.id}/plans`, { name: 'P' }, token)).plan;
-    expect((await send('POST', `/api/v1/projects/${project.id}/plans/${plan.id}/builds`, { name: 'R' }, token)).statusCode).toBe(201);
+    expect((await send('POST', `/api/v1/plans/${plan.id}/runs`, { name: 'R' }, token)).statusCode).toBe(201);
     expect((await send('POST', '/api/v1/admin/custom-fields', { entity_type: 'TestCase', name: 'aud_f', field_label: 'F', field_type: 'TEXT' }, token)).statusCode).toBe(201);
-    expect((await send('POST', `/api/v1/projects/${seed.projectId}/test-cases`, { test_suite_id: seed.suiteId, title: 'Audited case' }, token)).statusCode).toBe(201);
+    expect((await send('POST', `/api/v1/projects/${seed.projectId}/cases`, { test_suite_id: seed.suiteId, title: 'Audited case' }, token)).statusCode).toBe(201);
     expect((await send('POST', `/api/v1/projects/${seed.projectId}/exports/definitions`, { format: 'JSON', scope: { type: 'PROJECT' } }, token)).statusCode).toBe(200);
-    const queue = body(await send('GET', `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, undefined, token)).cases;
-    expect((await send('POST', '/api/v1/executions', { build_id: seed.buildId, test_plan_case_id: queue[0].plan_case_id, verdict: 'PASSED' }, token)).statusCode).toBe(201);
+    const queue = body(await send('GET', `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`, undefined, token)).cases;
+    expect((await send('POST', `/api/v1/runs/${seed.buildId}/results`, { test_plan_case_id: queue[0].test_plan_case_id, verdict: 'PASSED' }, token)).statusCode).toBe(201);
     expect(
-      (await send('POST', `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`, { executions: [{ case_identifier: { external_id: queue[1].external_id }, verdict: 'FAILED' }] }, token)).statusCode
+      (await send('POST', `/api/v1/runs/${seed.buildId}/results/batch`, { results: [{ case_identifier: { external_id: queue[1].external_id }, verdict: 'FAILED' }] }, token)).statusCode
     ).toBe(201);
     for (let i = 0; i < 20; i++) await send('POST', '/api/v1/auth/login', { username: 'admin', password: 'wrong' }); // locks the account
 
     const rows = (await db.selectFrom('audit_logs').select(['id', 'action', 'ip_address', 'user_agent']).execute()).filter((r: any) => !before.has(r.id));
     const actions = rows.map((r: any) => r.action);
     // (Creating plans and runs isn't audited at all yet.)
-    for (const a of ['PROJECT_CREATED', 'CUSTOM_FIELD_DEFINITION_CREATED', 'CASE_CREATED', 'DATA_EXPORTED', 'EXECUTION_RECORDED', 'BATCH_EXECUTION_RECORDED', 'ACCOUNT_LOCKED']) {
+    for (const a of ['PROJECT_CREATED', 'CUSTOM_FIELD_DEFINITION_CREATED', 'CASE_CREATED', 'DATA_EXPORTED', 'RESULT_RECORDED', 'RESULTS_BATCH_RECORDED', 'ACCOUNT_LOCKED']) {
       expect(actions).toContain(a);
     }
     for (const row of rows) {

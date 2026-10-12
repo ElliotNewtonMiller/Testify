@@ -41,13 +41,13 @@ const CASES = [
 const specCase = (c: (typeof CASES)[number]) => ({
   id: `cas-${c.n}`, external_id: `SMK-${c.n}`, title: c.title, priority: 'MEDIUM', execution_type: 'MANUAL', test_suite_id: c.suite,
   latest_version: { id: `ver-${c.n}`, version_number: 1, status: 'APPROVED', summary: `Summary ${c.n}`, preconditions: null, updated_at: T },
-  in_plan: true, plan_case_id: `tpc-${c.n}`, plan_version_id: `ver-${c.n}`, is_pinned_version_stale: false, linkable: true,
+  in_plan: true, test_plan_case_id: `tpc-${c.n}`, pinned_test_case_version_id: `ver-${c.n}`, is_pinned_version_stale: false, linkable: true,
 });
 const queueCase = (c: (typeof CASES)[number]) => ({
-  plan_case_id: `tpc-${c.n}`, position: c.n, case_id: `cas-${c.n}`, test_suite_id: c.suite, external_id: `SMK-${c.n}`,
+  test_plan_case_id: `tpc-${c.n}`, position: c.n, test_case_id: `cas-${c.n}`, test_suite_id: c.suite, external_id: `SMK-${c.n}`,
   title: c.title, priority: 'MEDIUM', execution_type: 'MANUAL', version_id: `ver-${c.n}`, version_number: 1,
   version_status: 'APPROVED', summary: `Summary ${c.n}`, preconditions: null, steps: steps(c.n),
-  latest_verdict: 'UNTESTED', latest_execution_id: null, latest_notes: null, removed_from_plan: false,
+  latest_verdict: 'UNTESTED', latest_test_result_id: null, latest_notes: null, removed_from_plan: false,
 });
 const latestVersion = (n: number) => {
   const c = CASES[n - 1];
@@ -79,18 +79,18 @@ function installApi(opts: { signedIn: ReturnType<typeof user> | null; executionS
     if (p === '/api/v1/projects' && method === 'GET')
       return json({ projects: [{ ...project, permissions: opts.projectPermissions ?? opts.signedIn?.permissions ?? [] }] });
     if (p === '/api/v1/projects/prj-1/plans') return json({ plans: [plan] });
-    if (p === '/api/v1/projects/prj-1/plans/pln-1/builds') return json({ builds: [run] });
+    if (p === '/api/v1/plans/pln-1/runs') return json({ runs: [run] });
     if (p === '/api/v1/projects/prj-1/spec-tree')
       return json({ project: { id: 'prj-1', name: project.name, prefix: 'SMK', settings: {} }, suites: [suite('ste-login', 'Login', 2), suite('ste-pay', 'Payments', 1)], cases: CASES.map(specCase) });
     if (p === '/api/v1/projects/prj-1/case-search/fields') return json({ fields: [] });
-    if (p === '/api/v1/test-plans/pln-1/cases') return json({ plan, builds: [run], cases: CASES.map(queueCase) });
-    const latest = p.match(/^\/api\/v1\/test-cases\/cas-(\d+)\/latest-version$/);
+    if (p === '/api/v1/plans/pln-1/cases') return json({ plan, runs: [run], cases: CASES.map(queueCase) });
+    const latest = p.match(/^\/api\/v1\/cases\/cas-(\d+)\/versions\/latest$/);
     if (latest) return json(latestVersion(Number(latest[1])));
-    if (/custom-field-values$/.test(p)) return json({ values: [] });
-    if (p === '/api/v1/executions' && method === 'POST') {
+    if (/custom-fields$/.test(p)) return json({ values: [] });
+    if (p === '/api/v1/runs/bld-1/results' && method === 'POST') {
       const status = opts.executionStatus ?? 201;
       return status === 201
-        ? json({ id: 'exe-1', verdict: body.verdict, status: 'COMPLETED', created_at: T, build_status: 'OPEN' }, 201)
+        ? json({ result: { id: 'exe-1', verdict: body.verdict, status: 'COMPLETED', created_at: T }, run_status: 'OPEN' }, 201)
         : json({ status, code: 'FORBIDDEN', detail: 'Forbidden: Insufficient privileges' }, status);
     }
     return json({ status: 404, code: 'NOT_FOUND', detail: `no fixture for ${method} ${p}` }, 404);
@@ -143,21 +143,22 @@ describe('App smoke tests', () => {
     await renderSignedIn();
     fireEvent.click(await screen.findByText('SMK-3'));
     await waitFor(() => expect(screen.getByDisplayValue('Pay by card')).toBeTruthy());
-    await waitFor(() => expect(calls.some((c) => c.path === '/api/v1/test-cases/cas-3/latest-version')).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/v1/cases/cas-3/versions/latest')).toBe(true));
     expect(await screen.findByText(/Open screen 3/)).toBeTruthy();
   });
 
   it('Execute mode shows the queue, and Pass records a result against the selected run', async () => {
     await renderSignedIn();
     fireEvent.click(screen.getByRole('button', { name: /^Execute$/ }));
-    await waitFor(() => expect(calls.some((c) => c.path === '/api/v1/test-plans/pln-1/cases')).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/v1/plans/pln-1/cases')).toBe(true));
     // (The active case's title shows twice: in the queue and in the detail pane.)
     for (const c of CASES) expect((await screen.findAllByText(c.title)).length).toBeGreaterThan(0);
 
     fireEvent.click(await screen.findByRole('button', { name: /^Pass$/ }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/v1/executions')).toBe(true));
-    const post = calls.find((c) => c.method === 'POST' && c.path === '/api/v1/executions')!;
-    expect(post.body).toMatchObject({ build_id: 'bld-1', test_plan_case_id: 'tpc-1', verdict: 'PASSED' });
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/v1/runs/bld-1/results')).toBe(true));
+    const post = calls.find((c) => c.method === 'POST' && c.path === '/api/v1/runs/bld-1/results')!;
+    expect(post.body).toMatchObject({ test_plan_case_id: 'tpc-1', verdict: 'PASSED' });
+    expect(post.body).not.toHaveProperty('build_id');
   });
 
   it("a Viewer doesn't get editing or admin controls", async () => {

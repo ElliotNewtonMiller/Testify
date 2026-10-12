@@ -4,6 +4,7 @@ import { UserProfile } from "./AuthModal";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage as apiErrorMessage } from "../api/errors";
+import { api } from "../api/routes";
 /** The built-in role that grants nothing (see packages/core's DEFAULT_ROLE_PERMISSIONS). */
 const NO_ACCESS_ROLE = "No Access";
 
@@ -311,7 +312,7 @@ export function AdminPanelModal({
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch("/api/v1/admin/users", {
+      const res = await fetch(api.admin.users, {
         headers: authHeaders(),
       });
       const data = await res.json();
@@ -335,7 +336,7 @@ export function AdminPanelModal({
 
   const fetchAuditLogs = async () => {
     try {
-      const res = await fetch("/api/v1/admin/audit-logs", {
+      const res = await fetch(api.admin.auditLogs, {
         headers: authHeaders(),
       });
       const data = await res.json();
@@ -349,7 +350,7 @@ export function AdminPanelModal({
 
   const fetchRoles = async () => {
     try {
-      const res = await fetch("/api/v1/admin/roles", { headers: authHeaders() });
+      const res = await fetch(api.admin.roles, { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setRoles(data.roles || []);
@@ -361,7 +362,7 @@ export function AdminPanelModal({
 
   const fetchPermissionRegistry = async () => {
     try {
-      const res = await fetch("/api/v1/admin/permissions", { headers: authHeaders() });
+      const res = await fetch(api.admin.permissions, { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setPermissionRegistry(data.permissions || []);
@@ -373,7 +374,7 @@ export function AdminPanelModal({
 
   const fetchCustomFields = async () => {
     try {
-      const res = await fetch("/api/v1/admin/custom-fields", { headers: authHeaders() });
+      const res = await fetch(api.admin.customFields, { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
         setCustomFields(data.definitions || []);
@@ -385,7 +386,7 @@ export function AdminPanelModal({
 
   const fetchApiTokens = async (projectId: string) => {
     try {
-      const res = await fetch(`/api/v1/projects/${projectId}/api-tokens`, {
+      const res = await fetch(api.projectApiTokens(projectId), {
         headers: authHeaders(),
       });
       const data = await res.json();
@@ -403,7 +404,7 @@ export function AdminPanelModal({
     setErrorMessage(null);
     setIsCreatingToken(true);
     try {
-      const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens`, {
+      const res = await fetch(api.projectApiTokens(tokenProjectScope), {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({
@@ -435,7 +436,7 @@ export function AdminPanelModal({
   const handleRevokeToken = async (tokenId: string) => {
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/v1/projects/${tokenProjectScope}/api-tokens/${tokenId}`, {
+      const res = await fetch(api.apiToken(tokenId), {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -467,8 +468,7 @@ export function AdminPanelModal({
   const fetchOverrides = async (userId: string, projectId: string | null) => {
     setIsLoadingOverrides(true);
     try {
-      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-      const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides${qs}`, {
+      const res = await fetch(api.admin.userOverrides(userId, projectId), {
         headers: authHeaders(),
       });
       const data = await res.json();
@@ -491,7 +491,7 @@ export function AdminPanelModal({
     setErrorMessage(null);
 
     try {
-      const res = await fetch("/api/v1/admin/users", {
+      const res = await fetch(api.admin.users, {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({
@@ -523,8 +523,8 @@ export function AdminPanelModal({
     const nextStatus = forceStatus ?? (currentStatus === "ACTIVE" ? "DISABLED" : "ACTIVE");
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/v1/admin/users/${userId}/status`, {
-        method: "PUT",
+      const res = await fetch(api.admin.user(userId), {
+        method: "PATCH",
         headers: jsonHeaders(),
         body: JSON.stringify({ status: nextStatus }),
       });
@@ -546,7 +546,7 @@ export function AdminPanelModal({
     setErrorMessage(null);
     setIsResetting(true);
     try {
-      const res = await fetch(`/api/v1/admin/users/${resetPrompt.id}/reset-password`, {
+      const res = await fetch(api.admin.userResetPassword(resetPrompt.id), {
         method: "POST",
         headers: jsonHeaders(),
         body: "{}",
@@ -558,7 +558,7 @@ export function AdminPanelModal({
         setResetPrompt(null);
         return;
       }
-      setResetResult({ username: data.username, password: data.temporary_password });
+      setResetResult({ username: data.user.username, password: data.temporary_password });
       setCopyButtonLabel("Copy");
       setResetPrompt(null);
       fetchUsers();
@@ -606,8 +606,8 @@ export function AdminPanelModal({
     setSuccessMessage(null);
     setIsSavingPrivileges(true);
     try {
-      const res = await fetch(`/api/v1/admin/users/${userId}/roles`, {
-        method: "PUT",
+      const res = await fetch(api.admin.userRoles(userId), {
+        method: "PATCH",
         headers: jsonHeaders(),
         body: JSON.stringify(
           "global_role" in change ? { global_role: change.global_role } : { project_roles: [change] },
@@ -660,7 +660,7 @@ export function AdminPanelModal({
         ([permission_key, is_granted]) => ({ permission_key, is_granted }),
       );
       try {
-        const res = await fetch(`/api/v1/admin/users/${userId}/permission-overrides`, {
+        const res = await fetch(api.admin.userOverrides(userId), {
           method: "PUT",
           headers: jsonHeaders(),
           body: JSON.stringify({ project_id: scope, overrides }),
@@ -726,9 +726,9 @@ export function AdminPanelModal({
 
     try {
       const res = await fetch(
-        isNewTemplate ? "/api/v1/admin/roles" : `/api/v1/admin/roles/${selectedRoleId}`,
+        isNewTemplate ? api.admin.roles : api.admin.role(selectedRoleId!),
         {
-          method: isNewTemplate ? "POST" : "PUT",
+          method: isNewTemplate ? "POST" : "PATCH",
           headers: jsonHeaders(),
           body: JSON.stringify(payload),
         },
@@ -754,7 +754,7 @@ export function AdminPanelModal({
   const handleDeleteTemplate = async (roleId: string) => {
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/v1/admin/roles/${roleId}`, {
+      const res = await fetch(api.admin.role(roleId), {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -884,9 +884,9 @@ export function AdminPanelModal({
 
     try {
       const res = await fetch(
-        isNewField ? "/api/v1/admin/custom-fields" : `/api/v1/admin/custom-fields/${selectedFieldId}`,
+        isNewField ? api.admin.customFields : api.admin.customField(selectedFieldId!),
         {
-          method: isNewField ? "POST" : "PUT",
+          method: isNewField ? "POST" : "PATCH",
           headers: jsonHeaders(),
           body: JSON.stringify(
             isNewField ? { entity_type: fieldEntityType, name: fieldName, field_type: fieldType, ...basePayload } : basePayload,
@@ -929,7 +929,7 @@ export function AdminPanelModal({
   const handleDeleteFieldClick = async (field: CustomFieldDefinition) => {
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/v1/admin/custom-fields/${field.id}`, {
+      const res = await fetch(api.admin.customField(field.id), {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -964,7 +964,7 @@ export function AdminPanelModal({
     if (!deleteFieldPrompt) return;
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/v1/admin/custom-fields/${deleteFieldPrompt.id}?force=true`, {
+      const res = await fetch(api.admin.customField(deleteFieldPrompt.id, true), {
         method: "DELETE",
         headers: authHeaders(),
       });

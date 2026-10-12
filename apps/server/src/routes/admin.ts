@@ -150,8 +150,8 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     }
   });
 
-  // PUT /api/v1/admin/users/:userId/roles - Admin updates user privileges (Gated by USER_MANAGE)
-  app.put('/api/v1/admin/users/:userId/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  // PATCH /api/v1/admin/users/:userId/roles - Admin updates user privileges (only what the body names) (Gated by USER_MANAGE)
+  app.patch('/api/v1/admin/users/:userId/roles', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { global_role, project_roles } = (request.body as any) || {};
@@ -222,8 +222,8 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     });
   });
 
-  // PUT /api/v1/admin/users/:userId/status - Toggle user status (ACTIVE / DISABLED)
-  app.put('/api/v1/admin/users/:userId/status', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  // PATCH /api/v1/admin/users/:userId - Change a user's status (ACTIVE / DISABLED)
+  app.patch('/api/v1/admin/users/:userId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { userId } = request.params as { userId: string };
     const { status } = (request.body as { status: 'ACTIVE' | 'DISABLED' }) || {};
@@ -274,7 +274,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       })
       .execute();
 
-    return reply.status(200).send({ id: updatedUser.id, status: updatedUser.status });
+    return reply.status(200).send({ user: { id: updatedUser.id, status: updatedUser.status } });
   });
 
   // POST /api/v1/admin/users/:userId/reset-password -- for someone who forgot theirs. Sets a
@@ -350,9 +350,7 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
       .execute();
 
     return reply.status(200).send({
-      id: userId,
-      username: target.username,
-      must_change_password: true,
+      user: { id: userId, username: target.username, must_change_password: true },
       sessions_ended: sessionsEnded,
       ...(generated ? { temporary_password: temporaryPassword } : {}),
     });
@@ -453,8 +451,8 @@ export async function registerAdminRoutes(app: FastifyInstance, db: Kysely<Datab
     }
   });
 
-  // PUT /api/v1/admin/roles/:roleId - Edit a template role's name/description/permission bundle
-  app.put('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
+  // PATCH /api/v1/admin/roles/:roleId - Edit a template role's name/description/permission bundle
+  app.patch('/api/v1/admin/roles/:roleId', { preHandler: requirePermission('USER_MANAGE', db, jwtSecret) }, async (request, reply) => {
     const activeUser = request.user!;
     const { roleId } = request.params as { roleId: string };
     const { name, description, permission_keys } = (request.body as any) || {};

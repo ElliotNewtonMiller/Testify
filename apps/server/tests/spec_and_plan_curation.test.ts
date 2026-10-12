@@ -75,7 +75,7 @@ describe('Specification / Plan Curation Routes', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/projects/${seed.projectId}/spec-tree?plan_id=${seed.planId}`,
+      url: `/api/v1/projects/${seed.projectId}/spec-tree?test_plan_id=${seed.planId}`,
       headers: { authorization: `Bearer ${token}` },
     });
 
@@ -126,16 +126,16 @@ describe('Specification / Plan Curation Routes', () => {
 
     const addRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_case_id: newCase.id },
     });
     expect(addRes.statusCode).toBe(201);
-    expect(JSON.parse(addRes.payload).test_case_id).toBe(newCase.id);
+    expect(JSON.parse(addRes.payload).plan_case.test_case_id).toBe(newCase.id);
 
     const reAddRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_case_id: newCase.id },
     });
@@ -143,14 +143,14 @@ describe('Specification / Plan Curation Routes', () => {
 
     const removeRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/test-plans/${seed.planId}/cases/${newCase.id}`,
+      url: `/api/v1/plans/${seed.planId}/cases/${newCase.id}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(removeRes.statusCode).toBe(204);
 
     const removeAgainRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/test-plans/${seed.planId}/cases/${newCase.id}`,
+      url: `/api/v1/plans/${seed.planId}/cases/${newCase.id}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(removeAgainRes.statusCode).toBe(404);
@@ -177,7 +177,7 @@ describe('Specification / Plan Curation Routes', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_case_id: draftCase.id },
     });
@@ -186,14 +186,14 @@ describe('Specification / Plan Curation Routes', () => {
     expect(JSON.parse(res.payload).code).toBe('CASE_VERSION_NOT_APPROVED');
   });
 
-  it('PLAN_MANAGE is required to add/remove/cascade -- a Viewer gets 403, but can still read spec-tree', async () => {
+  it('PLAN_MANAGE is required to add/remove cases and whole suites -- a Viewer gets 403, but can still read spec-tree', async () => {
     const { app, seed } = serverInstance;
     const { token: adminToken } = await loginAsAdmin(app);
     const viewerToken = await createAndLoginViewer(app, adminToken);
 
     const addRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${viewerToken}` },
       payload: { test_case_id: seed.caseIds[0] },
     });
@@ -201,16 +201,15 @@ describe('Specification / Plan Curation Routes', () => {
 
     const removeRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/test-plans/${seed.planId}/cases/${seed.caseIds[0]}`,
+      url: `/api/v1/plans/${seed.planId}/cases/${seed.caseIds[0]}`,
       headers: { authorization: `Bearer ${viewerToken}` },
     });
     expect(removeRes.statusCode).toBe(403);
 
     const cascadeRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/suites/${seed.suiteId}/cascade`,
+      url: `/api/v1/plans/${seed.planId}/suites/${seed.suiteId}/cases`,
       headers: { authorization: `Bearer ${viewerToken}` },
-      payload: { action: 'ADD' },
     });
     expect(cascadeRes.statusCode).toBe(403);
 
@@ -222,7 +221,7 @@ describe('Specification / Plan Curation Routes', () => {
     expect(specRes.statusCode).toBe(200);
   });
 
-  it('a LOCKED plan blocks add, remove, and cascade with 422 PLAN_LOCKED', async () => {
+  it('a LOCKED plan blocks adding and removing cases and whole suites with 422 PLAN_LOCKED', async () => {
     const { app, db, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
@@ -231,7 +230,7 @@ describe('Specification / Plan Curation Routes', () => {
 
     const addRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_case_id: seed.caseIds[0] },
     });
@@ -240,21 +239,20 @@ describe('Specification / Plan Curation Routes', () => {
 
     const removeRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/test-plans/${seed.planId}/cases/${seed.caseIds[0]}`,
+      url: `/api/v1/plans/${seed.planId}/cases/${seed.caseIds[0]}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(removeRes.statusCode).toBe(422);
 
     const cascadeRes = await app.inject({
-      method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/suites/${seed.suiteId}/cascade`,
+      method: 'DELETE',
+      url: `/api/v1/plans/${seed.planId}/suites/${seed.suiteId}/cases`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { action: 'REMOVE' },
     });
     expect(cascadeRes.statusCode).toBe(422);
   });
 
-  it('cascade ADD reports partial success when some cases in the subtree are not Approved', async () => {
+  it('adding a whole suite reports partial success when some cases in the subtree are not Approved', async () => {
     const { app, db, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
@@ -284,9 +282,8 @@ describe('Specification / Plan Curation Routes', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${plan.id}/suites/${suite.id}/cascade`,
+      url: `/api/v1/plans/${plan.id}/suites/${suite.id}/cases`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { action: 'ADD' },
     });
 
     expect(res.statusCode).toBe(200);
@@ -306,22 +303,22 @@ describe('Specification / Plan Curation Routes', () => {
     const { token } = await loginAsAdmin(app);
     const auth = { authorization: `Bearer ${token}` };
     const queue = async (buildId: string) =>
-      JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${buildId}`, headers: auth })).payload).cases;
+      JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${buildId}`, headers: auth })).payload).cases;
 
     const caseId = seed.caseIds[0];
-    const linkId = (await queue(seed.buildId)).find((c: any) => c.case_id === caseId).plan_case_id;
-    const execRes = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: linkId, verdict: 'FAILED' } });
+    const linkId = (await queue(seed.buildId)).find((c: any) => c.test_case_id === caseId).test_plan_case_id;
+    const execRes = await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: auth, payload: { test_plan_case_id: linkId, verdict: 'FAILED' } });
     expect(execRes.statusCode).toBe(201);
 
     // Without force: nothing changes, and the counts come back for a confirmation.
-    const ask = await app.inject({ method: 'DELETE', url: `/api/v1/test-plans/${seed.planId}/cases/${caseId}`, headers: auth });
+    const ask = await app.inject({ method: 'DELETE', url: `/api/v1/plans/${seed.planId}/cases/${caseId}`, headers: auth });
     expect(ask.statusCode).toBe(409);
     const askBody = JSON.parse(ask.payload);
     expect(askBody.code).toBe('CASE_HAS_RESULTS');
     expect(askBody.detail).toContain('has 1 result in 1 run');
-    expect((await queue(seed.buildId)).some((c: any) => c.case_id === caseId)).toBe(true);
+    expect((await queue(seed.buildId)).some((c: any) => c.test_case_id === caseId)).toBe(true);
 
-    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/test-plans/${seed.planId}/cases/${caseId}?force=true`, headers: auth });
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/plans/${seed.planId}/cases/${caseId}?force=true`, headers: auth });
     expect(removed.statusCode).toBe(204);
     const link = await db.selectFrom('test_plan_cases').selectAll().where('id', '=', linkId).executeTakeFirstOrThrow();
     expect(link.removed_at).toBeTruthy();
@@ -331,93 +328,92 @@ describe('Specification / Plan Curation Routes', () => {
     // Gone from the plan (Spec mode's In Plan)...
     expect((await new TestPlanRepository(db).getPinnedCases(seed.planId)).some((pc) => pc.test_case_id === caseId)).toBe(false);
     // ...still in the old run with its result, flagged; recording more is refused.
-    const old = (await queue(seed.buildId)).find((c: any) => c.case_id === caseId);
+    const old = (await queue(seed.buildId)).find((c: any) => c.test_case_id === caseId);
     expect(old).toMatchObject({ removed_from_plan: true, latest_verdict: 'FAILED' });
-    const again = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: linkId, verdict: 'PASSED' } });
+    const again = await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: auth, payload: { test_plan_case_id: linkId, verdict: 'PASSED' } });
     expect(again.statusCode).toBe(422);
     expect(JSON.parse(again.payload).code).toBe('CASE_REMOVED_FROM_PLAN');
     const extId = (await db.selectFrom('test_cases').select('external_id').where('id', '=', caseId).executeTakeFirstOrThrow()).external_id;
     const batch = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+      url: `/api/v1/runs/${seed.buildId}/results/batch`,
       headers: auth,
-      payload: { executions: [{ case_identifier: { external_id: extId }, verdict: 'PASSED' }] },
+      payload: { results: [{ case_identifier: { external_id: extId }, verdict: 'PASSED' }] },
     });
-    expect(JSON.parse(batch.payload).results[0]).toMatchObject({ status: 422, error: expect.stringContaining('removed from this test plan') });
+    expect(JSON.parse(batch.payload).results[0]).toMatchObject({ status: 422, detail: expect.stringContaining('removed from this test plan') });
     expect((await new TestPlanRepository(db).getPinnedCases(seed.planId)).some((pc) => pc.test_case_id === caseId)).toBe(false); // not re-linked
 
     // The old run's report still counts it; a new run doesn't contain it.
     const summary = JSON.parse(
-      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/run_summary`, headers: auth, payload: { run_id: seed.buildId } })).payload
+      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/run_summary`, headers: auth, payload: { test_run_id: seed.buildId } })).payload
     );
     expect(summary.summary).toMatchObject({ total: seed.caseIds.length, failed: 1 });
-    const newRun = await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`, headers: auth, payload: { name: 'After removal' } });
-    const newRunId = JSON.parse(newRun.payload).build.id;
+    const newRun = await app.inject({ method: 'POST', url: `/api/v1/plans/${seed.planId}/runs`, headers: auth, payload: { name: 'After removal' } });
+    const newRunId = JSON.parse(newRun.payload).run.id;
     const newQueue = await queue(newRunId);
     expect(newQueue).toHaveLength(seed.caseIds.length - 1);
-    expect(newQueue.some((c: any) => c.case_id === caseId)).toBe(false);
+    expect(newQueue.some((c: any) => c.test_case_id === caseId)).toBe(false);
 
     // Adding it back creates a fresh link that new runs pick up; the old run keeps the old one.
-    const readd = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${seed.planId}/cases`, headers: auth, payload: { test_case_id: caseId } });
+    const readd = await app.inject({ method: 'POST', url: `/api/v1/plans/${seed.planId}/cases`, headers: auth, payload: { test_case_id: caseId } });
     expect(readd.statusCode).toBe(201);
-    const fresh = (await queue(newRunId)).find((c: any) => c.case_id === caseId);
+    const fresh = (await queue(newRunId)).find((c: any) => c.test_case_id === caseId);
     expect(fresh).toMatchObject({ removed_from_plan: false, latest_verdict: 'UNTESTED' });
-    expect(fresh.plan_case_id).not.toBe(linkId);
+    expect(fresh.test_plan_case_id).not.toBe(linkId);
     // The old run shows its earlier result once, and -- now that the case is back in the plan --
     // accepts new results, recorded against the fresh link.
-    const oldAgain = (await queue(seed.buildId)).filter((c: any) => c.case_id === caseId);
+    const oldAgain = (await queue(seed.buildId)).filter((c: any) => c.test_case_id === caseId);
     expect(oldAgain).toHaveLength(1);
-    expect(oldAgain[0]).toMatchObject({ plan_case_id: fresh.plan_case_id, removed_from_plan: false, latest_verdict: 'FAILED' });
-    const rerecord = await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: fresh.plan_case_id, verdict: 'PASSED' } });
+    expect(oldAgain[0]).toMatchObject({ test_plan_case_id: fresh.test_plan_case_id, removed_from_plan: false, latest_verdict: 'FAILED' });
+    const rerecord = await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: auth, payload: { test_plan_case_id: fresh.test_plan_case_id, verdict: 'PASSED' } });
     expect(rerecord.statusCode).toBe(201);
-    expect((await queue(seed.buildId)).find((c: any) => c.case_id === caseId)).toMatchObject({ latest_verdict: 'PASSED', removed_from_plan: false });
+    expect((await queue(seed.buildId)).find((c: any) => c.test_case_id === caseId)).toMatchObject({ latest_verdict: 'PASSED', removed_from_plan: false });
     const history = JSON.parse(
-      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/case_history`, headers: auth, payload: { case_id: caseId } })).payload
+      (await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/reports/case_history`, headers: auth, payload: { test_case_id: caseId } })).payload
     );
-    expect(history.executions.map((e: any) => e.verdict)).toEqual(['PASSED', 'FAILED']); // both links' results
+    expect(history.results.map((e: any) => e.verdict)).toEqual(['PASSED', 'FAILED']); // both links' results
   });
 
-  it('suite cascade remove asks to confirm when cases have results, then retires those and unlinks the rest', async () => {
+  it('removing a whole suite asks to confirm when cases have results, then retires those and unlinks the rest', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
     const auth = { authorization: `Bearer ${token}` };
-    const cases = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers: auth })).payload).cases;
-    await app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth, payload: { build_id: seed.buildId, test_plan_case_id: cases[0].plan_case_id, verdict: 'PASSED' } });
+    const cases = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`, headers: auth })).payload).cases;
+    await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: auth, payload: { test_plan_case_id: cases[0].test_plan_case_id, verdict: 'PASSED' } });
 
-    const url = `/api/v1/test-plans/${seed.planId}/suites/${seed.suiteId}/cascade`;
-    const ask = await app.inject({ method: 'POST', url, headers: auth, payload: { action: 'REMOVE' } });
+    const url = `/api/v1/plans/${seed.planId}/suites/${seed.suiteId}/cases`;
+    const ask = await app.inject({ method: 'DELETE', url, headers: auth });
     expect(ask.statusCode).toBe(409);
     expect(JSON.parse(ask.payload).detail).toMatch(/^1 case in suite .* has 1 result in 1 run\. Remove it/);
 
-    const done = await app.inject({ method: 'POST', url, headers: auth, payload: { action: 'REMOVE', force: true } });
+    const done = await app.inject({ method: 'DELETE', url: `${url}?force=true`, headers: auth });
     expect(done.statusCode).toBe(200);
     expect(JSON.parse(done.payload)).toMatchObject({ removed: seed.caseIds.length - 1, retired: 1 });
-    const after = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers: auth })).payload).cases;
+    const after = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`, headers: auth })).payload).cases;
     expect(after).toHaveLength(1);
     expect(after[0]).toMatchObject({ removed_from_plan: true, latest_verdict: 'PASSED' });
   });
 
-  it('GET /api/v1/test-plans/:planId/cases surfaces the latest execution notes, not just the verdict', async () => {
+  it('GET /api/v1/plans/:planId/cases surfaces the latest execution notes, not just the verdict', async () => {
     const { app, seed } = serverInstance;
     const { token } = await loginAsAdmin(app);
 
     const beforeRes = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
     });
     const beforeCase = JSON.parse(beforeRes.payload).cases.find(
-      (c: any) => c.case_id === seed.caseIds[0]
+      (c: any) => c.test_case_id === seed.caseIds[0]
     );
     expect(beforeCase.latest_notes).toBeNull();
 
     await app.inject({
       method: 'POST',
-      url: '/api/v1/executions',
+      url: `/api/v1/runs/${seed.buildId}/results`,
       headers: { authorization: `Bearer ${token}` },
       payload: {
-        build_id: seed.buildId,
-        test_plan_case_id: beforeCase.plan_case_id,
+        test_plan_case_id: beforeCase.test_plan_case_id,
         verdict: 'FAILED',
         notes: 'Timed out waiting for the auth callback',
       },
@@ -425,11 +421,11 @@ describe('Specification / Plan Curation Routes', () => {
 
     const afterRes = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
     });
     const afterCase = JSON.parse(afterRes.payload).cases.find(
-      (c: any) => c.case_id === seed.caseIds[0]
+      (c: any) => c.test_case_id === seed.caseIds[0]
     );
     expect(afterCase.latest_verdict).toBe('FAILED');
     expect(afterCase.latest_notes).toBe('Timed out waiting for the auth callback');
@@ -458,7 +454,7 @@ describe('Specification / Plan Curation Routes', () => {
     expect(plans.some((p: any) => p.id === seed.planId)).toBe(true);
   });
 
-  describe('Test Plan CRUD (POST/PUT/DELETE .../projects/:projectId/plans)', () => {
+  describe('Test Plan CRUD (POST /projects/:projectId/plans, PATCH/DELETE /plans/:planId)', () => {
     it('requires PLAN_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
       const { app, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
@@ -473,8 +469,8 @@ describe('Specification / Plan Curation Routes', () => {
       expect(createRes.statusCode).toBe(403);
 
       const updateRes = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        method: 'PATCH',
+        url: `/api/v1/plans/${seed.planId}`,
         headers: { authorization: `Bearer ${viewerToken}` },
         payload: { name: 'Renamed' },
       });
@@ -482,7 +478,7 @@ describe('Specification / Plan Curation Routes', () => {
 
       const deleteRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        url: `/api/v1/plans/${seed.planId}`,
         headers: { authorization: `Bearer ${viewerToken}` },
       });
       expect(deleteRes.statusCode).toBe(403);
@@ -537,8 +533,8 @@ describe('Specification / Plan Curation Routes', () => {
       const { token } = await loginAsAdmin(app);
 
       const res = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        method: 'PATCH',
+        url: `/api/v1/plans/${seed.planId}`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'Renamed Plan', status: 'LOCKED' },
       });
@@ -548,25 +544,13 @@ describe('Specification / Plan Curation Routes', () => {
       expect(updated.status).toBe('LOCKED');
     });
 
-    it('404s updating/deleting a plan that belongs to a different project', async () => {
-      const { app, db, seed } = serverInstance;
+    it('404s updating/deleting a plan that does not exist', async () => {
+      const { app } = serverInstance;
       const { token } = await loginAsAdmin(app);
-      const { ProjectRepository } = await import('@testify/db');
-      const otherProject = await new ProjectRepository(db).create({ name: 'Other', prefix: 'OTHR' });
-
-      const updateRes = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${otherProject.id}/plans/${seed.planId}`,
-        headers: { authorization: `Bearer ${token}` },
-        payload: { name: 'Hijacked' },
-      });
+      const missing = '/api/v1/plans/00000000-0000-0000-0000-000000000000';
+      const updateRes = await app.inject({ method: 'PATCH', url: missing, headers: { authorization: `Bearer ${token}` }, payload: { name: 'Nope' } });
       expect(updateRes.statusCode).toBe(404);
-
-      const deleteRes = await app.inject({
-        method: 'DELETE',
-        url: `/api/v1/projects/${otherProject.id}/plans/${seed.planId}`,
-        headers: { authorization: `Bearer ${token}` },
-      });
+      const deleteRes = await app.inject({ method: 'DELETE', url: missing, headers: { authorization: `Bearer ${token}` } });
       expect(deleteRes.statusCode).toBe(404);
     });
 
@@ -578,14 +562,14 @@ describe('Specification / Plan Curation Routes', () => {
       // execution too so blockedResultCount is also exercised, not just build/case-link counts.
       await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
+        payload: { results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
       });
 
       const blockedRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`,
+        url: `/api/v1/plans/${seed.planId}`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(blockedRes.statusCode).toBe(409);
@@ -595,11 +579,10 @@ describe('Specification / Plan Curation Routes', () => {
 
       const forcedRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}?force=true`,
+        url: `/api/v1/plans/${seed.planId}?force=true`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(forcedRes.statusCode).toBe(200);
-      expect(JSON.parse(forcedRes.payload).deleted).toBe(true);
+      expect(forcedRes.statusCode).toBe(204);
 
       const listRes = await app.inject({
         method: 'GET',
@@ -623,14 +606,14 @@ describe('Specification / Plan Curation Routes', () => {
 
       const deleteRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${planId}`,
+        url: `/api/v1/plans/${planId}`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(deleteRes.statusCode).toBe(200);
+      expect(deleteRes.statusCode).toBe(204);
     });
   });
 
-  describe('Test Run (Build) CRUD (POST/PUT/DELETE .../projects/:projectId/plans/:planId/builds)', () => {
+  describe('Test Run CRUD (POST /plans/:planId/runs, PATCH/DELETE /runs/:runId)', () => {
     it('requires RUN_MANAGE -- a Viewer gets 403 on create/update/delete', async () => {
       const { app, seed } = serverInstance;
       const { token: adminToken } = await loginAsAdmin(app);
@@ -638,15 +621,15 @@ describe('Specification / Plan Curation Routes', () => {
 
       const createRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${viewerToken}` },
         payload: { name: 'Should Not Exist' },
       });
       expect(createRes.statusCode).toBe(403);
 
       const updateRes = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        method: 'PATCH',
+        url: `/api/v1/runs/${seed.buildId}`,
         headers: { authorization: `Bearer ${viewerToken}` },
         payload: { name: 'Renamed' },
       });
@@ -654,7 +637,7 @@ describe('Specification / Plan Curation Routes', () => {
 
       const deleteRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        url: `/api/v1/runs/${seed.buildId}`,
         headers: { authorization: `Bearer ${viewerToken}` },
       });
       expect(deleteRes.statusCode).toBe(403);
@@ -666,21 +649,21 @@ describe('Specification / Plan Curation Routes', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'v1.0.1-rc1', status: 'OPEN' },
       });
       expect(res.statusCode).toBe(201);
-      const created = JSON.parse(res.payload).build;
+      const created = JSON.parse(res.payload).run;
       expect(created.name).toBe('v1.0.1-rc1');
       expect(created.test_plan_id).toBe(seed.planId);
 
       const listRes = await app.inject({
         method: 'GET',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(JSON.parse(listRes.payload).builds.some((b: any) => b.id === created.id)).toBe(true);
+      expect(JSON.parse(listRes.payload).runs.some((b: any) => b.id === created.id)).toBe(true);
     });
 
     it('rejects a create with a missing name, an invalid status, and a duplicate name within the same plan', async () => {
@@ -689,7 +672,7 @@ describe('Specification / Plan Curation Routes', () => {
 
       const noName = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
         payload: {},
       });
@@ -697,7 +680,7 @@ describe('Specification / Plan Curation Routes', () => {
 
       const badStatus = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'X', status: 'IN_PROGRESS' },
       });
@@ -705,7 +688,7 @@ describe('Specification / Plan Curation Routes', () => {
 
       const dupe = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'v1.0.0-rc1' }, // matches the seeded build's name in this same plan
       });
@@ -717,35 +700,25 @@ describe('Specification / Plan Curation Routes', () => {
       const { token } = await loginAsAdmin(app);
 
       const res = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        method: 'PATCH',
+        url: `/api/v1/runs/${seed.buildId}`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'Renamed Run', status: 'CLOSED' },
       });
       expect(res.statusCode).toBe(200);
-      const updated = JSON.parse(res.payload).build;
+      const updated = JSON.parse(res.payload).run;
       expect(updated.name).toBe('Renamed Run');
       expect(updated.status).toBe('CLOSED');
     });
 
-    it('404s a run that belongs to a different plan', async () => {
-      const { app, seed } = serverInstance;
+    it('404s updating/deleting a run that does not exist', async () => {
+      const { app } = serverInstance;
       const { token } = await loginAsAdmin(app);
-      const otherPlanRes = await app.inject({
-        method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans`,
-        headers: { authorization: `Bearer ${token}` },
-        payload: { name: 'Other Plan' },
-      });
-      const otherPlanId = JSON.parse(otherPlanRes.payload).plan.id;
-
-      const updateRes = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/projects/${seed.projectId}/plans/${otherPlanId}/builds/${seed.buildId}`,
-        headers: { authorization: `Bearer ${token}` },
-        payload: { name: 'Hijacked' },
-      });
+      const missing = '/api/v1/runs/00000000-0000-0000-0000-000000000000';
+      const updateRes = await app.inject({ method: 'PATCH', url: missing, headers: { authorization: `Bearer ${token}` }, payload: { name: 'Nope' } });
       expect(updateRes.statusCode).toBe(404);
+      const deleteRes = await app.inject({ method: 'DELETE', url: missing, headers: { authorization: `Bearer ${token}` } });
+      expect(deleteRes.statusCode).toBe(404);
     });
 
     it('deleting a run with recorded executions returns 409 with the count, then force=true deletes it', async () => {
@@ -754,28 +727,27 @@ describe('Specification / Plan Curation Routes', () => {
 
       await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
+        payload: { results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'PASSED' }] },
       });
 
       const blockedRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`,
+        url: `/api/v1/runs/${seed.buildId}`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(blockedRes.statusCode).toBe(409);
       const blockedBody = JSON.parse(blockedRes.payload);
-      expect(blockedBody.code).toBe('BUILD_IN_USE');
+      expect(blockedBody.code).toBe('RUN_IN_USE');
       expect(blockedBody.detail).toContain('v1.0.0-rc1');
 
       const forcedRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}?force=true`,
+        url: `/api/v1/runs/${seed.buildId}?force=true`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(forcedRes.statusCode).toBe(200);
-      expect(JSON.parse(forcedRes.payload).deleted).toBe(true);
+      expect(forcedRes.statusCode).toBe(204);
     });
 
     it('an empty run (no executions) deletes immediately with no force needed', async () => {
@@ -784,18 +756,18 @@ describe('Specification / Plan Curation Routes', () => {
 
       const createRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'Throwaway Empty Run' },
       });
-      const runId = JSON.parse(createRes.payload).build.id;
+      const runId = JSON.parse(createRes.payload).run.id;
 
       const deleteRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${runId}`,
+        url: `/api/v1/runs/${runId}`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(deleteRes.statusCode).toBe(200);
+      expect(deleteRes.statusCode).toBe(204);
     });
 
     it('deleting a plan cascades to delete its runs too', async () => {
@@ -804,14 +776,14 @@ describe('Specification / Plan Curation Routes', () => {
 
       const forcedRes = await app.inject({
         method: 'DELETE',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}?force=true`,
+        url: `/api/v1/plans/${seed.planId}?force=true`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(forcedRes.statusCode).toBe(200);
+      expect(forcedRes.statusCode).toBe(204);
 
       const listRes = await app.inject({
         method: 'GET',
-        url: `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+        url: `/api/v1/plans/${seed.planId}/runs`,
         headers: { authorization: `Bearer ${token}` },
       });
       // The plan is gone, so listing its runs 404s; and the run rows really are deleted.

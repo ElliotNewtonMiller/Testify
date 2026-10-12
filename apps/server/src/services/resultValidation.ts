@@ -17,7 +17,6 @@ export interface InvalidParam {
 }
 
 export interface ManualResult {
-  build_id: string;
   test_plan_case_id: string;
   verdict: ExecutionVerdict;
   status: ExecutionStatus;
@@ -28,7 +27,7 @@ export interface ManualResult {
 const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
 /**
- * Checks the shape of a POST /api/v1/executions body. Every problem is reported at once, by
+ * Checks the shape of a POST /api/v1/runs/:runId/results body (the run comes from the address). Every problem is reported at once, by
  * field name. Whether the ids exist (and the steps belong to the case) is checked against the
  * database by the route.
  */
@@ -36,7 +35,6 @@ export function validateManualResult(raw: unknown): { result: ManualResult } | {
   const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
   const invalid: InvalidParam[] = [];
 
-  if (!isNonEmptyString(body.build_id)) invalid.push({ name: 'build_id', reason: 'is required' });
   if (!isNonEmptyString(body.test_plan_case_id)) invalid.push({ name: 'test_plan_case_id', reason: 'is required' });
   if (!isExecutionVerdict(body.verdict)) {
     invalid.push({ name: 'verdict', reason: `must be one of ${EXECUTION_VERDICTS.join(', ')}` });
@@ -88,7 +86,6 @@ export function validateManualResult(raw: unknown): { result: ManualResult } | {
   if (invalid.length > 0) return { invalid };
   return {
     result: {
-      build_id: body.build_id,
       test_plan_case_id: body.test_plan_case_id,
       verdict: body.verdict,
       status: body.status ?? 'COMPLETED',
@@ -133,11 +130,11 @@ const optionalText = (
 };
 
 /**
- * Checks one item of a batch results request (executions[i]). Whether its case and steps
+ * Checks one item of a batch results request (results[i]). Whether its case and steps
  * exist is checked by the route, against the plan.
  */
 export function validateBatchItem(raw: unknown, index: number): { item: BatchItemShape } | { invalid: InvalidParam[] } {
-  const at = `executions[${index}]`;
+  const at = `results[${index}]`;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { invalid: [{ name: at, reason: 'must be an object' }] };
   const it = raw as Record<string, any>;
   const invalid: InvalidParam[] = [];

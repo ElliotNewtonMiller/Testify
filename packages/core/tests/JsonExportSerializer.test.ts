@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { JsonExportSerializer } from '../src/export/JsonExportSerializer.js';
-import type { DefinitionsExportBundle, ExecutionResultsExportBundle } from '../src/export/types.js';
+import type { DefinitionsExportBundle, TestResultsExportBundle } from '../src/export/types.js';
 
 const definitionsBundle: DefinitionsExportBundle = {
   object: 'definitions_export_bundle',
@@ -33,8 +33,8 @@ const definitionsBundle: DefinitionsExportBundle = {
   record_count: { suite_count: 1, case_count: 1 },
 };
 
-const executionResultsBundle: ExecutionResultsExportBundle = {
-  object: 'execution_results_export_bundle',
+const executionResultsBundle: TestResultsExportBundle = {
+  object: 'test_results_export_bundle',
   exported_at: '2026-09-21T00:00:00.000Z',
   project: { id: 'proj-1', name: 'Demo', prefix: 'DEM' },
   plan: { id: 'plan-1', name: 'Plan A' },
@@ -51,14 +51,14 @@ const executionResultsBundle: ExecutionResultsExportBundle = {
       tester_username: 'alice',
       status: 'COMPLETED',
       verdict: 'PASSED',
-      execution_duration_ms: 1234,
+      duration_ms: 1234,
       notes: null,
-      execution_timestamp: '2026-09-21T00:00:00.000Z',
+      executed_at: '2026-09-21T00:00:00.000Z',
       environment_tags: { environment: 'staging' },
       step_results: [{ test_step_id: 'step-1', step_number: 1, verdict: 'PASSED', actual_result: null }],
     },
   ],
-  record_count: { execution_count: 1 },
+  record_count: { result_count: 1 },
 };
 
 describe('JsonExportSerializer', () => {
@@ -68,9 +68,9 @@ describe('JsonExportSerializer', () => {
     expect(result).toEqual(definitionsBundle);
   });
 
-  it('serializeExecutionResults round-trips a bundle exactly through JSON.parse', () => {
+  it('serializeTestResults round-trips a bundle exactly through JSON.parse', () => {
     const serializer = new JsonExportSerializer();
-    const result = JSON.parse(serializer.serializeExecutionResults(executionResultsBundle));
+    const result = JSON.parse(serializer.serializeTestResults(executionResultsBundle));
     expect(result).toEqual(executionResultsBundle);
   });
 

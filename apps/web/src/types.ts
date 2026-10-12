@@ -15,7 +15,7 @@ export interface TestCase extends TestCaseGridItem {
   summary: string;
   preconditions: string;
   steps: Step[];
-  latest_execution_id: string | null;
+  latest_test_result_id: string | null;
   latest_notes?: string | null;
   test_suite_id?: string;
 }
@@ -24,7 +24,7 @@ export interface WorkspaceData {
   project: { id: string; name: string; prefix: string };
   suites: Array<{ id: string; name: string; path: string }>;
   plan: { id: string; name: string; status: string };
-  build: { id: string; name: string; status: string };
+  run: { id: string; name: string; status: string };
   cases: TestCase[];
 }
 
@@ -32,7 +32,7 @@ export interface WorkspaceData {
 export type ExecWorkspaceStatus = "NO_PLAN" | "LOADING" | "READY" | "ERROR";
 
 // --- Specification mode: types for GET /api/v1/projects/:id/spec-tree and
-// GET /api/v1/test-cases/:id/latest-version. Curation-only -- read-only case/step detail,
+// GET /api/v1/cases/:id/versions/latest. Curation-only -- read-only case/step detail,
 // plus per-case/suite plan-inclusion toggles. See docs/rfc_01_domain_model.md §2.3.
 export interface SpecSuiteNode {
   id: string;

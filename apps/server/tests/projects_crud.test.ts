@@ -43,13 +43,13 @@ describe('Projects: real create / edit / delete', () => {
     const created = JSON.parse(
       (await app.inject({ method: 'POST', url: '/api/v1/projects', headers: h, payload: { name: 'Empty', prefix: 'EMP' } })).payload
     ).project;
-    const renamed = await app.inject({ method: 'PUT', url: `/api/v1/projects/${created.id}`, headers: h, payload: { name: 'Renamed', prefix: 'NEW' } });
+    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/projects/${created.id}`, headers: h, payload: { name: 'Renamed', prefix: 'NEW' } });
     expect(renamed.statusCode).toBe(200);
     expect(JSON.parse(renamed.payload).project).toMatchObject({ name: 'Renamed', prefix: 'NEW' });
 
     // The seeded sample project has cases -- its prefix is locked, its name isn't.
-    expect((await app.inject({ method: 'PUT', url: `/api/v1/projects/${seed.projectId}`, headers: h, payload: { prefix: 'ZZZ' } })).statusCode).toBe(409);
-    expect((await app.inject({ method: 'PUT', url: `/api/v1/projects/${seed.projectId}`, headers: h, payload: { name: 'Still fine' } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'PATCH', url: `/api/v1/projects/${seed.projectId}`, headers: h, payload: { prefix: 'ZZZ' } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'PATCH', url: `/api/v1/projects/${seed.projectId}`, headers: h, payload: { name: 'Still fine' } })).statusCode).toBe(200);
   });
 
   it('deleting a project with content is blocked with counts, then force-deletes everything in it', async () => {
@@ -59,7 +59,7 @@ describe('Projects: real create / edit / delete', () => {
     // Give the seeded project a recorded result so executions are in the cascade too.
     const planCase = await db.selectFrom('test_plan_cases').select('id').where('test_plan_id', '=', seed.planId).executeTakeFirstOrThrow();
     expect(
-      (await app.inject({ method: 'POST', url: '/api/v1/executions', headers: h, payload: { build_id: seed.buildId, test_plan_case_id: planCase.id, verdict: 'PASSED' } })).statusCode
+      (await app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: h, payload: { test_plan_case_id: planCase.id, verdict: 'PASSED' } })).statusCode
     ).toBe(201);
 
     const blocked = await app.inject({ method: 'DELETE', url: `/api/v1/projects/${seed.projectId}`, headers: h });

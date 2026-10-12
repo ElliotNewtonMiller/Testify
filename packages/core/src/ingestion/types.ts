@@ -172,7 +172,7 @@ export interface ExecutionStepResult {
   actual_result?: string;
 }
 
-export interface BatchExecutionItem {
+export interface BatchResultItem {
   case_identifier: CaseIdentifier;
   verdict: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED' | 'RETEST_REQUIRED' | 'KNOWN_ISSUE';
   status?: 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED';
@@ -186,7 +186,7 @@ export interface BatchExecutionItem {
   step_results?: ExecutionStepResult[];
 }
 
-export interface BatchExecutionRequest {
+export interface BatchResultsRequest {
   environment?: string;
   runner_info?: {
     name?: string;
@@ -196,32 +196,33 @@ export interface BatchExecutionRequest {
     /** Link back to the CI run, shown in reports. */
     url?: string;
   };
-  executions: BatchExecutionItem[];
+  results: BatchResultItem[];
 }
 
-export interface BatchExecutionSingleResult {
+export interface BatchResultOutcome {
   index: number;
   status: number;
-  execution_id?: string;
-  case_id?: string;
+  test_result_id?: string;
+  test_case_id?: string;
   verdict?: string;
-  error?: string;
+  /** For a refused item: why, in words. */
+  detail?: string;
   /** Why the item was refused, e.g. INVALID_RESULT, CASE_NOT_FOUND, UNKNOWN_STEP. */
   code?: string;
   /** For a refused item: each problem, by field name. */
   invalid_params?: Array<{ name: string; reason: string }>;
 }
 
-export interface BatchExecutionResponse {
-  object: 'batch_execution_result';
+export interface BatchResultsResponse {
+  object: 'batch_results';
   summary: {
     total_submitted: number;
     successful: number;
     failed: number;
     duration_ms: number;
   };
-  results: BatchExecutionSingleResult[];
+  results: BatchResultOutcome[];
   /** The run's status after this batch -- CLOSED if it just auto-closed because every case
    * in the plan now has a result. */
-  build_status?: 'OPEN' | 'CLOSED';
+  run_status?: 'OPEN' | 'CLOSED';
 }

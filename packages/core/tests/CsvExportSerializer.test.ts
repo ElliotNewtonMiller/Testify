@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CsvExportSerializer } from '../src/export/CsvExportSerializer.js';
-import type { DefinitionsExportBundle, ExecutionResultsExportBundle, ExportableSuite } from '../src/export/types.js';
+import type { DefinitionsExportBundle, TestResultsExportBundle, ExportableSuite } from '../src/export/types.js';
 
 function makeSuite(overrides: Partial<ExportableSuite> = {}): ExportableSuite {
   return { id: 's1', name: 'Suite A', description: null, position: 0, cases: [], sub_suites: [], ...overrides };
@@ -116,17 +116,17 @@ describe('CsvExportSerializer.serializeDefinitions', () => {
   });
 });
 
-describe('CsvExportSerializer.serializeExecutionResults', () => {
+describe('CsvExportSerializer.serializeTestResults', () => {
   const serializer = new CsvExportSerializer();
 
   it('emits the expected header and one row per step result', () => {
-    const bundle: ExecutionResultsExportBundle = {
-      object: 'execution_results_export_bundle',
+    const bundle: TestResultsExportBundle = {
+      object: 'test_results_export_bundle',
       exported_at: '2026-09-21T00:00:00.000Z',
       project: { id: 'p1', name: 'Demo', prefix: 'DEM' },
       plan: { id: 'pl1', name: 'Plan' },
-      build: { id: 'b1', name: 'Build', status: 'OPEN', release_date: null },
-      executions: [
+      run: { id: 'b1', name: 'Build', status: 'OPEN', release_date: null },
+      results: [
         {
           id: 'e1',
           test_case_id: 'c1',
@@ -138,9 +138,9 @@ describe('CsvExportSerializer.serializeExecutionResults', () => {
           tester_username: 'alice',
           status: 'COMPLETED',
           verdict: 'PASSED',
-          execution_duration_ms: 500,
+          duration_ms: 500,
           notes: null,
-          execution_timestamp: '2026-09-21T00:00:00.000Z',
+          executed_at: '2026-09-21T00:00:00.000Z',
           environment_tags: null,
           step_results: [
             { test_step_id: 'st1', step_number: 1, verdict: 'PASSED', actual_result: null },
@@ -148,11 +148,11 @@ describe('CsvExportSerializer.serializeExecutionResults', () => {
           ],
         },
       ],
-      record_count: { execution_count: 1 },
+      record_count: { result_count: 1 },
     };
-    const lines = serializer.serializeExecutionResults(bundle).split('\r\n');
+    const lines = serializer.serializeTestResults(bundle).split('\r\n');
     expect(lines[0]).toBe(
-      'Test Case External ID,Test Case Title,Version Number,Tester,Status,Verdict,Duration (ms),Notes,Execution Timestamp,Step Number,Step Verdict,Step Actual Result'
+      'Test Case External ID,Test Case Title,Version Number,Tester,Status,Verdict,Duration (ms),Notes,Executed At,Step Number,Step Verdict,Step Actual Result'
     );
     expect(lines).toHaveLength(3);
     expect(lines[2]).toContain('boom');

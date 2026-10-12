@@ -15,7 +15,7 @@ export interface ReportRunRef {
   status: string;
   created_at: string;
   release_date: string | null;
-  plan_id: string;
+  test_plan_id: string;
   plan_name: string;
 }
 
@@ -32,7 +32,7 @@ export interface ReportFailure extends ReportCaseRef {
   tested_by: string | null;
   source: string | null;
   attempts: number;
-  failing_since: { run_id: string; run_name: string; runs: number } | null;
+  failing_since: { test_run_id: string; run_name: string; runs: number } | null;
   flaky: boolean;
   runner: Record<string, string> | null;
 }

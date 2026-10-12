@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import { v4 as uuidv4 } from 'uuid';
 import {
   createDbClient,
   migrateToLatest,
@@ -13,6 +12,7 @@ import {
 import type { Kysely } from 'kysely';
 import { registerIngestionRoutes, IMPORT_FIELD_LIMIT_BYTES, IMPORT_MAX_FILE_BYTES } from './routes/ingestion.js';
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
+import { registerResultRoutes } from './routes/results.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerTestPlanCaseRoutes } from './routes/testPlanCases.js';
@@ -24,22 +24,17 @@ import { registerExportRoutes } from './routes/exports.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerCaseSearchRoutes } from './routes/caseSearch.js';
 import { registerMcpRoutes } from './mcp/mcpServer.js';
-import { sendCaseRemovedFromPlanError, sendProblemDetails, INTERNAL_ERROR_MESSAGE, logServerError, sendError } from './errors.js';
-import { validateManualResult } from './services/resultValidation.js';
-import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from './services/resultOverwrite.js';
+import { INTERNAL_ERROR_MESSAGE, logServerError, sendError } from './errors.js';
 import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { createRateLimits } from './services/rateLimits.js';
 import { runDueSchedules } from './services/reportEmailService.js';
-import { requirePermission } from './middleware/auth.js';
-import { autoCloseBuildIfComplete } from './buildAutoClose.js';
 import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, resolveJwtSecret, resolveLogLevel, ConfigError } from './config.js';
 import { loggerOptions, registerRequestLogging, registerHealthRoute } from './observability.js';
 import { registerWebApp } from './webApp.js';
 import { setSecretBox } from './services/secrets.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
-import { requestOrigin } from './audit.js';
 
 // Testify only targets Postgres-compatible SQL. With no connectionString this routes to an
 // ephemeral, zero-config PGlite (WASM Postgres) instance -- no server, no native bindings,
@@ -153,180 +148,8 @@ export async function createServer(connectionString?: string, options: { db?: Ky
   await registerMcpRoutes(app, db, jwtSecret);
   await registerReportEmailRoutes(app, db, jwtSecret);
   await registerEmailAdminRoutes(app, db, jwtSecret);
+  await registerResultRoutes(app, db, jwtSecret);
 
-  // POST /api/v1/executions - Execution logging endpoint (Gated by EXECUTE_RUN)
-  app.post('/api/v1/executions', { preHandler: requirePermission('EXECUTE_RUN', db, jwtSecret) }, async (request, reply) => {
-    const actorId = request.user!.id;
-    // Verdict, status and step verdicts must be known values (they're stored as plain strings).
-    const validated = validateManualResult(request.body);
-    if ('invalid' in validated) {
-      return sendProblemDetails(reply, {
-        status: 400,
-        title: 'Bad Request',
-        code: 'INVALID_RESULT',
-        detail: validated.invalid.map((p) => `${p.name} ${p.reason}`).join('; '),
-        invalid_params: validated.invalid,
-        instance: request.url,
-      });
-    }
-    const body = validated.result;
-
-    // 1. Verify build and plan lock state
-    const build = await db
-      .selectFrom('test_runs')
-      .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
-      .select(['test_runs.status as build_status', 'test_runs.test_plan_id', 'test_plans.status as plan_status', 'test_plans.project_id'])
-      .where('test_runs.id', '=', body.build_id)
-      .executeTakeFirst();
-
-    if (!build) {
-      return sendError(reply, 404, 'Build not found');
-    }
-
-    // The case must be in this run's plan -- and not removed from it (a removed case keeps the
-    // results it already has, read-only).
-    const planCase = await db
-      .selectFrom('test_plan_cases as tpc')
-      .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
-      .select(['tpc.test_plan_id', 'tpc.removed_at', 'tpc.test_case_version_id', 'tpc.test_case_id', 'tc.external_id'])
-      .where('tpc.id', '=', body.test_plan_case_id)
-      .executeTakeFirst();
-    if (!planCase || planCase.test_plan_id !== build.test_plan_id) {
-      return sendError(reply, 404, 'Test case not found in this run\'s plan');
-    }
-    if (planCase.removed_at) {
-      return sendCaseRemovedFromPlanError(reply, planCase.external_id, request.url);
-    }
-
-    if (build.build_status === 'CLOSED') {
-      return sendError(reply, 422, 'Build is closed. Executions cannot be added or modified on a closed build.', { code: 'BUILD_CLOSED' });
-    }
-
-    if (build.plan_status === 'LOCKED' || build.plan_status === 'ARCHIVED') {
-      return sendError(reply, 422, 'Test plan is locked. Executions are frozen.', { code: 'PLAN_LOCKED' });
-    }
-
-    // Changing a case's existing result in this run needs EXECUTE_OVERWRITE (adding notes to
-    // your own result with the same verdict doesn't) -- see services/resultOverwrite.ts.
-    if (!canOverwriteResults(request.user!.permissions)) {
-      const existing = (await latestResultsInRun(db, body.build_id, [planCase.test_case_id])).get(planCase.test_case_id);
-      if (isOverwrite(existing, actorId, body.verdict)) {
-        return sendProblemDetails(reply, {
-          status: 403,
-          title: 'Forbidden',
-          code: 'RESULT_OVERWRITE_NOT_PERMITTED',
-          detail: RESULT_OVERWRITE_MESSAGE,
-          instance: request.url,
-        });
-      }
-    }
-
-    // Step results must be steps of the version this case runs at in the plan (its pinned
-    // version); an unknown step id used to fail the insert with a 500.
-    const stepNumberById = new Map<string, number>();
-    if (body.step_results.length > 0) {
-      const steps = await db
-        .selectFrom('test_steps')
-        .select(['id', 'step_number'])
-        .where('test_case_version_id', '=', planCase.test_case_version_id)
-        .execute();
-      for (const st of steps) stepNumberById.set(st.id, st.step_number);
-      const invalidSteps = body.step_results.flatMap((sr, i) => {
-        const actual = stepNumberById.get(sr.test_step_id);
-        if (actual === undefined) return [{ name: `step_results[${i}].test_step_id`, reason: "isn't a step of this test case" }];
-        if (sr.step_number !== undefined && sr.step_number !== actual) {
-          return [{ name: `step_results[${i}].step_number`, reason: `is ${actual} for this step` }];
-        }
-        return [];
-      });
-      if (invalidSteps.length > 0) {
-        return sendProblemDetails(reply, {
-          status: 400,
-          title: 'Bad Request',
-          code: 'INVALID_RESULT',
-          detail: invalidSteps.map((p) => `${p.name} ${p.reason}`).join('; '),
-          invalid_params: invalidSteps,
-          instance: request.url,
-        });
-      }
-    }
-
-    const now = new Date().toISOString();
-    const execId = uuidv4();
-
-    // The result, its step results and the audit row are saved together or not at all.
-    await db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto('test_results')
-        .values({
-          id: execId,
-          test_run_id: body.build_id,
-          test_plan_case_id: body.test_plan_case_id,
-          tester_id: actorId,
-          status: body.status,
-          verdict: body.verdict,
-          // Manual execution isn't timed: this is the single-result route the UI uses, so it
-          // never stores a duration, even if one is sent. Durations come only from automated
-          // results via the batch route (routes/batchExecution.ts), which is all Reports'
-          // "Slowest" table ranks.
-          duration_ms: null,
-          notes: body.notes,
-          source: 'UI',
-          executed_at: now,
-          created_at: now,
-          updated_at: now,
-        })
-        .execute();
-
-      if (body.step_results.length > 0) {
-        await trx
-          .insertInto('test_step_results')
-          .values(
-            body.step_results.map((sr) => ({
-              id: uuidv4(),
-              test_result_id: execId,
-              test_step_id: sr.test_step_id,
-              step_number: stepNumberById.get(sr.test_step_id)!,
-              verdict: sr.verdict,
-              actual_result: sr.actual_result,
-              created_at: now,
-            }))
-          )
-          .execute();
-      }
-
-      await trx
-        .insertInto('audit_logs')
-        .values({
-          id: uuidv4(),
-          actor_id: actorId,
-          actor_type: 'USER',
-          action: 'EXECUTION_RECORDED',
-          resource_type: 'execution',
-          resource_id: execId,
-          // The run's real project (this used to be hardwired to the sample project's id).
-          project_id: build.project_id,
-          diff: JSON.stringify({ verdict: body.verdict, plan_case_id: body.test_plan_case_id }),
-          ...requestOrigin(request),
-          created_at: now,
-        })
-        .execute();
-    });
-
-    // 5. Auto-close the run once every case in its plan has a result.
-    const buildStatus = await autoCloseBuildIfComplete(db, body.build_id, {
-      id: actorId,
-      type: request.user!.api_token ? 'SERVICE_ACCOUNT' : 'USER',
-    }, requestOrigin(request));
-
-    return reply.status(201).send({
-      id: execId,
-      verdict: body.verdict,
-      status: body.status,
-      created_at: now,
-      build_status: buildStatus,
-    });
-  });
 
   // GET /api/v1/health, for load balancers and uptime monitors (observability.ts).
   registerHealthRoute(app, db);

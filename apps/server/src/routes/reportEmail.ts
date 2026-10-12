@@ -93,7 +93,7 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
 
     let email;
     try {
-      email = await emails.build(projectId, sections, { message, sentBy: actor.username });
+      email = await emails.run(projectId, sections, { message, sentBy: actor.username });
     } catch (err) {
       return sendReportError(reply, err);
     }
@@ -173,8 +173,9 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return reply.status(201).send({ schedule });
   });
 
-  app.put('/api/v1/projects/:projectId/report-schedules/:id', gate, async (request, reply) => {
-    const { projectId, id } = request.params as { projectId: string; id: string };
+  app.put('/api/v1/report-schedules/:scheduleId', gate, async (request, reply) => {
+    const { scheduleId: id } = request.params as { scheduleId: string };
+    const projectId = request.projectId ?? '';
     if (!(await scheduleInProject(projectId, id))) return sendError(reply, 404, 'Schedule not found in this project');
     const parsed = await parseScheduleBody(projectId, request.body);
     if ('field' in parsed) return badRequest(reply, parsed.field, parsed.reason);
@@ -187,17 +188,19 @@ export async function registerReportEmailRoutes(app: FastifyInstance, db: Kysely
     return { schedule };
   });
 
-  app.delete('/api/v1/projects/:projectId/report-schedules/:id', gate, async (request, reply) => {
-    const { projectId, id } = request.params as { projectId: string; id: string };
+  app.delete('/api/v1/report-schedules/:scheduleId', gate, async (request, reply) => {
+    const { scheduleId: id } = request.params as { scheduleId: string };
+    const projectId = request.projectId ?? '';
     const existing = await scheduleInProject(projectId, id);
     if (!existing) return sendError(reply, 404, 'Schedule not found in this project');
     await scheduleRepo.delete(id);
     await audit(requestOrigin(request), request.user!, 'REPORT_SCHEDULE_DELETED', 'report_schedule', id, projectId, { name: existing.name });
-    return { deleted: true };
+    return reply.status(204).send();
   });
 
-  app.post('/api/v1/projects/:projectId/report-schedules/:id/send-now', gate, async (request, reply) => {
-    const { projectId, id } = request.params as { projectId: string; id: string };
+  app.post('/api/v1/report-schedules/:scheduleId/send-now', gate, async (request, reply) => {
+    const { scheduleId: id } = request.params as { scheduleId: string };
+    const projectId = request.projectId ?? '';
     const schedule = await scheduleInProject(projectId, id);
     if (!schedule) return sendError(reply, 404, 'Schedule not found in this project');
     if (!withinRateLimit(request, reply, app.rateLimits.reportEmails, 'report emails')) return reply;

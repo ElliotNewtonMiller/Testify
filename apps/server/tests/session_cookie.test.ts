@@ -113,7 +113,7 @@ describe('Session cookie (web sign-in)', () => {
 
   it('a sign-in signed with another key (e.g. from before a server restart) says it has ended', async () => {
     const stale = signJwt({ sub: 'someone', sid: 'old' }, 'the-previous-servers-key', 3600);
-    const res = await app.inject({ method: 'POST', url: '/api/v1/imports/dry-run', headers: { cookie: `testify_session=${stale}`, 'x-testify-client': 'web' } });
+    const res = await app.inject({ method: 'POST', url: "/api/v1/projects/any-project/imports/dry-run", headers: { cookie: `testify_session=${stale}`, 'x-testify-client': 'web' } });
     expect(res.statusCode).toBe(401);
     expect(body(res).code).toBe('SESSION_ENDED');
     expect(body(res).detail).toBe('Unauthorized: your sign-in has ended -- please sign in again');

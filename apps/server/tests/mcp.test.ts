@@ -74,7 +74,7 @@ describe('MCP endpoint (POST /mcp)', () => {
       expect.arrayContaining(['list_projects', 'list_plans_and_runs', 'search_cases', 'get_case', 'list_report_fields', 'report_overview', 'report_run_summary', 'report_case_history', 'report_plan_trend', 'report_test_health', 'report_breakdown'])
     );
     const runSummary = list.result.tools.find((t: any) => t.name === 'report_run_summary');
-    expect(runSummary.inputSchema.required).toEqual(['project_id', 'run_id']);
+    expect(runSummary.inputSchema.required).toEqual(['project_id', 'test_run_id']);
     expect(runSummary.inputSchema.properties.compare_to.type).toEqual(['string', 'null']);
     expect(runSummary.inputSchema.properties.format.enum).toEqual(['json', 'markdown']);
     expect(list.result.tools.every((t: any) => t.annotations?.readOnlyHint === true)).toBe(true);
@@ -88,9 +88,9 @@ describe('MCP endpoint (POST /mcp)', () => {
 
     await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+      url: `/api/v1/runs/${seed.buildId}/results/batch`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { executions: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'FAILED', failure_message: 'boom' }] },
+      payload: { results: [{ case_identifier: { external_id: 'SHOP-101' }, verdict: 'FAILED', failure_message: 'boom' }] },
     });
 
     const projects = JSON.parse((await callTool(app, token, 'list_projects', {})).content[0].text);
@@ -99,24 +99,24 @@ describe('MCP endpoint (POST /mcp)', () => {
     const plans = JSON.parse((await callTool(app, token, 'list_plans_and_runs', { project_id: seed.projectId })).content[0].text);
     expect(plans.plans[0].runs[0].id).toBe(seed.buildId);
 
-    const summary = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, run_id: seed.buildId });
+    const summary = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, test_run_id: seed.buildId });
     expect(summary.isError).toBeFalsy();
     const data = JSON.parse(summary.content[0].text);
     expect(data.summary).toMatchObject({ total: 10, failed: 1, untested: 9 });
     expect(data.failures[0]).toMatchObject({ external_id: 'SHOP-101', failure_message: 'boom' });
 
-    const md = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, run_id: seed.buildId, format: 'markdown' });
+    const md = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, test_run_id: seed.buildId, format: 'markdown' });
     expect(md.content[0].text).toContain('## Test run');
 
     const denied = await callTool(app, token, 'report_overview', { project_id: other.id });
     expect(denied.isError).toBe(true);
     expect(denied.content[0].text).toContain('can only read project');
 
-    const badParams = await callTool(app, token, 'report_test_health', { project_id: seed.projectId, plan_id: seed.planId, runs: 999 });
+    const badParams = await callTool(app, token, 'report_test_health', { project_id: seed.projectId, test_plan_id: seed.planId, runs: 999 });
     expect(badParams.isError).toBe(true);
     expect(badParams.content[0].text).toContain('runs must be at most 50');
 
-    const notFound = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, run_id: 'nope' });
+    const notFound = await callTool(app, token, 'report_run_summary', { project_id: seed.projectId, test_run_id: 'nope' });
     expect(notFound.isError).toBe(true);
   });
 
@@ -128,7 +128,7 @@ describe('MCP endpoint (POST /mcp)', () => {
     expect(found.total_matches).toBe(1);
     expect(found.cases[0]).toMatchObject({ external_id: 'SHOP-105' });
 
-    const c = JSON.parse((await callTool(app, token, 'get_case', { project_id: seed.projectId, case_id: 'shop-105' })).content[0].text);
+    const c = JSON.parse((await callTool(app, token, 'get_case', { project_id: seed.projectId, test_case_id: 'shop-105' })).content[0].text);
     expect(c.external_id).toBe('SHOP-105');
     expect(c.latest_version.steps.length).toBeGreaterThan(0);
 

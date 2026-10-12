@@ -108,7 +108,7 @@ export class ProjectRepository {
   async getContentCounts(id: string): Promise<ProjectContentCounts> {
     const count = async (q: Promise<{ n: string | number | bigint } | undefined>) => Number((await q)?.n ?? 0);
     const planIds = (await this.db.selectFrom('test_plans').select('id').where('project_id', '=', id).execute()).map((r) => r.id);
-    const [suiteCount, caseCount, runCount, executionCount] = await Promise.all([
+    const [suiteCount, caseCount, runCount, resultCount] = await Promise.all([
       count(this.db.selectFrom('test_suites').select((eb) => eb.fn.countAll().as('n')).where('project_id', '=', id).executeTakeFirst()),
       count(this.db.selectFrom('test_cases').select((eb) => eb.fn.countAll().as('n')).where('project_id', '=', id).executeTakeFirst()),
       planIds.length
@@ -125,7 +125,7 @@ export class ProjectRepository {
           )
         : Promise.resolve(0),
     ]);
-    return { suiteCount, caseCount, planCount: planIds.length, runCount, executionCount };
+    return { suiteCount, caseCount, planCount: planIds.length, runCount, resultCount };
   }
 
   /**
@@ -204,7 +204,7 @@ export interface ProjectContentCounts {
   caseCount: number;
   planCount: number;
   runCount: number;
-  executionCount: number;
+  resultCount: number;
 }
 
 export type DeleteProjectResult =

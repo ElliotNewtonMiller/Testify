@@ -150,7 +150,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.put(
+  app.patch(
     '/api/v1/admin/custom-fields/:id',
     { preHandler: requirePermission('CUSTOM_FIELD_MANAGE', db, jwtSecret) },
     async (request, reply) => {
@@ -268,7 +268,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   // mutation is gated by PLAN_MANAGE, matching every other Spec-mode curation route in
   // testPlanCases.ts) ----
 
-  app.get('/api/v1/test-cases/:caseId/custom-field-values', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/cases/:caseId/custom-fields', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
@@ -281,7 +281,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   });
 
   app.put(
-    '/api/v1/test-cases/:caseId/custom-field-values/:definitionId',
+    '/api/v1/cases/:caseId/custom-fields/:definitionId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { caseId, definitionId } = request.params as { caseId: string; definitionId: string };
@@ -310,7 +310,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   );
 
   app.delete(
-    '/api/v1/test-cases/:caseId/custom-field-values/:definitionId',
+    '/api/v1/cases/:caseId/custom-fields/:definitionId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { caseId, definitionId } = request.params as { caseId: string; definitionId: string };
@@ -323,7 +323,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
     }
   );
 
-  app.get('/api/v1/test-suites/:suiteId/custom-field-values', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/suites/:suiteId/custom-fields', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { suiteId } = request.params as { suiteId: string };
     const suite = await suiteRepo.findById(suiteId);
@@ -336,7 +336,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   });
 
   app.put(
-    '/api/v1/test-suites/:suiteId/custom-field-values/:definitionId',
+    '/api/v1/suites/:suiteId/custom-fields/:definitionId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { suiteId, definitionId } = request.params as { suiteId: string; definitionId: string };
@@ -365,7 +365,7 @@ export async function registerCustomFieldRoutes(app: FastifyInstance, db: Kysely
   );
 
   app.delete(
-    '/api/v1/test-suites/:suiteId/custom-field-values/:definitionId',
+    '/api/v1/suites/:suiteId/custom-fields/:definitionId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const { suiteId, definitionId } = request.params as { suiteId: string; definitionId: string };

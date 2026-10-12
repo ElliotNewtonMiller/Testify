@@ -3,11 +3,12 @@ import { Empty, ErrorNote, InfoTip, Loading, Section, buttonStyle, fmtWhen, sele
 import { authHeaders, jsonHeaders } from "../../utils/session";
 
 import { errorMessage } from "../../api/errors";
+import { api } from "../../api/routes";
 type SectionKind = "overview" | "latest_run" | "test_health" | "plan_trend";
 
 interface ScheduleSection {
   kind: SectionKind;
-  plan_id?: string;
+  test_plan_id?: string;
 }
 
 interface Schedule {
@@ -43,7 +44,7 @@ const KIND_HINTS: Record<SectionKind, string> = {
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const STATUS_COLORS: Record<string, string> = { SENT: "#4ade80", CAPTURED: "#7dd3fc", FAILED: "#f87171", SKIPPED: "#94a3b8" };
 
-async function api(method: string, url: string, body?: unknown) {
+async function request(method: string, url: string, body?: unknown) {
   // Content-Type only with a body: Fastify rejects an empty body declared as JSON.
   const headers = body !== undefined ? jsonHeaders() : authHeaders();
   const res = await fetch(url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -105,7 +106,7 @@ function draftFrom(s: Schedule | null, defaultPlanId: string): Draft {
       test_health: s.sections.some((x) => x.kind === "test_health"),
       plan_trend: s.sections.some((x) => x.kind === "plan_trend"),
     },
-    planId: s.sections.find((x) => x.plan_id)?.plan_id ?? defaultPlanId,
+    planId: s.sections.find((x) => x.test_plan_id)?.test_plan_id ?? defaultPlanId,
     recipients: s.recipients.join(", "),
     message: s.message ?? "",
     frequency: s.frequency,
@@ -128,11 +129,11 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
   const [formError, setFormError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const base = `/api/v1/projects/${projectId}/report-schedules`;
+  const base = api.reportSchedules(projectId);
 
   const load = React.useCallback(async () => {
     try {
-      setSchedules((await api("GET", base)).schedules);
+      setSchedules((await request("GET", base)).schedules);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -151,7 +152,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
 
   const toBody = (d: Draft) => ({
     name: d.name,
-    sections: (Object.keys(d.kinds) as SectionKind[]).filter((k) => d.kinds[k]).map((k) => (k === "overview" ? { kind: k } : { kind: k, plan_id: d.planId })),
+    sections: (Object.keys(d.kinds) as SectionKind[]).filter((k) => d.kinds[k]).map((k) => (k === "overview" ? { kind: k } : { kind: k, test_plan_id: d.planId })),
     recipients: d.recipients,
     message: d.message || null,
     frequency: d.frequency,
@@ -166,7 +167,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
     if (!draft) return;
     setFormError(null);
     try {
-      await api(draft.id ? "PUT" : "POST", draft.id ? `${base}/${draft.id}` : base, toBody(draft));
+      await request(draft.id ? "PUT" : "POST", draft.id ? api.reportSchedule(draft.id) : base, toBody(draft));
       setDraft(null);
       flash(draft.id ? "✓ Schedule saved." : "✓ Schedule created.");
       load();
@@ -179,12 +180,12 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
     setBusyId(s.id);
     try {
       if (action === "delete") {
-        await api("DELETE", `${base}/${s.id}`);
+        await request("DELETE", api.reportSchedule(s.id));
         flash(`Deleted "${s.name}".`);
       } else if (action === "toggle") {
-        await api("PUT", `${base}/${s.id}`, toBody({ ...draftFrom(s, defaultPlanId), enabled: !s.enabled }));
+        await request("PUT", api.reportSchedule(s.id), toBody({ ...draftFrom(s, defaultPlanId), enabled: !s.enabled }));
       } else {
-        const r = await api("POST", `${base}/${s.id}/send-now`);
+        const r = await request("POST", api.reportScheduleSendNow(s.id));
         flash(
           r.status === "SENT"
             ? `✓ "${s.name}" sent.`
@@ -356,7 +357,7 @@ export function SchedulesTab({ projectId, plans, defaultPlanId }: { projectId: s
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {schedules.map((s) => {
-              const plan = plans.find((p) => p.id === s.sections.find((x) => x.plan_id)?.plan_id);
+              const plan = plans.find((p) => p.id === s.sections.find((x) => x.test_plan_id)?.test_plan_id);
               return (
                 <div key={s.id} style={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "6px", padding: "10px 12px", opacity: s.enabled ? 1 : 0.6 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>

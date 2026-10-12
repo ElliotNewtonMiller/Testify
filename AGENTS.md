@@ -12,7 +12,7 @@ Testify is an open-source, self-hosted test case management app meant to replace
 - Admins can define custom fields (six types) on cases and suites.
 
 **Execution:**
-- A test plan pins a set of cases at a version; a test run belongs to a plan. The database says `test_runs`/`test_results`; parts of the API and server code still say "build" and "execution" (being renamed, see `docs/api_roadmap.md` step 1).
+- A test plan pins a set of cases at a version; a test run belongs to a plan. Runs and results are `test_runs`/`test_results` in the database and "runs"/"results" in the API (older docs and audit rows say "build" and "execution").
 - Results are recorded per case in a run: by people with hotkeys in the web app, or by CI through the batch API.
 
 **Everything else:**
@@ -62,18 +62,18 @@ npm workspaces (root `package.json`: `packages/*`, `apps/*`). Use `npm run <scri
 apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createServer + startup); src/dev.ts for development.
   src/routes/      One file per area: auth, admin, projects (projects/plans/runs), specEditing (suites/cases/versions/move),
                    testPlanCases (spec tree, plan membership, Execute queue), customFields, caseSearch, ingestion (import),
-                   exports, batchExecution, reports, reportEmail, emailAdmin, apiTokens. The single-result route
-                   POST /api/v1/executions is in server.ts.
+                   exports, results (one result), batchExecution (CI results), reports, reportEmail, emailAdmin, apiTokens.
   src/services/    Logic shared by routes: adminGuard, caseFilterService, reportService, reportEmailService, mailer,
                    rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets.
   src/middleware/auth.ts   Authentication and permission checks (see "Auth and permissions").
   src/mcp/mcpServer.ts     POST /mcp: read-only MCP tools over the same services.
-  src/{config,errors,audit,observability,webApp,sessionCookie,sessionLifetime,buildAutoClose}.ts
+  src/{config,errors,audit,observability,webApp,sessionCookie,sessionLifetime,runAutoClose}.ts
   scripts/build.mjs        esbuild bundle (workspace packages bundled, other dependencies external).
 apps/web/          React + Vite. src/App.tsx (~680 lines) calls the hooks, provides the context, lays out panes and modals, wires hotkeys.
   src/hooks/       One hook per feature: useSession, useScope (project/plan/run), useExecutionWorkspace, useSpecTree,
                    useCaseSearch, useExecution, useSpecSelection, useCaseEditor, useSuiteEditor, useHotkeyEngine, useFocusFSM, ...
   src/components/  layout/ (header, banners), workspace/ (panes 1-2), spec/ and execute/ (pane 3), reports/ (Reports view), modals.
+  src/api/         routes.ts (every API address, as functions) and errors.ts (reading error messages).
   src/app/         AppContext (useApp) and shared messages. src/utils/ pure helpers. src/types.ts shared types.
 packages/core/     Domain logic with no database, each module unit-tested: ingestion/ (parsers), export/, reporting/
                    (report math, catalog, email rendering, schedules), rbac/ (permission registry, default roles),
@@ -97,13 +97,13 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
 **Plans:**
 - Only APPROVED cases can be added to a plan, unless the project setting `allow_draft_plan_linking` is true. That setting has no UI.
 - Removing a case that has results **retires** the link (`test_plan_cases.removed_at`) after a confirmation, rather than deleting it. Old runs keep the case where it has a result; it's read-only there unless re-added.
-- A run's contents follow `ExecutionRepository.getFinalResultsForRuns`, the one rule everything uses: reports, the Execute queue, and the verdict filter.
+- A run's contents follow `TestResultRepository.getFinalResultsForRuns`, the one rule everything uses: reports, the Execute queue, and the verdict filter.
 
 **Results:**
 - Results are never edited; a new row becomes the latest.
 - Re-recording a case that already has a result in the run needs `EXECUTE_OVERWRITE`. The exception is re-sending your own latest verdict (adding notes).
 - Results are refused on a CLOSED run and on retired links.
-- A run auto-closes the first time every case has a result, once only (marked by its `BUILD_AUTO_CLOSED` audit row).
+- A run auto-closes the first time every case has a result, once only (marked by its `RUN_AUTO_CLOSED` audit row; older runs by `BUILD_AUTO_CLOSED`).
 - Manual (UI) results are never timed: duration is null. Only batch/CI results carry durations.
 
 **Custom fields:**
@@ -160,13 +160,19 @@ docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_
 
 ## Server conventions
 
-- **Routes:** nest project data under `/api/v1/projects/:projectId/...`, and verify every other id in the route belongs to that project (404 otherwise).
+- **Routes** (the full map is in `docs/api_roadmap.md` step 1):
+  - Lists and creation sit under the parent (`/projects/:projectId/plans`); each item has its own address (`/plans/:planId`, `/runs/:runId`, `/cases/:caseId`, ...).
+  - `authenticateRequest` works out the project from every id the request names (path, query and JSON body) and stores it as `request.projectId`; ids from two projects get `400 PROJECTS_DIFFER`. Routes still check that other ids in the request belong to that project.
+  - Verbs: `PATCH` for a partial update; `PUT` only to replace a whole thing (a custom-field value, a user's override set, a report schedule, the email settings); `?force=true` for "delete anyway".
+  - Responses: create answers 201 with the item wrapped in its name (`{ "plan": {...} }`), update 200 the same way, delete 204 with no body. Lists are `{ "plans": [...] }`.
+  - Fields are snake_case, and ids are named after their database columns (`test_plan_id`, `test_run_id`, `test_case_id`, ...). Never "build" or "execution" in a new address, field or code.
+  - In the web app, take addresses from `apps/web/src/api/routes.ts`.
 - **Errors:**
   - Every error is problem details (`application/problem+json`): `type`, `title`, `status`, `code`, `detail` (the message people see), the request path as `instance`, `timestamp`, optional `invalid_params: [{ name, reason }]`, and extension fields in snake_case (e.g. `required_permission`, `project_ids`).
   - Send errors with `sendError(reply, status, detail, { code?, invalid_params?, ...extensions })` from `errors.ts`, or one of its specific `send*Error` helpers. `code` defaults from the status (404 → `NOT_FOUND`).
   - Throw a plain `Error` only when its message is meant for users (`isPublicError`).
   - Anything else becomes a generic 500 with a `request_id`, and the details go only to the log. Unknown addresses get a 404 in the same format.
-  - Exceptions: the MCP endpoint answers in JSON-RPC (the protocol requires it), and a batch request's per-item results carry their own `error` text inside a normal response.
+  - Exceptions: the MCP endpoint answers in JSON-RPC (the protocol requires it), and a batch request's per-item results carry their own `detail`/`code` inside a normal response.
   - In the web app, read error messages with `errorMessage(body)` from `apps/web/src/api/errors.ts`.
 - **Audit rows:**
   - Write one for every security-relevant change, with `...requestOrigin(request)` (real address and User-Agent).

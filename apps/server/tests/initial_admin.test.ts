@@ -59,11 +59,11 @@ describe('A user who must change their password', () => {
     expect(JSON.parse(me.payload).user.must_change_password).toBe(true);
 
     // Has to actually pick a new, different, policy-compliant password.
-    expect(JSON.parse((await call('PUT', '/api/v1/auth/credentials', token, { newEmail: 'a@b.c' })).payload).code).toBe('PASSWORD_CHANGE_REQUIRED');
-    expect(JSON.parse((await call('PUT', '/api/v1/auth/credentials', token, { newPassword: 'password', currentPassword: 'password' })).payload).code).toBe('PASSWORD_UNCHANGED');
-    expect((await call('PUT', '/api/v1/auth/credentials', token, { newPassword: 'short', currentPassword: 'password' })).statusCode).toBe(400);
+    expect(JSON.parse((await call('PATCH', '/api/v1/auth/me', token, { email: 'a@b.c' })).payload).code).toBe('PASSWORD_CHANGE_REQUIRED');
+    expect(JSON.parse((await call('PATCH', '/api/v1/auth/me', token, { password: 'password', current_password: 'password' })).payload).code).toBe('PASSWORD_UNCHANGED');
+    expect((await call('PATCH', '/api/v1/auth/me', token, { password: 'short', current_password: 'password' })).statusCode).toBe(400);
 
-    const changed = await call('PUT', '/api/v1/auth/credentials', token, { newPassword: 'a-long-new-admin-passphrase', currentPassword: 'password' });
+    const changed = await call('PATCH', '/api/v1/auth/me', token, { password: 'a-long-new-admin-passphrase', current_password: 'password' });
     expect(changed.statusCode).toBe(200);
     expect(JSON.parse(changed.payload).user.must_change_password).toBe(false);
 

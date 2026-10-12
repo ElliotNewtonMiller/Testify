@@ -12,6 +12,7 @@ import {
 import { jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface SpecSelectionOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -191,7 +192,7 @@ export function useSpecSelection({
     setDragPayload(null);
     if (!payload || !selectedProjectId) return;
     try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/spec-move`, {
+      const res = await fetch(api.move(selectedProjectId), {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({

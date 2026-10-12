@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 
 export interface TestCaseGridItem {
-  plan_case_id: string;
-  case_id?: string;
+  test_plan_case_id: string;
+  test_case_id?: string;
   external_id: string;
   title: string;
   priority: string;
@@ -186,7 +186,7 @@ export const TestCaseQueueGrid: React.FC<TestCaseQueueGridProps> = ({
 
             return (
               <div
-                key={c.plan_case_id || `${c.external_id}-${actualIndex}`}
+                key={c.test_plan_case_id || `${c.external_id}-${actualIndex}`}
                 onClick={() => onSelectCase(actualIndex)}
                 style={{
                   height: `${ROW_HEIGHT}px`, // Strict 32px Height

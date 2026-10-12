@@ -4,6 +4,7 @@ import type { CustomFieldValueEntry } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface SuiteEditorOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -75,7 +76,7 @@ export function useSuiteEditor({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/test-suites/${selectedSuiteId}/custom-field-values`, {
+        const res = await fetch(api.suiteCustomFields(selectedSuiteId), {
           headers: authHeaders(),
         });
         if (!cancelled) setSuiteCustomFieldValues(res.ok ? (await res.json()).values : null);
@@ -102,7 +103,7 @@ export function useSuiteEditor({
       });
       try {
         const res = await fetch(
-          `/api/v1/test-suites/${requestSuiteId}/custom-field-values/${definitionId}`,
+          api.suiteCustomField(requestSuiteId, definitionId),
           {
             method: "PUT",
             headers: jsonHeaders(),
@@ -149,10 +150,10 @@ export function useSuiteEditor({
     try {
       const isCreate = suiteFormState.mode === "CREATE";
       const url = isCreate
-        ? `/api/v1/projects/${selectedProjectId}/test-suites`
-        : `/api/v1/projects/${selectedProjectId}/test-suites/${suiteFormState.targetId}`;
+        ? api.projectSuites(selectedProjectId)
+        : api.suite(suiteFormState.targetId!);
       const res = await fetch(url, {
-        method: isCreate ? "POST" : "PUT",
+        method: isCreate ? "POST" : "PATCH",
         headers: jsonHeaders(),
         body: JSON.stringify({
           name: suiteFormState.name,
@@ -180,8 +181,8 @@ export function useSuiteEditor({
     async (suiteId: string, name: string): Promise<boolean> => {
       if (!selectedProjectId) return false;
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-suites/${suiteId}`, {
-          method: "PUT",
+        const res = await fetch(api.suite(suiteId), {
+          method: "PATCH",
           headers: jsonHeaders(),
           body: JSON.stringify({ name }),
         });
@@ -208,7 +209,7 @@ export function useSuiteEditor({
     async (suiteId: string) => {
       if (!selectedProjectId) return;
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-suites/${suiteId}`, {
+        const res = await fetch(api.suite(suiteId), {
           method: "DELETE",
           headers: authHeaders(),
         });
@@ -233,10 +234,7 @@ export function useSuiteEditor({
   const handleConfirmDeleteSuite = useCallback(async () => {
     if (!deleteSuitePrompt || !selectedProjectId) return;
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/test-suites/${deleteSuitePrompt.id}?force=true`,
-        { method: "DELETE", headers: authHeaders() },
-      );
+      const res = await fetch(api.suite(deleteSuitePrompt.id, true), { method: "DELETE", headers: authHeaders() });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
         throw new Error(errorMessage(data) || "Failed to delete suite");

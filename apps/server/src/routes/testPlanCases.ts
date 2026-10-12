@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
@@ -37,7 +37,7 @@ function parseAllowDraftPlanLinking(settings: string | null | undefined): boolea
 /**
  * Whether a test case can be linked to a project's test plans right now: its latest
  * version must be APPROVED, unless the project's `allow_draft_plan_linking` setting is on.
- * Shared by the explicit toggle/cascade routes below and batchExecution.ts's auto-link path,
+ * Shared by the explicit toggle/whole-suite routes below and batchExecution.ts's auto-link path,
  * so "must be Approved" means the same thing everywhere plan membership can be created.
  */
 export async function resolveCaseLinkability(
@@ -109,7 +109,7 @@ export async function registerTestPlanCaseRoutes(
   const resultRepo = new TestResultRepository(db);
   const runRepo = new TestRunRepository(db);
 
-  // GET /api/v1/projects/:projectId/spec-tree?plan_id=...&include_deprecated=true -- drives
+  // GET /api/v1/projects/:projectId/spec-tree?test_plan_id=...&include_deprecated=true -- drives
   // Specification mode's whole 3-pane view in one fetch: nested suite tree (with
   // plan-inclusion counts) + a lightweight case list (no steps -- see the latest-version
   // endpoint below for detail). Cases whose latest version is DEPRECATED are omitted (from
@@ -117,8 +117,8 @@ export async function registerTestPlanCaseRoutes(
   app.get('/api/v1/projects/:projectId/spec-tree', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { projectId } = request.params as { projectId: string };
-    const { plan_id: planId, include_deprecated: includeDeprecatedParam } = request.query as {
-      plan_id?: string;
+    const { test_plan_id: planId, include_deprecated: includeDeprecatedParam } = request.query as {
+      test_plan_id?: string;
       include_deprecated?: string;
     };
     const includeDeprecated = includeDeprecatedParam === 'true' || includeDeprecatedParam === '1';
@@ -178,8 +178,8 @@ export async function registerTestPlanCaseRoutes(
         test_suite_id: c.test_suite_id,
         latest_version: latestVersion,
         in_plan: inPlan,
-        plan_case_id: planCase?.id ?? null,
-        plan_version_id: planCase?.test_case_version_id ?? null,
+        test_plan_case_id: planCase?.id ?? null,
+        pinned_test_case_version_id: planCase?.test_case_version_id ?? null,
         is_pinned_version_stale: Boolean(
           planCase && latestVersion && planCase.test_case_version_id !== latestVersion.id
         ),
@@ -204,9 +204,9 @@ export async function registerTestPlanCaseRoutes(
     };
   });
 
-  // GET /api/v1/test-cases/:caseId/latest-version -- lazy per-case detail (summary,
+  // GET /api/v1/cases/:caseId/versions/latest -- lazy per-case detail (summary,
   // preconditions, steps), fetched only when a case row is opened in Specification mode.
-  app.get('/api/v1/test-cases/:caseId/latest-version', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/cases/:caseId/versions/latest', { preHandler: requirePermission('SPEC_VIEW', db, jwtSecret) }, async (request, reply) => {
 
     const { caseId } = request.params as { caseId: string };
     const testCase = await caseRepo.findById(caseId);
@@ -222,26 +222,26 @@ export async function registerTestPlanCaseRoutes(
     return { test_case: testCase, version: latestVersion };
   });
 
-  // GET /api/v1/test-plans/:planId/cases?build_id=... -- Execution mode's case queue for a
-  // plan. With build_id (or defaulting to the plan's most recent build), each case carries
+  // GET /api/v1/plans/:planId/cases?test_run_id=... -- Execution mode's case queue for a
+  // plan. With test_run_id (or defaulting to the plan's most recent run), each case carries
   // its latest result in that run.
-  app.get('/api/v1/test-plans/:planId/cases', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
+  app.get('/api/v1/plans/:planId/cases', { preHandler: requireAnyPermission(EXECUTION_READ_PERMISSIONS, db, jwtSecret) }, async (request, reply) => {
 
     const { planId } = request.params as { planId: string };
-    const { build_id: requestedBuildId } = request.query as { build_id?: string };
+    const { test_run_id: requestedRunId } = request.query as { test_run_id?: string };
 
     const plan = await planRepo.findById(planId);
     if (!plan) {
       return sendError(reply, 404, 'Test plan not found');
     }
 
-    const builds = await runRepo.findByTestPlan(planId);
-    const buildId = requestedBuildId || builds[0]?.id;
+    const runs = await runRepo.findByTestPlan(planId);
+    const runId = requestedRunId || runs[0]?.id;
 
     // Which cases this run contains, and each one's latest result in it -- the shared rule in
     // TestResultRepository.getFinalResultsForRuns: active links, plus cases removed from the
     // plan that have a result in this run (shown read-only). With no run yet: active links.
-    const finals = buildId ? await resultRepo.getFinalResultsForRuns(planId, [buildId]) : [];
+    const finals = runId ? await resultRepo.getFinalResultsForRuns(planId, [runId]) : [];
     const finalByLink = new Map(finals.map((f) => [f.plan_case_id, f]));
 
     let caseQuery = db
@@ -249,46 +249,46 @@ export async function registerTestPlanCaseRoutes(
       .innerJoin('test_cases as tc', 'tc.id', 'tpc.test_case_id')
       .innerJoin('test_case_versions as tcv', 'tcv.id', 'tpc.test_case_version_id')
       .select([
-        'tpc.id as plan_case_id',
+        'tpc.id as test_plan_case_id',
         'tpc.position',
-        'tc.id as case_id',
+        'tc.id as test_case_id',
         'tc.test_suite_id',
         'tc.external_id',
         'tc.title',
         'tc.priority',
         'tc.execution_type',
-        'tcv.id as version_id',
+        'tcv.id as test_case_version_id',
         'tcv.version_number',
         'tcv.status as version_status',
         'tcv.summary',
         'tcv.preconditions',
       ])
       .where('tpc.test_plan_id', '=', planId);
-    if (buildId && finals.length === 0) return { plan, builds, cases: [] }; // the plan has no cases
-    caseQuery = buildId ? caseQuery.where('tpc.id', 'in', finals.map((f) => f.plan_case_id)) : caseQuery.where('tpc.removed_at', 'is', null);
+    if (runId && finals.length === 0) return { plan, runs, cases: [] }; // the plan has no cases
+    caseQuery = runId ? caseQuery.where('tpc.id', 'in', finals.map((f) => f.plan_case_id)) : caseQuery.where('tpc.removed_at', 'is', null);
     const rawCases = await caseQuery.orderBy('tpc.position', 'asc').execute();
 
     const cases = await Promise.all(
       rawCases.map(async (c) => {
-        const steps = await versionRepo.getSteps(c.version_id);
-        const final = finalByLink.get(c.plan_case_id);
+        const steps = await versionRepo.getSteps(c.test_case_version_id);
+        const final = finalByLink.get(c.test_plan_case_id);
         return {
           ...c,
           steps,
           latest_verdict: final?.verdict || 'UNTESTED',
-          latest_execution_id: final?.test_result_id ?? null,
+          latest_test_result_id: final?.test_result_id ?? null,
           latest_notes: final?.notes ?? null,
           removed_from_plan: final?.removed_from_plan ?? false,
         };
       })
     );
 
-    return { plan, builds, cases };
+    return { plan, runs, cases };
   });
 
-  // POST /api/v1/test-plans/:planId/cases -- per-case plan-inclusion toggle, ON.
+  // POST /api/v1/plans/:planId/cases -- per-case plan-inclusion toggle, ON.
   app.post(
-    '/api/v1/test-plans/:planId/cases',
+    '/api/v1/plans/:planId/cases',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
@@ -315,7 +315,7 @@ export async function registerTestPlanCaseRoutes(
       // Idempotent: re-toggling an already-included case just returns the existing row.
       const existing = await planRepo.getPinnedCase(planId, testCaseId);
       if (existing) {
-        return reply.status(200).send(existing);
+        return reply.status(200).send({ plan_case: existing });
       }
 
       const { linkable, latestVersion } = await resolveCaseLinkability(db, plan.project_id, testCaseId);
@@ -351,16 +351,16 @@ export async function registerTestPlanCaseRoutes(
         })
         .execute();
 
-      return reply.status(201).send(planCase);
+      return reply.status(201).send({ plan_case: planCase });
     }
   );
 
-  // DELETE /api/v1/test-plans/:planId/cases/:caseId[?force=true] -- per-case plan-inclusion
+  // DELETE /api/v1/plans/:planId/cases/:caseId[?force=true] -- per-case plan-inclusion
   // toggle, OFF. A case with results needs force=true (409 CASE_HAS_RESULTS otherwise, with
   // counts for a confirmation) and is then retired rather than deleted: its results stay in
   // the runs that recorded them; future runs don't include it.
   app.delete(
-    '/api/v1/test-plans/:planId/cases/:caseId',
+    '/api/v1/plans/:planId/cases/:caseId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
       const actor = request.user!;
@@ -407,22 +407,16 @@ export async function registerTestPlanCaseRoutes(
     }
   );
 
-  // POST /api/v1/test-plans/:planId/suites/:suiteId/cascade -- suite-level toggle, cascading
-  // to every case in the subtree in one call. ADD skips (and reports) cases that fail the
-  // Approved-only rule. REMOVE: if any case has results, nothing changes without
-  // force: true (409 CASE_HAS_RESULTS with counts); with it, those cases are retired (their
-  // results stay in old runs) and the rest unlinked.
-  app.post(
-    '/api/v1/test-plans/:planId/suites/:suiteId/cascade',
-    { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
-    async (request, reply) => {
+  // POST /api/v1/plans/:planId/suites/:suiteId/cases -- adds every case in the suite's subtree
+  // to the plan in one call, skipping (and reporting) cases that fail the Approved-only rule.
+  // DELETE /api/v1/plans/:planId/suites/:suiteId/cases[?force=true] -- removes them. If any case
+  // has results, nothing changes without force=true (409 CASE_HAS_RESULTS with counts); with it,
+  // those cases are retired (their results stay in old runs) and the rest unlinked.
+  const suiteCases = (action: 'ADD' | 'REMOVE') =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
       const actor = request.user!;
       const { planId, suiteId } = request.params as { planId: string; suiteId: string };
-      const { action, force } = (request.body as { action?: 'ADD' | 'REMOVE'; force?: boolean }) || {};
-
-      if (action !== 'ADD' && action !== 'REMOVE') {
-        return sendError(reply, 400, 'action must be ADD or REMOVE');
-      }
+      const force = (request.query as { force?: string }).force === 'true';
 
       const plan = await planRepo.findById(planId);
       if (!plan) {
@@ -466,7 +460,7 @@ export async function registerTestPlanCaseRoutes(
         await planRepo.addCasesBulk(planId, entries);
         added = entries.filter((e) => !beforeIds.has(e.test_case_id)).length;
       } else {
-        const outcome = await planRepo.removeCases(planId, cases.map((c) => c.id), actor.id, { force: force === true });
+        const outcome = await planRepo.removeCases(planId, cases.map((c) => c.id), actor.id, { force });
         if (outcome.blocked) {
           return sendCaseHasResultsError(reply, { label: `suite ${suite.name}`, scope: 'suite', ...outcome }, request.url);
         }
@@ -499,6 +493,8 @@ export async function registerTestPlanCaseRoutes(
         .execute();
 
       return reply.status(200).send({ added, removed, retired, skipped });
-    }
-  );
+    };
+  const suiteCasesOptions = { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) };
+  app.post('/api/v1/plans/:planId/suites/:suiteId/cases', suiteCasesOptions, suiteCases('ADD'));
+  app.delete('/api/v1/plans/:planId/suites/:suiteId/cases', suiteCasesOptions, suiteCases('REMOVE'));
 }

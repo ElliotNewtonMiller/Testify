@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { UserProfile } from "../components/AuthModal";
 import { SESSION_ENDED_NOTICE } from "../app/messages";
 import { authHeaders, watchForEndedSession } from "../utils/session";
+import { api } from "../api/routes";
 
 /**
  * Who is signed in, and signing in and out. The sign-in itself is an HttpOnly cookie (see
@@ -54,7 +55,7 @@ export function useSession(showToast: (msg: string) => void) {
         // Storage unavailable -- nothing to clean up.
       }
 
-      const res = await fetch("/api/v1/auth/me", { headers: authHeaders() });
+      const res = await fetch(api.me, { headers: authHeaders() });
 
       if (res.ok) {
         const data = await res.json();
@@ -80,7 +81,7 @@ export function useSession(showToast: (msg: string) => void) {
   const handleLogout = useCallback(async () => {
     try {
       // The server ends this session and clears the cookie.
-      await fetch("/api/v1/auth/logout", { method: "POST", headers: authHeaders() });
+      await fetch(api.logout, { method: "POST", headers: authHeaders() });
     } catch {
       // Ignore network error on logout
     }

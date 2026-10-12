@@ -50,14 +50,14 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const { token: viewerToken } = await createAndLoginAs(app, adminToken, 'Viewer');
 
     const attempts = [
-      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-suites`, payload: { name: 'X' } },
-      { method: 'PUT', url: `/api/v1/projects/${seed.projectId}/test-suites/${seed.suiteId}`, payload: { name: 'X' } },
-      { method: 'DELETE', url: `/api/v1/projects/${seed.projectId}/test-suites/${seed.suiteId}` },
-      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases`, payload: { test_suite_id: seed.suiteId, title: 'X' } },
-      { method: 'PUT', url: `/api/v1/projects/${seed.projectId}/test-cases/${seed.caseIds[0]}`, payload: { title: 'X' } },
-      { method: 'DELETE', url: `/api/v1/projects/${seed.projectId}/test-cases/${seed.caseIds[0]}` },
-      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases/${seed.caseIds[0]}/versions/draft` },
-      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-case-versions/dummy/approve` },
+      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/suites`, payload: { name: 'X' } },
+      { method: 'PATCH', url: `/api/v1/suites/${seed.suiteId}`, payload: { name: 'X' } },
+      { method: 'DELETE', url: `/api/v1/suites/${seed.suiteId}` },
+      { method: 'POST', url: `/api/v1/projects/${seed.projectId}/cases`, payload: { test_suite_id: seed.suiteId, title: 'X' } },
+      { method: 'PATCH', url: `/api/v1/cases/${seed.caseIds[0]}`, payload: { title: 'X' } },
+      { method: 'DELETE', url: `/api/v1/cases/${seed.caseIds[0]}` },
+      { method: 'POST', url: `/api/v1/cases/${seed.caseIds[0]}/versions` },
+      { method: 'POST', url: `/api/v1/versions/dummy/approve` },
     ] as const;
 
     for (const attempt of attempts) {
@@ -78,7 +78,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const createRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${testerToken}` },
       payload: { test_suite_id: seed.suiteId, title: 'Tester-created case' },
     });
@@ -87,14 +87,14 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const approveRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${versionId}/approve`,
+      url: `/api/v1/versions/${versionId}/approve`,
       headers: { authorization: `Bearer ${testerToken}` },
     });
     expect(approveRes.statusCode).toBe(403);
 
     const deleteRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-suites/${seed.suiteId}`,
+      url: `/api/v1/suites/${seed.suiteId}`,
       headers: { authorization: `Bearer ${testerToken}` },
     });
     expect(deleteRes.statusCode).toBe(403);
@@ -106,7 +106,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const createRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-suites`,
+      url: `/api/v1/projects/${seed.projectId}/suites`,
       headers: { authorization: `Bearer ${token}` },
       payload: { name: 'New Suite' },
     });
@@ -114,8 +114,8 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const suite = JSON.parse(createRes.payload).suite;
 
     const renameRes = await app.inject({
-      method: 'PUT',
-      url: `/api/v1/projects/${seed.projectId}/test-suites/${suite.id}`,
+      method: 'PATCH',
+      url: `/api/v1/suites/${suite.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { name: 'Renamed Suite', parent_suite_id: seed.suiteId },
     });
@@ -131,7 +131,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_suite_id: seed.suiteId, title: 'New Case', summary: 'A summary', steps: [{ step_number: 1, action: 'a', expected_result: 'b' }] },
     });
@@ -151,7 +151,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_suite_id: seed.suiteId, title: 'Tester Case' },
     });
@@ -178,7 +178,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const createRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_suite_id: seed.suiteId, title: 'Case missing a required field' },
     });
@@ -190,7 +190,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const approveAttempt = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${created.version.id}/approve`,
+      url: `/api/v1/versions/${created.version.id}/approve`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(approveAttempt.statusCode).toBe(422);
@@ -200,7 +200,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const setValueRes = await app.inject({
       method: 'PUT',
-      url: `/api/v1/test-cases/${created.test_case.id}/custom-field-values/${definitionId}`,
+      url: `/api/v1/cases/${created.test_case.id}/custom-fields/${definitionId}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { value: 'HIGH' },
     });
@@ -208,7 +208,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const approveAfterValue = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${created.version.id}/approve`,
+      url: `/api/v1/versions/${created.version.id}/approve`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(approveAfterValue.statusCode).toBe(200);
@@ -236,7 +236,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const createRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_suite_id: seed.suiteId, title: 'Case with a defaulted required field' },
     });
@@ -254,8 +254,8 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     expect(versionRow.status).toBe('APPROVED');
 
     const res = await app.inject({
-      method: 'PUT',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}`,
+      method: 'PATCH',
+      url: `/api/v1/cases/${caseId}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { title: 'Renamed while approved', priority: 'LOW' },
     });
@@ -272,8 +272,8 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const versionRow = await db.selectFrom('test_case_versions').selectAll().where('test_case_id', '=', caseId).executeTakeFirstOrThrow();
 
     const res = await app.inject({
-      method: 'PUT',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${versionRow.id}`,
+      method: 'PATCH',
+      url: `/api/v1/versions/${versionRow.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { summary: 'Trying to edit an approved version' },
     });
@@ -288,7 +288,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const draftRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}/versions/draft`,
+      url: `/api/v1/cases/${caseId}/versions`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(draftRes.statusCode).toBe(201);
@@ -298,14 +298,14 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const secondDraftRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}/versions/draft`,
+      url: `/api/v1/cases/${caseId}/versions`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(secondDraftRes.statusCode).toBe(409);
 
     const editRes = await app.inject({
-      method: 'PUT',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${draft.id}`,
+      method: 'PATCH',
+      url: `/api/v1/versions/${draft.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { preconditions: 'Updated preconditions', steps: [{ step_number: 1, action: 'New action', expected_result: 'New result' }] },
     });
@@ -317,7 +317,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const approveRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${draft.id}/approve`,
+      url: `/api/v1/versions/${draft.id}/approve`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(approveRes.statusCode).toBe(200);
@@ -325,7 +325,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const reapproveRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-case-versions/${draft.id}/approve`,
+      url: `/api/v1/versions/${draft.id}/approve`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(reapproveRes.statusCode).toBe(422);
@@ -338,7 +338,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const createRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_suite_id: seed.suiteId, title: 'Unused case' },
     });
@@ -346,7 +346,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const deleteRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}`,
+      url: `/api/v1/cases/${caseId}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(deleteRes.statusCode).toBe(204);
@@ -360,14 +360,14 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     // Link isn't guaranteed in the base seed for every case, so add one via the plan-curation route.
     await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/cases`,
+      url: `/api/v1/plans/${seed.planId}/cases`,
       headers: { authorization: `Bearer ${token}` },
       payload: { test_case_id: caseId },
     });
 
     const blockedRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}`,
+      url: `/api/v1/cases/${caseId}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(blockedRes.statusCode).toBe(409);
@@ -375,7 +375,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const forcedRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-cases/${caseId}?force=true`,
+      url: `/api/v1/cases/${caseId}?force=true`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(forcedRes.statusCode).toBe(204);
@@ -387,7 +387,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const blockedRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-suites/${seed.suiteId}`,
+      url: `/api/v1/suites/${seed.suiteId}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(blockedRes.statusCode).toBe(409);
@@ -395,7 +395,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     const forcedRes = await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/test-suites/${seed.suiteId}?force=true`,
+      url: `/api/v1/suites/${seed.suiteId}?force=true`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(forcedRes.statusCode).toBe(204);
@@ -410,7 +410,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     // Admin holds SPEC_AUTO_APPROVE, so v1 is created APPROVED.
     const created = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${P}/test-cases`,
+      url: `/api/v1/projects/${P}/cases`,
       headers: h,
       payload: { test_suite_id: seed.suiteId, title: 'Repin', summary: 'v1 summary', steps: [{ step_number: 1, action: 'v1 action', expected_result: 'ok' }] },
     });
@@ -420,21 +420,21 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const planRepo = new TestPlanRepository(db);
     const lockedPlan = await planRepo.create({ project_id: P, name: 'Frozen plan' });
     for (const planId of [seed.planId, lockedPlan.id]) {
-      const add = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${planId}/cases`, headers: h, payload: { test_case_id: caseId } });
+      const add = await app.inject({ method: 'POST', url: `/api/v1/plans/${planId}/cases`, headers: h, payload: { test_case_id: caseId } });
       expect(add.statusCode).toBe(201);
     }
     await planRepo.update(lockedPlan.id, { status: 'LOCKED' });
 
     const execView = async (planId: string) => {
-      const res = await app.inject({ method: 'GET', url: `/api/v1/test-plans/${planId}/cases`, headers: h });
-      return JSON.parse(res.payload).cases.find((c: any) => c.case_id === caseId);
+      const res = await app.inject({ method: 'GET', url: `/api/v1/plans/${planId}/cases`, headers: h });
+      return JSON.parse(res.payload).cases.find((c: any) => c.test_case_id === caseId);
     };
 
-    const draft = await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`, headers: h, payload: {} });
+    const draft = await app.inject({ method: 'POST', url: `/api/v1/cases/${caseId}/versions`, headers: h, payload: {} });
     const draftId = JSON.parse(draft.payload).version.id;
     await app.inject({
-      method: 'PUT',
-      url: `/api/v1/projects/${P}/test-case-versions/${draftId}`,
+      method: 'PATCH',
+      url: `/api/v1/versions/${draftId}`,
       headers: h,
       payload: { summary: 'v2 summary', steps: [{ step_number: 1, action: 'v2 action', expected_result: 'ok' }] },
     });
@@ -444,7 +444,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     expect(during.version_number).toBe(1);
     expect(during.summary).toBe('v1 summary');
 
-    const approve = await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-case-versions/${draftId}/approve`, headers: h });
+    const approve = await app.inject({ method: 'POST', url: `/api/v1/versions/${draftId}/approve`, headers: h });
     expect(approve.statusCode).toBe(200);
     expect(JSON.parse(approve.payload).repinned_plan_count).toBe(1);
 
@@ -465,7 +465,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       const P = seed.projectId;
       const created = await app.inject({
         method: 'POST',
-        url: `/api/v1/projects/${P}/test-cases`,
+        url: `/api/v1/projects/${P}/cases`,
         headers: h,
         payload: { test_suite_id: seed.suiteId, title: 'Lifecycle', steps: [{ step_number: 1, action: 'a', expected_result: 'b' }] },
       });
@@ -477,11 +477,11 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     it('round-trips APPROVED -> DEPRECATED -> APPROVED, blocks editing while deprecated, and hides it from spec-tree by default', async () => {
       const { app, h, P, caseId, v1Id, seed } = await setup();
 
-      const dep = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      const dep = await post(app, h, `/api/v1/versions/${v1Id}/deprecate`);
       expect(dep.statusCode).toBe(200);
       expect(JSON.parse(dep.payload).version.status).toBe('DEPRECATED');
 
-      const draft = await post(app, h, `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`);
+      const draft = await post(app, h, `/api/v1/cases/${caseId}/versions`);
       expect(draft.statusCode).toBe(409);
 
       const treeDefault = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/projects/${P}/spec-tree`, headers: h })).payload);
@@ -494,35 +494,35 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       expect(countOf(treeAll)).toBe(countOf(treeDefault) + 1);
 
       // Not restorable twice / not deprecatable twice.
-      expect((await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`)).statusCode).toBe(422);
-      const restore = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/restore`);
+      expect((await post(app, h, `/api/v1/versions/${v1Id}/deprecate`)).statusCode).toBe(422);
+      const restore = await post(app, h, `/api/v1/versions/${v1Id}/restore`);
       expect(restore.statusCode).toBe(200);
       expect(JSON.parse(restore.payload).version.status).toBe('APPROVED');
-      expect((await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/restore`)).statusCode).toBe(422);
+      expect((await post(app, h, `/api/v1/versions/${v1Id}/restore`)).statusCode).toBe(422);
     });
 
     it('rejects deprecating a draft or a non-latest version, and requires SPEC_APPROVE', async () => {
       const { app, h, P, caseId, v1Id, token } = await setup();
 
-      const draft = await post(app, h, `/api/v1/projects/${P}/test-cases/${caseId}/versions/draft`);
+      const draft = await post(app, h, `/api/v1/cases/${caseId}/versions`);
       const v2Id = JSON.parse(draft.payload).version.id;
-      const depDraft = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v2Id}/deprecate`);
+      const depDraft = await post(app, h, `/api/v1/versions/${v2Id}/deprecate`);
       expect(depDraft.statusCode).toBe(422);
       expect(JSON.parse(depDraft.payload).code).toBe('VERSION_NOT_APPROVED');
-      const depOld = await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      const depOld = await post(app, h, `/api/v1/versions/${v1Id}/deprecate`);
       expect(depOld.statusCode).toBe(422);
       expect(JSON.parse(depOld.payload).code).toBe('VERSION_NOT_LATEST');
 
       const tester = await createAndLoginAs(app, token, 'Tester');
-      const forbidden = await post(app, { authorization: `Bearer ${tester.token}` }, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
+      const forbidden = await post(app, { authorization: `Bearer ${tester.token}` }, `/api/v1/versions/${v1Id}/deprecate`);
       expect(forbidden.statusCode).toBe(403);
     });
 
     it('a deprecated case cannot be linked to a plan, even when draft linking is allowed', async () => {
       const { app, h, P, caseId, v1Id, seed } = await setup();
       await new ProjectRepository(serverInstance.db).update(P, { settings: JSON.stringify({ allow_draft_plan_linking: true }) });
-      await post(app, h, `/api/v1/projects/${P}/test-case-versions/${v1Id}/deprecate`);
-      const add = await app.inject({ method: 'POST', url: `/api/v1/test-plans/${seed.planId}/cases`, headers: h, payload: { test_case_id: caseId } });
+      await post(app, h, `/api/v1/versions/${v1Id}/deprecate`);
+      const add = await app.inject({ method: 'POST', url: `/api/v1/plans/${seed.planId}/cases`, headers: h, payload: { test_case_id: caseId } });
       expect(add.statusCode).toBe(422);
     });
   });
@@ -535,10 +535,10 @@ describe('Spec-mode suite/case create/edit/delete', () => {
       const P = seed.projectId;
       const mkSuite = async (name: string, parent: string | null = null) =>
         JSON.parse(
-          (await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/test-suites`, headers: h, payload: { name, parent_suite_id: parent } })).payload
+          (await app.inject({ method: 'POST', url: `/api/v1/projects/${P}/suites`, headers: h, payload: { name, parent_suite_id: parent } })).payload
         ).suite;
       const move = (payload: unknown, headers = h) =>
-        app.inject({ method: 'POST', url: `/api/v1/projects/${P}/spec-move`, headers, payload });
+        app.inject({ method: 'POST', url: `/api/v1/projects/${P}/move`, headers, payload });
       const suiteOf = async (caseId: string) =>
         (await db.selectFrom('test_cases').select('test_suite_id').where('id', '=', caseId).executeTakeFirstOrThrow()).test_suite_id;
       const suiteRow = async (id: string) => db.selectFrom('test_suites').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
@@ -602,7 +602,7 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const headers = { authorization: `Bearer ${token}` };
     const body = (res: any) => JSON.parse(res.payload);
     const create = (steps: unknown) =>
-      app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases`, headers, payload: { test_suite_id: seed.suiteId, title: 'Steps check', steps } });
+      app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/cases`, headers, payload: { test_suite_id: seed.suiteId, title: 'Steps check', steps } });
     const caseCount = async () => Number((await db.selectFrom('test_cases').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
 
     // Steps without numbers (this used to be a 500) are numbered by position; a missing text is empty.
@@ -633,15 +633,15 @@ describe('Spec-mode suite/case create/edit/delete', () => {
 
     // Saving a draft: the same check, and the existing steps stay as they were.
     const draft = body(
-      await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/test-cases/${seed.caseIds[0]}/versions/draft`, headers })
+      await app.inject({ method: 'POST', url: `/api/v1/cases/${seed.caseIds[0]}/versions`, headers })
     ).version;
     const stepsBefore = draft.steps.map((s: any) => s.action);
     const put = (steps: unknown) =>
-      app.inject({ method: 'PUT', url: `/api/v1/projects/${seed.projectId}/test-case-versions/${draft.id}`, headers, payload: { summary: 'changed', steps } });
+      app.inject({ method: 'PATCH', url: `/api/v1/versions/${draft.id}`, headers, payload: { summary: 'changed', steps } });
     const bad = await put([{ step_number: 2, action: 'a' }, { step_number: 2, action: 'b' }]);
     expect(bad.statusCode).toBe(400);
     expect(body(bad).invalid_params[0].reason).toBe('2 is already used by steps[0]');
-    const after = body(await app.inject({ method: 'GET', url: `/api/v1/test-cases/${seed.caseIds[0]}/latest-version`, headers }));
+    const after = body(await app.inject({ method: 'GET', url: `/api/v1/cases/${seed.caseIds[0]}/versions/latest`, headers }));
     expect(after.version.steps.map((s: any) => s.action)).toEqual(stepsBefore);
     expect(after.version.summary).toBe(draft.summary); // refused as a whole
 
@@ -660,23 +660,23 @@ describe('Spec-mode suite/case create/edit/delete', () => {
     const tooLong = 'x'.repeat(256);
 
     for (const name of ['', '   ', 42, tooLong]) {
-      const suite = await send('POST', `${base}/test-suites`, { name });
+      const suite = await send('POST', `${base}/suites`, { name });
       expect(suite.statusCode).toBe(400);
       expect(body(suite).code).toBe('INVALID_NAME');
-      const testCase = await send('POST', `${base}/test-cases`, { test_suite_id: seed.suiteId, title: name });
+      const testCase = await send('POST', `${base}/cases`, { test_suite_id: seed.suiteId, title: name });
       expect(testCase.statusCode).toBe(400);
       expect(body(testCase).code).toBe('INVALID_NAME');
-      expect((await send('PUT', `${base}/test-suites/${seed.suiteId}`, { name })).statusCode).toBe(400);
-      expect((await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: name })).statusCode).toBe(400);
+      expect((await send('PATCH', `/api/v1/suites/${seed.suiteId}`, { name })).statusCode).toBe(400);
+      expect((await send('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { title: name })).statusCode).toBe(400);
     }
-    expect(body(await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '' })).detail).toBe("title can't be blank");
-    expect(body(await send('POST', `${base}/test-suites`, { name: tooLong })).detail).toBe('name can be at most 255 characters');
+    expect(body(await send('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { title: '' })).detail).toBe("title can't be blank");
+    expect(body(await send('POST', `${base}/suites`, { name: tooLong })).detail).toBe('name can be at most 255 characters');
 
     // Nothing was changed by the refusals; valid names are trimmed; other fields still edit alone.
-    const renamed = await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { title: '  Trimmed title  ' });
+    const renamed = await send('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { title: '  Trimmed title  ' });
     expect(body(renamed).test_case.title).toBe('Trimmed title');
-    expect((await send('PUT', `${base}/test-cases/${seed.caseIds[0]}`, { priority: 'LOW' })).statusCode).toBe(200);
-    const suite = await send('POST', `${base}/test-suites`, { name: ` ${'y'.repeat(255)} ` });
+    expect((await send('PATCH', `/api/v1/cases/${seed.caseIds[0]}`, { priority: 'LOW' })).statusCode).toBe(200);
+    const suite = await send('POST', `${base}/suites`, { name: ` ${'y'.repeat(255)} ` });
     expect(suite.statusCode).toBe(201);
     expect(body(suite).suite.name).toHaveLength(255);
   });

@@ -46,7 +46,7 @@ describe('Dual-mode auth dispatch: machine API tokens vs. JWTs', () => {
     // Use it against a route that requires only authentication, not a specific permission.
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values`,
+      url: `/api/v1/cases/${seed.caseIds[0]}/custom-fields`,
       headers: { authorization: `Bearer ${plaintext}` },
     });
     expect(res.statusCode).toBe(200);
@@ -74,13 +74,13 @@ describe('Dual-mode auth dispatch: machine API tokens vs. JWTs', () => {
 
     await app.inject({
       method: 'DELETE',
-      url: `/api/v1/projects/${seed.projectId}/api-tokens/${id}`,
+      url: `/api/v1/api-tokens/${id}`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values`,
+      url: `/api/v1/cases/${seed.caseIds[0]}/custom-fields`,
       headers: { authorization: `Bearer ${plaintext}` },
     });
     expect(res.statusCode).toBe(401);
@@ -98,7 +98,7 @@ describe('Dual-mode auth dispatch: machine API tokens vs. JWTs', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/test-cases/${seed.caseIds[0]}/custom-field-values`,
+      url: `/api/v1/cases/${seed.caseIds[0]}/custom-fields`,
       headers: { authorization: `Bearer ${plaintext}` },
     });
     expect(res.statusCode).toBe(401);

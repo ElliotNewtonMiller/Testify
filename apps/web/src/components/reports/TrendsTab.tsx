@@ -23,7 +23,7 @@ import {
 
 interface TrendReport {
   plan: { id: string; name: string };
-  points: Array<VerdictSummary & { run_id: string; run_name: string; status: string; created_at: string; new_failures: number | null; fixed: number | null }>;
+  points: Array<VerdictSummary & { test_run_id: string; run_name: string; status: string; created_at: string; new_failures: number | null; fixed: number | null }>;
 }
 
 interface BreakdownReport {
@@ -63,12 +63,12 @@ export function TrendsTab({
   const [groupBy, setGroupBy] = React.useState("suite");
   const [useRun, setUseRun] = React.useState(true);
 
-  const trendParams = React.useMemo(() => (planId ? { plan_id: planId, runs, ...(filter ? { filter } : {}) } : null), [planId, runs, filter]);
+  const trendParams = React.useMemo(() => (planId ? { test_plan_id: planId, runs, ...(filter ? { filter } : {}) } : null), [planId, runs, filter]);
   const trend = useReport<TrendReport>(projectId, "plan_trend", trendParams);
 
   const withRun = useRun && Boolean(runId);
   const breakdownParams = React.useMemo(
-    () => (planId ? { plan_id: planId, group_by: groupBy, ...(withRun ? { run_id: runId } : {}), ...(filter ? { filter } : {}) } : null),
+    () => (planId ? { test_plan_id: planId, group_by: groupBy, ...(withRun ? { test_run_id: runId } : {}), ...(filter ? { filter } : {}) } : null),
     [planId, groupBy, withRun, runId, filter]
   );
   const breakdown = useReport<BreakdownReport>(projectId, "breakdown", groupBy === "tester" && !withRun ? null : breakdownParams);
@@ -150,7 +150,7 @@ export function TrendsTab({
                 </thead>
                 <tbody>
                   {[...chartData].reverse().map((p) => (
-                    <tr key={p.run_id}>
+                    <tr key={p.test_run_id}>
                       <td style={tdStyle}>
                         {p.run_name}
                         {p.status === "CLOSED" && <span style={{ color: "#64748b" }}> · closed</span>}

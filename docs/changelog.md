@@ -1909,3 +1909,49 @@ About 25 existing assertions moved from `error` to `detail` or `code`.
 605/605 tests pass and typecheck is clean (incl. no unused code in `apps/web`). Verified live on a production build:
 - a wrong password still shows the sign-in page's own message;
 - creating a project with a taken prefix shows the server's message, "Prefix 'DEMO' is already used by another project".
+
+## Changed: one address style, verbs and names across the API (API consistency, stage 3) (2026-10-12)
+
+Stage 3 of `docs/api_roadmap.md` step 1, as planned with Elliot. Nothing outside Testify used the API, so the old addresses were changed outright, with no aliases.
+
+- **Addresses:** lists and creation sit under the parent, and each item has its own address. The full route map is in `docs/api_roadmap.md`. Examples:
+  - `/projects/:projectId/plans/:planId` became `/plans/:planId`; `.../plans/:planId/builds` became `/plans/:planId/runs`; a run is `/runs/:runId`.
+  - `POST /executions` became `POST /runs/:runId/results` (the run id is no longer in the body); the CI batch route became `POST /runs/:runId/results/batch`, with the list under `results`.
+  - Suites, cases and versions: `/projects/:id/suites`, `/suites/:id`, `/projects/:id/cases`, `/cases/:id`, `/cases/:id/versions` (new draft), `/cases/:id/versions/latest`, `/versions/:id` and its `/approve`, `/deprecate` and `/restore`.
+  - Custom-field values: `/cases/:id/custom-fields[/:definitionId]`, the same under `/suites/:id`.
+  - Plan membership of a whole suite: `POST`/`DELETE /plans/:id/suites/:suiteId/cases` (replacing `cascade` with an `action` in the body).
+  - `spec-move` became `/projects/:id/move`. Imports moved under `/projects/:id/imports/...`, so `target_project_id` is gone. `exports/execution-results` became `exports/results`. API tokens are deleted at `/api-tokens/:id`, report schedules changed at `/report-schedules/:id`, and `admin/email-last` became `admin/last-email`.
+  - `PUT /auth/credentials` became `PATCH /auth/me`, with snake_case fields `username`, `email`, `password`, `current_password`.
+  - The single-result route moved out of `server.ts` into `routes/results.ts`.
+- **Working out the project:** `resolveRequestProject` (`middleware/auth.ts`) now collects the project of every id the request names, in the path, query and JSON body, and stores it as `request.projectId`. A request naming ids from two projects gets `400 PROJECTS_DIFFER`; before, an explicit project id won and the other ids were only checked by some routes. Several tests that expected a 404 for "an id from another project" now expect this 400.
+- **Verbs and status codes:**
+  - Partial updates are `PATCH`. `PUT` stays only where the body replaces the whole thing: custom-field values, a user's override set, a report schedule and the email settings (the last two decided while converting, since a missing field in those bodies clears it).
+  - Create answers 201 with the item wrapped in its name; update 200 the same way; delete 204 with no body. Newly wrapped: adding a case to a plan (`{ plan_case }`), changing a user's status (`{ user }`), and a password reset (`{ user, sessions_ended, temporary_password? }`).
+  - Removing a whole suite from a plan still answers 200, with the counts the web app shows.
+  - "Delete anyway" is always `?force=true`.
+- **Names:** ids are named after their database columns everywhere (`test_plan_id`, `test_run_id`, `test_case_id`, `test_suite_id`, `test_plan_case_id`, `test_case_version_id`, `test_result_id`), including report parameters, case-search bodies and export scopes. No response says "build" or "execution" any more:
+  - the Execute queue returns `runs` and `latest_test_result_id`;
+  - a recorded result returns `{ result, run_status }`;
+  - the case-history report returns `results` (`test_result_id`) and `total_results`;
+  - batch per-item results use `detail` and `code`;
+  - "in use" errors count `results` and `runs`, and name `test_plan_id` etc. in `invalid_params`;
+  - error codes `RUN_CLOSED`, `RUN_IN_USE`; new audit rows `RESULT_RECORDED`, `RESULTS_BATCH_RECORDED`, `RUN_AUTO_CLOSED` (old rows keep their names; auto-close accepts both).
+  - The CI runner's own `runner_info.run_id` (the CI system's run id) keeps its name; an earlier rename had wrongly changed it in a test.
+- **Migration `008_rename_report_schedule_fields`** rewrites `plan_id` to `test_plan_id` inside stored report schedule sections (unreadable JSON is left alone); `down` reverses it.
+- **Server internals:** `build*` variables in routes and services became `run*`, and comments naming old addresses were updated.
+- **Web:**
+  - New `apps/web/src/api/routes.ts` holds every API address as a function (`api.planRuns(planId)`, `api.run(runId, force)`, ...), with `withQuery` for query strings. All ~80 `fetch` calls use it.
+  - The app's types use the API names (`test_plan_case_id`, `test_case_id`, `latest_test_result_id`, `workspace.run`).
+  - The Export dialog says "Run" instead of "Build".
+  - Removing a whole suite from a plan is a `DELETE` with no body.
+- **Demo script** (`apps/server/scripts/report-demo.ts`) uses the new addresses.
+
+Tests:
+- Every server test moved to the new addresses and fields (a script did most of it, then the rest by hand). The import test for "no project given" was removed, since the project is now part of the address.
+- `api_conventions.test.ts` gained 4 tests: creates answer 201 with a wrapped item and deletes 204 with no body, across ten kinds of item; partial updates are `PATCH` and the old `PUT` is gone; no field in nine kinds of response is called build or execution; fifteen old addresses answer 404.
+- `migrations.test.ts` +1 for 008, including rollback.
+- The web smoke test's fake API uses the new addresses and checks that a recorded result no longer sends `build_id`.
+
+609 tests pass and typecheck is clean. Verified on a production build in a separate origin, with the demo data loaded: Spec mode loads; removing a suite with results from the plan asks first and then removes it, and adding it back works; Edit, adding a step, and Approve; recording a result with `p`; Close Run and Open Run; creating and deleting a plan and a run; the Reports overview, run summary and case history; and in the Admin Panel adding a user, disabling them and resetting their password. MCP `list_plans_and_runs` works with a token, and `POST /api/v1/executions` now answers 404.
+
+Still to do (stage 4): RFC 03 §1-4 and `docs/reports_api_and_mcp.md` still show the old addresses.

@@ -62,7 +62,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     const attempts = [
       { method: 'GET', url: '/api/v1/admin/roles' },
       { method: 'POST', url: '/api/v1/admin/roles', payload: { name: 'X', permission_keys: [] } },
-      { method: 'PUT', url: '/api/v1/admin/roles/nonexistent', payload: { name: 'X' } },
+      { method: 'PATCH', url: '/api/v1/admin/roles/nonexistent', payload: { name: 'X' } },
       { method: 'DELETE', url: '/api/v1/admin/roles/nonexistent' },
       { method: 'GET', url: '/api/v1/admin/users/nonexistent/permission-overrides' },
       { method: 'PUT', url: '/api/v1/admin/users/nonexistent/permission-overrides', payload: { overrides: [] } },
@@ -125,7 +125,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     expect(role.permission_keys.sort()).toEqual(['EXPORT_DATA', 'SPEC_VIEW']);
 
     const updateRes = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/roles/${role.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { permission_keys: ['SPEC_VIEW', 'EXPORT_DATA', 'PLAN_MANAGE'] },
@@ -196,7 +196,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     const { token, userId: adminId } = await loginAsAdmin(app);
 
     const res = await app.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: `/api/v1/admin/users/${adminId}/roles`,
       headers: { authorization: `Bearer ${token}` },
       payload: { global_role: 'NotARealRole' },

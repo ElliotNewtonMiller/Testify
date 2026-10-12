@@ -33,12 +33,12 @@ describe('Read routes require SPEC_VIEW', () => {
     const caseId = seed.caseIds[0];
     return [
       `/api/v1/projects/${seed.projectId}/plans`,
-      `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`,
+      `/api/v1/plans/${seed.planId}/runs`,
       `/api/v1/projects/${seed.projectId}/spec-tree`,
-      `/api/v1/test-cases/${caseId}/latest-version`,
-      `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`,
-      `/api/v1/test-cases/${caseId}/custom-field-values`,
-      `/api/v1/test-suites/${seed.suiteId}/custom-field-values`,
+      `/api/v1/cases/${caseId}/versions/latest`,
+      `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`,
+      `/api/v1/cases/${caseId}/custom-fields`,
+      `/api/v1/suites/${seed.suiteId}/custom-fields`,
     ];
   };
 
@@ -81,9 +81,10 @@ describe('Read routes require SPEC_VIEW', () => {
     expect(body(await call(token, 'GET', '/api/v1/projects')).projects.map((p: any) => p.id)).toEqual([other.id]);
   });
 
-  it("a plan from another project can't be read through this project's path", async () => {
+  it("a plan from another project can't be read through this project's address", async () => {
     const other = body(await call(adminToken, 'POST', '/api/v1/projects', { name: 'Other', prefix: 'OTH' })).project;
-    expect((await call(adminToken, 'GET', `/api/v1/projects/${other.id}/plans/${seed.planId}/builds`)).statusCode).toBe(404);
-    expect((await call(adminToken, 'GET', `/api/v1/projects/${other.id}/spec-tree?plan_id=${seed.planId}`)).statusCode).toBe(404);
+    const res = await call(adminToken, 'GET', `/api/v1/projects/${other.id}/spec-tree?test_plan_id=${seed.planId}`);
+    expect(res.statusCode).toBe(400);
+    expect(body(res).code).toBe('PROJECTS_DIFFER');
   });
 });

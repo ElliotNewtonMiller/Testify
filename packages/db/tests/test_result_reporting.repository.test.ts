@@ -105,15 +105,15 @@ describe('TestResultRepository reporting queries', () => {
 
       const rows = await resultRepo.getFinalResultsForRuns(plan.id, [run1.id, run2.id]);
       expect(rows).toHaveLength(4); // 2 runs x 2 plan cases, in runIds order
-      expect(rows.map((r) => r.run_id)).toEqual([run1.id, run1.id, run2.id, run2.id]);
+      expect(rows.map((r) => r.test_run_id)).toEqual([run1.id, run1.id, run2.id, run2.id]);
 
-      const r1a = rows.find((r) => r.run_id === run1.id && r.test_case_id === caseA.id)!;
+      const r1a = rows.find((r) => r.test_run_id === run1.id && r.test_case_id === caseA.id)!;
       expect(r1a).toMatchObject({ test_result_id: 'e2', verdict: 'PASSED', duration_ms: 120, attempts: 2, had_pass: true, had_fail: true });
 
-      const r2a = rows.find((r) => r.run_id === run2.id && r.test_case_id === caseA.id)!;
+      const r2a = rows.find((r) => r.test_run_id === run2.id && r.test_case_id === caseA.id)!;
       expect(r2a).toMatchObject({ verdict: 'BLOCKED', failure_message: 'env down', attempts: 1, had_pass: false, had_fail: true });
 
-      const r2b = rows.find((r) => r.run_id === run2.id && r.test_case_id === caseB.id)!;
+      const r2b = rows.find((r) => r.test_run_id === run2.id && r.test_case_id === caseB.id)!;
       expect(r2b).toMatchObject({ test_result_id: null, verdict: null, attempts: 0, had_pass: false, had_fail: false });
     });
 
@@ -212,8 +212,8 @@ describe('TestResultRepository reporting queries', () => {
       const run2 = await runRepo.create({ test_plan_id: plan.id, name: 'R2' });
 
       const rows = await resultRepo.getFinalResultsForRuns(plan.id, [run1.id, run2.id]);
-      const r1 = rows.filter((r) => r.run_id === run1.id);
-      const r2 = rows.filter((r) => r.run_id === run2.id);
+      const r1 = rows.filter((r) => r.test_run_id === run1.id);
+      const r2 = rows.filter((r) => r.test_run_id === run2.id);
       expect(r1.map((r) => [r.test_case_id, r.verdict, r.removed_from_plan]).sort()).toEqual([[caseA.id, 'FAILED', true], [caseB.id, null, false]].sort());
       expect(r2.map((r) => r.test_case_id)).toEqual([caseB.id]);
 

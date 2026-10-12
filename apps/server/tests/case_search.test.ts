@@ -113,22 +113,22 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
     expect(byPriority.body.case_ids).toEqual([seed.caseIds[0]]);
 
     // Every seeded case is in the seeded plan.
-    const inPlan = await search(app, token, seed.projectId, { plan_id: seed.planId, filters: [{ field: 'in_plan', op: 'is', value: false }] });
+    const inPlan = await search(app, token, seed.projectId, { test_plan_id: seed.planId, filters: [{ field: 'in_plan', op: 'is', value: false }] });
     expect(inPlan.status).toBe(200);
     expect(inPlan.body.case_ids).toEqual([]);
 
     const extA = await externalIdOf(db, seed.caseIds[1]);
     const execRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+      url: `/api/v1/runs/${seed.buildId}/results/batch`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { executions: [{ case_identifier: { external_id: extA }, verdict: 'FAILED' }] },
+      payload: { results: [{ case_identifier: { external_id: extA }, verdict: 'FAILED' }] },
     });
     expect(execRes.statusCode).toBe(201);
 
-    const failed = await search(app, token, seed.projectId, { build_id: seed.buildId, filters: [{ field: 'verdict', op: 'any_of', value: ['FAILED'] }] });
+    const failed = await search(app, token, seed.projectId, { test_run_id: seed.buildId, filters: [{ field: 'verdict', op: 'any_of', value: ['FAILED'] }] });
     expect(failed.body.case_ids).toEqual([seed.caseIds[1]]);
-    const untested = await search(app, token, seed.projectId, { build_id: seed.buildId, filters: [{ field: 'verdict', op: 'any_of', value: ['UNTESTED'] }] });
+    const untested = await search(app, token, seed.projectId, { test_run_id: seed.buildId, filters: [{ field: 'verdict', op: 'any_of', value: ['UNTESTED'] }] });
     expect(untested.body.case_ids).toHaveLength(seed.caseIds.length - 1);
   });
 
@@ -219,7 +219,7 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
     expect(field.source).toBe('suite_custom_field');
   });
 
-  it('rejects in_plan without plan_id, verdict without build_id, unknown fields, and cross-project plan/build ids', async () => {
+  it('rejects in_plan without test_plan_id, verdict without test_run_id, unknown fields, and plan/run ids from elsewhere', async () => {
     const { app, seed, db } = serverInstance;
     const token = await loginAsAdmin(app);
 
@@ -228,11 +228,15 @@ describe('Case search & filter: POST /api/v1/projects/:projectId/case-search', (
     expect((await search(app, token, seed.projectId, { filters: [{ field: 'nope', op: 'is', value: true }] })).status).toBe(400);
 
     const other = await new ProjectRepository(db).create({ name: 'Other', prefix: 'OTH' });
-    expect((await search(app, token, other.id, { plan_id: seed.planId })).status).toBe(404);
-    expect((await search(app, token, other.id, { build_id: seed.buildId })).status).toBe(404);
+    // A plan or run from another project names two projects at once.
+    for (const ids of [{ test_plan_id: seed.planId }, { test_run_id: seed.buildId }]) {
+      const res = await search(app, token, other.id, ids);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('PROJECTS_DIFFER');
+    }
 
     const otherPlan = await new TestPlanRepository(db).create({ project_id: seed.projectId, name: 'Second plan' });
-    expect((await search(app, token, seed.projectId, { plan_id: otherPlan.id, build_id: seed.buildId })).status).toBe(404);
+    expect((await search(app, token, seed.projectId, { test_plan_id: otherPlan.id, test_run_id: seed.buildId })).status).toBe(404);
   });
 
   it('GET .../case-search/fields lists built-ins and visible custom fields', async () => {

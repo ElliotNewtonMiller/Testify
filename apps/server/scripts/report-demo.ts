@@ -83,14 +83,14 @@ async function main() {
   for (const path of ['Checkout', 'Login', 'Search', 'Search / Filters']) {
     const parts = path.split(' / ');
     const parent = parts.length > 1 ? suiteIds.get(parts.slice(0, -1).join(' / ')) : undefined;
-    const { suite } = await api('POST', `/api/v1/projects/${pid}/test-suites`, jwt, { name: parts[parts.length - 1], parent_suite_id: parent ?? null });
+    const { suite } = await api('POST', `/api/v1/projects/${pid}/suites`, jwt, { name: parts[parts.length - 1], parent_suite_id: parent ?? null });
     suiteIds.set(path, suite.id);
   }
 
   // Cases (an admin's new cases are approved straight away, so they can join a plan).
   const caseIds: string[] = [];
   for (const c of CASES) {
-    const { test_case } = await api('POST', `/api/v1/projects/${pid}/test-cases`, jwt, {
+    const { test_case } = await api('POST', `/api/v1/projects/${pid}/cases`, jwt, {
       test_suite_id: suiteIds.get(c.suite),
       title: c.title,
       execution_type: c.automated ? 'AUTOMATED' : 'MANUAL',
@@ -101,7 +101,7 @@ async function main() {
   }
 
   const { plan } = await api('POST', `/api/v1/projects/${pid}/plans`, jwt, { name: 'Release Regression' });
-  for (const id of caseIds) await api('POST', `/api/v1/test-plans/${plan.id}/cases`, jwt, { test_case_id: id });
+  for (const id of caseIds) await api('POST', `/api/v1/plans/${plan.id}/cases`, jwt, { test_case_id: id });
 
   // A machine token for CI-style results (and for trying the API / MCP afterwards).
   const tokenRes = await api('POST', `/api/v1/projects/${pid}/api-tokens`, jwt, { name: 'Demo CI', capabilities: ['EXECUTE_RUN', 'SPEC_VIEW'] });
@@ -110,44 +110,44 @@ async function main() {
   const day = 86_400_000;
   for (let run = 0; run < RUNS; run++) {
     const runStart = Date.now() - (RUNS - run) * day;
-    const { build } = await api('POST', `/api/v1/projects/${pid}/plans/${plan.id}/builds`, jwt, {
+    const { run: testRun } = await api('POST', `/api/v1/plans/${plan.id}/runs`, jwt, {
       name: `Run 1.0.${run + 1}`,
       release_date: new Date(runStart).toISOString().slice(0, 10),
     });
     const at = (offsetMin: number) => new Date(runStart + offsetMin * 60_000).toISOString();
 
-    const executions: unknown[] = [];
+    const results: unknown[] = [];
     CASES.forEach((c, i) => {
       const v = c.results[run];
       if (v === '-' || c.manual) return;
       const base = { case_identifier: { external_id: `${prefix}-${i + 1}` }, duration_ms: c.durations?.[run] };
       if (v === 'R') {
-        executions.push({ ...base, verdict: 'FAILED', executed_at: at(i), failure_message: c.message, stack_trace: `Error: ${c.message}\n    at runTest (tests/${i + 1}.spec.ts:42:7)` });
-        executions.push({ ...base, verdict: 'PASSED', executed_at: at(i + 1) });
+        results.push({ ...base, verdict: 'FAILED', executed_at: at(i), failure_message: c.message, stack_trace: `Error: ${c.message}\n    at runTest (tests/${i + 1}.spec.ts:42:7)` });
+        results.push({ ...base, verdict: 'PASSED', executed_at: at(i + 1) });
         return;
       }
       const verdict = v === 'P' ? 'PASSED' : v === 'F' ? 'FAILED' : 'BLOCKED';
-      executions.push({
+      results.push({
         ...base,
         verdict,
         executed_at: at(i),
         ...(verdict !== 'PASSED' && c.message ? { failure_message: c.message, stack_trace: `Error: ${c.message}\n    at runTest (tests/${i + 1}.spec.ts:42:7)` } : {}),
       });
     });
-    await api('POST', `/api/v1/test-plans/${plan.id}/builds/${build.id}/executions/batch`, ciToken, {
+    await api('POST', `/api/v1/runs/${testRun.id}/results/batch`, ciToken, {
       environment: 'staging',
       runner_info: { name: 'GitHub Actions', run_id: String(9000 + run), job_name: 'e2e', commit_sha: hex(40), url: `https://ci.example.test/runs/${9000 + run}` },
-      executions,
+      results,
     });
 
     // Manual cases: recorded by a person in the UI (no duration).
-    const { cases: planCases } = await api('GET', `/api/v1/test-plans/${plan.id}/cases?build_id=${build.id}`, jwt);
+    const { cases: planCases } = await api('GET', `/api/v1/plans/${plan.id}/cases?test_run_id=${testRun.id}`, jwt);
     for (const [i, c] of CASES.entries()) {
       if (!c.manual || c.results[run] === '-') continue;
       const pc = planCases.find((x: any) => x.external_id === `${prefix}-${i + 1}`);
-      await api('POST', '/api/v1/executions', jwt, { build_id: build.id, test_plan_case_id: pc.plan_case_id ?? pc.id, verdict: 'PASSED', notes: 'Checked by hand' });
+      await api('POST', `/api/v1/runs/${testRun.id}/results`, jwt, { test_plan_case_id: pc.test_plan_case_id ?? pc.id, verdict: 'PASSED', notes: 'Checked by hand' });
     }
-    console.log(`  Run 1.0.${run + 1}: ${executions.length} automated results`);
+    console.log(`  Run 1.0.${run + 1}: ${results.length} automated results`);
   }
 
   console.log(`\nDone. Project id: ${pid}`);

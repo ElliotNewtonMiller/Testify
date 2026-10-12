@@ -23,17 +23,17 @@ describe('EXECUTE_OVERWRITE', () => {
   }
 
   const planCaseId = async (externalId: string) =>
-    body(await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers: auth(adminToken) })).cases.find(
+    body(await app.inject({ method: 'GET', url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`, headers: auth(adminToken) })).cases.find(
       (c: any) => c.external_id === externalId
-    ).plan_case_id;
+    ).test_plan_case_id;
   const record = (token: string, test_plan_case_id: string, verdict: string, notes?: string) =>
-    app.inject({ method: 'POST', url: '/api/v1/executions', headers: auth(token), payload: { build_id: seed.buildId, test_plan_case_id, verdict, notes } });
+    app.inject({ method: 'POST', url: `/api/v1/runs/${seed.buildId}/results`, headers: auth(token), payload: { test_plan_case_id, verdict, notes } });
   const batch = (token: string, executions: unknown[], atomic = false) =>
     app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch${atomic ? '?all_or_nothing=true' : ''}`,
+      url: `/api/v1/runs/${seed.buildId}/results/batch${atomic ? '?all_or_nothing=true' : ''}`,
       headers: auth(token),
-      payload: { executions },
+      payload: { results: executions },
     });
   const resultCount = async () => Number((await db.selectFrom('test_results').select(db.fn.countAll().as('n')).executeTakeFirst()).n);
 
@@ -93,7 +93,7 @@ describe('EXECUTE_OVERWRITE', () => {
     // A later request changing that result is refused per item; others still record.
     const second = await batch(ci, [item('FAILED'), item('PASSED', 'SHOP-104')]);
     expect(body(second).results.map((r: any) => r.status)).toEqual([403, 201]);
-    expect(body(second).results[0].error).toContain('EXECUTE_OVERWRITE');
+    expect(body(second).results[0].detail).toContain('EXECUTE_OVERWRITE');
     // The same verdict again from the same token is allowed (nothing changes).
     expect(body(await batch(ci, [item('PASSED')])).results[0].status).toBe(201);
 

@@ -33,52 +33,71 @@ export interface AuthenticatedUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthenticatedUser;
+    /** The project this request acts on (see resolveRequestProject), set by authenticateRequest.
+     * Null when the request names no project. */
+    projectId?: string | null;
   }
 }
 
 /**
  * The project a request acts on, so that API-token project binding and per-project role
- * assignments/overrides apply to every route -- not only those nested under
- * /projects/:projectId.
+ * assignments/overrides apply to every route, whether it names the project (`/projects/{id}/...`)
+ * or only an item that belongs to one (`/plans/{id}`, `/runs/{id}/results`, ...).
  *
- * - An explicit project (`:projectId`, `?project_id`, or an import's `target_project_id` in the
- *   query or JSON body) wins. Routes nested under a project already check that their other ids
- *   belong to it.
- * - Otherwise it's derived from the resource ids the route names (`:planId`, `:buildId`,
- *   `:caseId`, `:suiteId`, and `build_id`/`plan_id` in the query or JSON body). If those
- *   belong to different projects the request is refused.
+ * The project comes from every id the request names:
+ * - path params `:projectId`, `:planId`, `:runId`, `:caseId`, `:suiteId`, `:versionId`,
+ *   `:scheduleId`, `:tokenId`;
+ * - `project_id`, `test_plan_id`, `test_run_id`, `test_case_id`, `test_suite_id` in the query or
+ *   JSON body.
+ * They must all belong to the same project, or the request is refused (`PROJECTS_DIFFER`) -- so a
+ * request can't name a project it's allowed in alongside an item from another one.
  *
- * Returns undefined when the request names no project at all (e.g. GET /api/v1/projects), and
- * ids that don't exist are ignored (the route answers 404 for them).
+ * Returns `projectId: null` when the request names no project at all (e.g. GET /api/v1/projects).
+ * Ids that don't exist are ignored (the route answers 404 for them).
  */
 export type ResolvedProject = { projectId: string | null } | { conflict: string[] };
 
 export async function resolveRequestProject(request: FastifyRequest, db: Kysely<Database>): Promise<ResolvedProject> {
   const params = (request.params as Record<string, string | undefined>) || {};
   const query = (request.query as Record<string, string | undefined>) || {};
-  const body = request.body && typeof request.body === 'object' ? (request.body as Record<string, unknown>) : {};
+  const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : {};
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
-
-  const explicit = params.projectId || query.project_id || query.target_project_id || str(body.target_project_id) || str(body.project_id);
-  if (explicit) return { projectId: explicit };
+  const pick = (param: string, field: string) => params[param] || str(query[field]) || str(body[field]);
 
   const found = new Set<string>();
   const add = (row: { project_id: string } | undefined) => row && found.add(row.project_id);
-  const planId = params.planId || query.plan_id || str(body.plan_id);
-  const buildId = params.buildId || query.build_id || str(body.build_id);
+
+  const projectId = pick('projectId', 'project_id');
+  if (projectId) found.add(projectId);
+  const planId = pick('planId', 'test_plan_id');
   if (planId) add(await db.selectFrom('test_plans').select('project_id').where('id', '=', planId).executeTakeFirst());
-  if (buildId) {
+  const runId = pick('runId', 'test_run_id');
+  if (runId) {
     add(
       await db
         .selectFrom('test_runs')
         .innerJoin('test_plans', 'test_plans.id', 'test_runs.test_plan_id')
         .select('test_plans.project_id')
-        .where('test_runs.id', '=', buildId)
+        .where('test_runs.id', '=', runId)
         .executeTakeFirst()
     );
   }
-  if (params.caseId) add(await db.selectFrom('test_cases').select('project_id').where('id', '=', params.caseId).executeTakeFirst());
-  if (params.suiteId) add(await db.selectFrom('test_suites').select('project_id').where('id', '=', params.suiteId).executeTakeFirst());
+  const caseId = pick('caseId', 'test_case_id');
+  if (caseId) add(await db.selectFrom('test_cases').select('project_id').where('id', '=', caseId).executeTakeFirst());
+  const suiteId = pick('suiteId', 'test_suite_id');
+  if (suiteId) add(await db.selectFrom('test_suites').select('project_id').where('id', '=', suiteId).executeTakeFirst());
+  if (params.versionId) {
+    add(
+      await db
+        .selectFrom('test_case_versions')
+        .innerJoin('test_cases', 'test_cases.id', 'test_case_versions.test_case_id')
+        .select('test_cases.project_id')
+        .where('test_case_versions.id', '=', params.versionId)
+        .executeTakeFirst()
+    );
+  }
+  if (params.scheduleId) add(await db.selectFrom('report_schedules').select('project_id').where('id', '=', params.scheduleId).executeTakeFirst());
+  if (params.tokenId) add(await db.selectFrom('api_tokens').select('project_id').where('id', '=', params.tokenId).executeTakeFirst());
 
   if (found.size > 1) return { conflict: [...found] };
   return { projectId: found.size === 1 ? [...found][0] : null };
@@ -216,7 +235,7 @@ async function authenticateApiToken(
 }
 
 /** What a user who must change their password can still reach: who am I, change it, sign out. */
-const PASSWORD_CHANGE_ALLOWED_ROUTES = new Set(['/api/v1/auth/me', '/api/v1/auth/credentials']);
+const PASSWORD_CHANGE_ALLOWED_ROUTES = new Set(['/api/v1/auth/me']);
 
 /**
  * Authenticates a request from its `Authorization: Bearer <...>` header -- either a
@@ -265,6 +284,7 @@ export async function authenticateRequest(
     return null;
   }
   const projectId = resolved.projectId;
+  request.projectId = projectId;
 
   if (token.startsWith(API_TOKEN_PREFIX)) {
     return authenticateApiToken(token, request, reply, db, projectId);

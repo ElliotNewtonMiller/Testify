@@ -8,7 +8,7 @@ export interface CaseFilterField {
   kind: "ENUM" | "BOOLEAN" | "TEXT" | "NUMBER" | "DATE" | "CHECKBOX" | "SINGLE_SELECT" | "MULTI_SELECT";
   source: "builtin" | "case_custom_field" | "suite_custom_field";
   options?: Array<{ value: string; label: string }>;
-  requires?: "plan_id" | "build_id";
+  requires?: "test_plan_id" | "test_run_id";
 }
 
 /** One row in the panel. `field` is "" until a property is picked. Value shape per kind:
@@ -38,8 +38,8 @@ export function isFieldAvailable(
   ctx: { mode: "EXECUTION" | "SPECIFICATION"; hasPlan: boolean; hasRun: boolean },
 ): boolean {
   if (field.key === "verdict") return ctx.mode === "EXECUTION" && ctx.hasRun;
-  if (field.requires === "plan_id") return ctx.hasPlan;
-  if (field.requires === "build_id") return ctx.hasRun;
+  if (field.requires === "test_plan_id") return ctx.hasPlan;
+  if (field.requires === "test_run_id") return ctx.hasRun;
   return true;
 }
 
@@ -380,7 +380,7 @@ export const CaseFilterPanel: React.FC<CaseFilterPanelProps> = ({
             {field && renderValueControl(row, field)}
             {field && !available && (
               <span style={{ fontSize: "10px", color: "#6b7280" }}>
-                Not applicable here (needs {field.key === "verdict" ? "Execute mode and a run" : field.requires === "plan_id" ? "a plan" : "a run"}).
+                Not applicable here (needs {field.key === "verdict" ? "Execute mode and a run" : field.requires === "test_plan_id" ? "a plan" : "a run"}).
               </span>
             )}
           </div>

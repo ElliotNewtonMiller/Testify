@@ -2,6 +2,7 @@ import React from "react";
 import { jsonHeaders } from "../../utils/session";
 
 import { errorMessage } from "../../api/errors";
+import { api } from "../../api/routes";
 /**
  * Shared pieces of the Reports view. Every number shown comes from the report API
  * (POST /api/v1/projects/:projectId/reports/:reportId) -- the same engine agents and
@@ -29,7 +30,7 @@ export function useEmailContext(onEmailContext: ((ctx: EmailContext | null) => v
 
 /** Runs a report. JSON comes back parsed; markdown/csv as text. Throws with the server's message. */
 export async function runReport<T = any>(projectId: string, reportId: string, params: Record<string, unknown>, format: ReportFormat = "json"): Promise<T> {
-  const res = await fetch(`/api/v1/projects/${projectId}/reports/${reportId}${format === "json" ? "" : `?format=${format}`}`, {
+  const res = await fetch(api.report(projectId, reportId, format === "json" ? undefined : format), {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify(params),
@@ -119,7 +120,7 @@ export interface RunRef {
   status: string;
   created_at: string;
   release_date: string | null;
-  plan_id: string;
+  test_plan_id: string;
   plan_name: string;
 }
 

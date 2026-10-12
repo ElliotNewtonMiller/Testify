@@ -42,14 +42,14 @@ describe('API tokens are bound to their issuer', () => {
     expect((await read()).statusCode).toBe(200);
     expect(await listed()).toMatchObject({ issued_by: 'lead', issuer_active: true, inactive_reason: null });
 
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${leadId}/roles`, { global_role: 'Tester' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${leadId}/roles`, { global_role: 'Tester' });
     const stopped = await read();
     expect(stopped.statusCode).toBe(401);
     expect(body(stopped).type).toContain('TOKEN_ISSUER_INACTIVE');
     expect(await listed()).toMatchObject({ issuer_active: false, inactive_reason: 'ISSUER_LOST_ACCESS', effective_capabilities: [] });
 
     // A project-level deny counts too.
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${leadId}/roles`, { global_role: 'Test Lead' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${leadId}/roles`, { global_role: 'Test Lead' });
     expect((await read()).statusCode).toBe(200);
     await call(adminToken, 'PUT', `/api/v1/admin/users/${leadId}/permission-overrides`, {
       project_id: seed.projectId, overrides: [{ permission_key: 'API_TOKEN_MANAGE', is_granted: false }],
@@ -63,15 +63,15 @@ describe('API tokens are bound to their issuer', () => {
     });
     expect((await read()).statusCode).toBe(200); // still has SPEC_VIEW
     const planCase = await db.selectFrom('test_plan_cases').select('id').where('test_plan_id', '=', seed.planId).executeTakeFirstOrThrow();
-    const record = await call(ciToken, 'POST', '/api/v1/executions', { build_id: seed.buildId, test_plan_case_id: planCase.id, verdict: 'PASSED' });
+    const record = await call(ciToken, 'POST', `/api/v1/runs/${seed.buildId}/results`, { test_plan_case_id: planCase.id, verdict: 'PASSED' });
     expect(record.statusCode).toBe(403);
     expect(await listed()).toMatchObject({ issuer_active: true, capabilities: ['SPEC_VIEW', 'EXECUTE_RUN'], effective_capabilities: ['SPEC_VIEW'] });
   });
 
   it("disabling the issuer revokes their tokens for good", async () => {
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${leadId}/status`, { status: 'DISABLED' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${leadId}`, { status: 'DISABLED' });
     expect((await read()).statusCode).toBe(401);
-    await call(adminToken, 'PUT', `/api/v1/admin/users/${leadId}/status`, { status: 'ACTIVE' });
+    await call(adminToken, 'PATCH', `/api/v1/admin/users/${leadId}`, { status: 'ACTIVE' });
     const res = await read();
     expect(res.statusCode).toBe(401);
     expect(body(res).type).toContain('TOKEN_REVOKED');

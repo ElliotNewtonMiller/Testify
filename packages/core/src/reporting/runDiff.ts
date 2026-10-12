@@ -54,16 +54,16 @@ export function diffRuns(base: DiffEntry[], head: DiffEntry[]): RunDiffResult {
  * unbroken failing streak. Runs where the case had no result are skipped over (they neither
  * break nor extend the streak). Null when the last run isn't failing.
  */
-export function failingSince(history: Array<{ run_id: string; verdict: string | null }>): { run_id: string; runs: number } | null {
+export function failingSince(history: Array<{ test_run_id: string; verdict: string | null }>): { test_run_id: string; runs: number } | null {
   if (history.length === 0 || !isFailing(history[history.length - 1].verdict)) return null;
-  let since = history[history.length - 1].run_id;
+  let since = history[history.length - 1].test_run_id;
   let runs = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     const v = history[i].verdict;
     if (v === null || v === 'UNTESTED') continue;
     if (!isFailing(v)) break;
-    since = history[i].run_id;
+    since = history[i].test_run_id;
     runs++;
   }
-  return { run_id: since, runs };
+  return { test_run_id: since, runs };
 }

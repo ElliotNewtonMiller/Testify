@@ -48,8 +48,8 @@ describe('parseRecipients', () => {
 describe('renderReportEmail', () => {
   const runSummary = {
     report: 'run_summary',
-    run: { id: 'r2', name: 'v2', status: 'OPEN', created_at: '', release_date: null, plan_id: 'pl', plan_name: 'Regression' },
-    compared_to: { id: 'r1', name: 'v1', status: 'CLOSED', created_at: '', release_date: null, plan_id: 'pl', plan_name: 'Regression' },
+    run: { id: 'r2', name: 'v2', status: 'OPEN', created_at: '', release_date: null, test_plan_id: 'pl', plan_name: 'Regression' },
+    compared_to: { id: 'r1', name: 'v1', status: 'CLOSED', created_at: '', release_date: null, test_plan_id: 'pl', plan_name: 'Regression' },
     filter_applied: false,
     summary: { total: 2, passed: 1, failed: 1, blocked: 0, skipped: 0, untested: 0, other: 0, pass_rate: 0.5, completion: 1, attempts: 2, automated_duration_ms: null },
     diff: {
@@ -62,7 +62,7 @@ describe('renderReportEmail', () => {
     },
     failures: [
       { test_case_id: 'c1', external_id: 'T-1', title: '<script>alert(1)</script>', suite_path: null, verdict: 'FAILED', failure_message: '<img src=x onerror=alert(2)>', notes: null,
-        executed_at: null, tested_by: null, source: 'API', attempts: 1, failing_since: { run_id: 'r2', run_name: 'v2', runs: 1 }, flaky: false, runner: null },
+        executed_at: null, tested_by: null, source: 'API', attempts: 1, failing_since: { test_run_id: 'r2', run_name: 'v2', runs: 1 }, flaky: false, runner: null },
     ],
     failures_truncated: false,
     runners: [],

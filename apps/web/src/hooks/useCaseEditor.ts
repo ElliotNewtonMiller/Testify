@@ -5,6 +5,7 @@ import type { CustomFieldValueEntry, SpecCaseDetail, SpecTreeData, Step } from "
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface CaseEditorOptions {
   workspaceMode: "EXECUTION" | "SPECIFICATION";
   selectedProjectId: string;
@@ -110,7 +111,7 @@ export function useCaseEditor({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/test-cases/${specSelectedCaseId}/latest-version`, {
+        const res = await fetch(api.latestVersion(specSelectedCaseId), {
           headers: authHeaders(),
         });
         if (!cancelled) setSpecCaseDetail(res.ok ? await res.json() : null);
@@ -158,7 +159,7 @@ export function useCaseEditor({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/test-cases/${specSelectedCaseId}/custom-field-values`, {
+        const res = await fetch(api.caseCustomFields(specSelectedCaseId), {
           headers: authHeaders(),
         });
         if (!cancelled) setSpecCaseCustomFieldValues(res.ok ? (await res.json()).values : null);
@@ -185,7 +186,7 @@ export function useCaseEditor({
       });
       try {
         const res = await fetch(
-          `/api/v1/test-cases/${requestCaseId}/custom-field-values/${definitionId}`,
+          api.caseCustomField(requestCaseId, definitionId),
           {
             method: "PUT",
             headers: jsonHeaders(),
@@ -233,8 +234,8 @@ export function useCaseEditor({
       // nothing displayed, so a failed title/priority/type save went unnoticed).
       setSpecEditError(null);
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases/${specSelectedCaseId}`, {
-          method: "PUT",
+        const res = await fetch(api.testCase(specSelectedCaseId), {
+          method: "PATCH",
           headers: jsonHeaders(),
           body: JSON.stringify({ [field]: value }),
         });
@@ -261,10 +262,7 @@ export function useCaseEditor({
     setIsCreatingDraft(true);
     setSpecEditError(null);
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/test-cases/${specSelectedCaseId}/versions/draft`,
-        { method: "POST", headers: authHeaders() },
-      );
+      const res = await fetch(api.caseVersions(specSelectedCaseId), { method: "POST", headers: authHeaders() });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401) {
@@ -287,10 +285,7 @@ export function useCaseEditor({
     setIsApprovingVersion(true);
     setSpecEditError(null);
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}/approve`,
-        { method: "POST", headers: authHeaders() },
-      );
+      const res = await fetch(api.versionAction(specCaseDetail.version.id, "approve"), { method: "POST", headers: authHeaders() });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401) {
@@ -317,10 +312,7 @@ export function useCaseEditor({
       setIsTransitioningVersion(true);
       setSpecEditError(null);
       try {
-        const res = await fetch(
-          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}/${transition}`,
-          { method: "POST", headers: authHeaders() },
-        );
+        const res = await fetch(api.versionAction(specCaseDetail.version.id, transition), { method: "POST", headers: authHeaders() });
         const data = await res.json();
         if (!res.ok) {
           if (res.status === 401) {
@@ -351,9 +343,9 @@ export function useCaseEditor({
       setSpecEditError(null);
       try {
         const res = await fetch(
-          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
+          api.version(specCaseDetail.version.id),
           {
-            method: "PUT",
+            method: "PATCH",
             headers: jsonHeaders(),
             body: JSON.stringify({ [field]: value || null }),
           },
@@ -399,9 +391,9 @@ export function useCaseEditor({
       setSpecEditError(null);
       try {
         const res = await fetch(
-          `/api/v1/projects/${selectedProjectId}/test-case-versions/${specCaseDetail.version.id}`,
+          api.version(specCaseDetail.version.id),
           {
-            method: "PUT",
+            method: "PATCH",
             headers: jsonHeaders(),
             body: JSON.stringify({
               steps: stepsToSave.map((s, i) => ({
@@ -526,7 +518,7 @@ export function useCaseEditor({
     if (!selectedProjectId || !selectedSuiteId || !newCaseTitle.trim()) return;
     setIsCreatingCase(true);
     try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases`, {
+      const res = await fetch(api.projectCases(selectedProjectId), {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({
@@ -555,7 +547,7 @@ export function useCaseEditor({
     async (caseId: string) => {
       if (!selectedProjectId) return;
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/test-cases/${caseId}`, {
+        const res = await fetch(api.testCase(caseId), {
           method: "DELETE",
           headers: authHeaders(),
         });
@@ -580,10 +572,7 @@ export function useCaseEditor({
   const handleConfirmDeleteCase = useCallback(async () => {
     if (!deleteCasePrompt || !selectedProjectId) return;
     try {
-      const res = await fetch(
-        `/api/v1/projects/${selectedProjectId}/test-cases/${deleteCasePrompt.id}?force=true`,
-        { method: "DELETE", headers: authHeaders() },
-      );
+      const res = await fetch(api.testCase(deleteCasePrompt.id, true), { method: "DELETE", headers: authHeaders() });
       if (!res.ok && res.status !== 204) {
         const data = await res.json();
         throw new Error(errorMessage(data) || "Failed to delete case");

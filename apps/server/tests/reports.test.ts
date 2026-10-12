@@ -45,9 +45,9 @@ describe('Reports: catalog-driven report API', () => {
   async function batch(app: any, token: string, planId: string, runId: string, executions: any[], extra: Record<string, unknown> = {}) {
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${planId}/builds/${runId}/executions/batch`,
+      url: `/api/v1/runs/${runId}/results/batch`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { executions, ...extra },
+      payload: { results: executions, ...extra },
     });
     expect([201, 207]).toContain(res.statusCode);
   }
@@ -128,7 +128,7 @@ describe('Reports: catalog-driven report API', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.reports.map((r: any) => r.id)).toEqual(['overview', 'run_summary', 'case_history', 'plan_trend', 'test_health', 'breakdown']);
-      expect(body.reports.find((r: any) => r.id === 'run_summary').params.required).toEqual(['run_id']);
+      expect(body.reports.find((r: any) => r.id === 'run_summary').params.required).toEqual(['test_run_id']);
       expect(body.definitions.pass_rate).toContain('passed / (total - untested - skipped)');
     });
 
@@ -188,7 +188,7 @@ describe('Reports: catalog-driven report API', () => {
       expect(missing.statusCode).toBe(400);
       expect(JSON.parse(missing.payload).invalid_params).toEqual(
         expect.arrayContaining([
-          { name: 'run_id', reason: 'is required' },
+          { name: 'test_run_id', reason: 'is required' },
           { name: 'extra', reason: 'unknown parameter' },
           { name: 'limit', reason: 'must be at least 1' },
         ])
@@ -199,14 +199,18 @@ describe('Reports: catalog-driven report API', () => {
       const other = await new ProjectRepository(db).create({ name: 'Other', prefix: 'OTH' });
       const otherPlan = await new TestPlanRepository(db).create({ project_id: other.id, name: 'Other plan' });
       const otherRun = await addRun(db, otherPlan.id, 'X', '2099-01-01T00:00:00.000Z');
-      const cross = await report(app, token, seed.projectId, 'run_summary', { run_id: otherRun });
-      expect(cross.statusCode).toBe(404);
-      expect(JSON.parse(cross.payload).code).toBe('RUN_NOT_FOUND');
-      expect((await report(app, token, seed.projectId, 'test_health', { plan_id: otherPlan.id })).statusCode).toBe(404);
+      // A run or plan from another project names two projects at once.
+      const cross = await report(app, token, seed.projectId, 'run_summary', { test_run_id: otherRun });
+      expect(cross.statusCode).toBe(400);
+      expect(JSON.parse(cross.payload).code).toBe('PROJECTS_DIFFER');
+      expect((await report(app, token, seed.projectId, 'test_health', { test_plan_id: otherPlan.id })).statusCode).toBe(400);
+      const unknownRun = await report(app, token, seed.projectId, 'run_summary', { test_run_id: '00000000-0000-0000-0000-000000000000' });
+      expect(unknownRun.statusCode).toBe(404);
+      expect(JSON.parse(unknownRun.payload).code).toBe('RUN_NOT_FOUND');
 
-      expect((await report(app, token, seed.projectId, 'case_history', { case_id: 'SHOP-101' }, 'markdown')).statusCode).toBe(400);
+      expect((await report(app, token, seed.projectId, 'case_history', { test_case_id: 'SHOP-101' }, 'markdown')).statusCode).toBe(400);
 
-      const badFilter = await report(app, token, seed.projectId, 'run_summary', { run_id: seed.buildId, filter: { filters: [{ field: 'nope', op: 'is', value: 1 }] } });
+      const badFilter = await report(app, token, seed.projectId, 'run_summary', { test_run_id: seed.buildId, filter: { filters: [{ field: 'nope', op: 'is', value: 1 }] } });
       expect(badFilter.statusCode).toBe(400);
       expect(JSON.parse(badFilter.payload).code).toBe('INVALID_FILTER');
     });
@@ -215,11 +219,11 @@ describe('Reports: catalog-driven report API', () => {
   describe('run_summary', () => {
     it('summarizes the run and diffs it against the previous run of the plan', async () => {
       const { app, seed, token, r1, r2, r3 } = await seedThreeRuns();
-      const res = await report(app, token, seed.projectId, 'run_summary', { run_id: r3 });
+      const res = await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3 });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
 
-      expect(body.run).toMatchObject({ id: r3, name: 'R3', plan_id: seed.planId });
+      expect(body.run).toMatchObject({ id: r3, name: 'R3', test_plan_id: seed.planId });
       expect(body.compared_to).toMatchObject({ id: r2, name: 'R2' });
       expect(body.summary).toMatchObject({ total: 10, passed: 3, failed: 2, untested: 5, pass_rate: 0.6, completion: 0.5, attempts: 6, automated_duration_ms: 1500 });
       expect(body.diff.counts).toMatchObject({ new_failure: 1, still_failing: 1, fixed: 1, not_run: 1, added: 0, removed: 0 });
@@ -233,30 +237,30 @@ describe('Reports: catalog-driven report API', () => {
       expect(body.failures[0]).toMatchObject({
         failure_message: 'boom',
         source: 'API',
-        failing_since: { run_id: r3, run_name: 'R3', runs: 1 },
+        failing_since: { test_run_id: r3, run_name: 'R3', runs: 1 },
         flaky: false,
         runner: { name: 'GitHub Actions', run_id: '42', commit_sha: 'abc123def456789' },
       });
-      expect(body.failures[1].failing_since).toMatchObject({ run_id: r1, runs: 3 });
+      expect(body.failures[1].failing_since).toMatchObject({ test_run_id: r1, runs: 3 });
       expect(body.runners).toEqual([{ name: 'GitHub Actions', run_id: '42', commit_sha: 'abc123def456789' }]);
     });
 
     it('compares against an explicit run, or nothing; and a filter narrows everything', async () => {
       const { app, seed, token, r1, r3 } = await seedThreeRuns();
 
-      const vsR1 = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { run_id: r3, compare_to: r1 })).payload);
+      const vsR1 = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3, compare_to: r1 })).payload);
       expect(vsR1.compared_to.id).toBe(r1);
       expect(ids(vsR1.diff.cases.fixed)).toEqual(['SHOP-103']);
       expect(vsR1.diff.counts.not_run).toBe(0);
 
-      const none = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { run_id: r3, compare_to: null })).payload);
+      const none = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3, compare_to: null })).payload);
       expect(none.compared_to).toBeNull();
       expect(none.diff.counts.new_failure).toBe(0);
 
-      const same = await report(app, token, seed.projectId, 'run_summary', { run_id: r3, compare_to: r3 });
+      const same = await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3, compare_to: r3 });
       expect(same.statusCode).toBe(400);
 
-      const filtered = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { run_id: r3, filter: { q: 'SHOP-102' } })).payload);
+      const filtered = JSON.parse((await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3, filter: { q: 'SHOP-102' } })).payload);
       expect(filtered.filter_applied).toBe(true);
       expect(filtered.summary.total).toBe(1);
       expect(filtered.diff.counts).toMatchObject({ fixed: 0, new_failure: 0, still_failing: 1 });
@@ -265,7 +269,7 @@ describe('Reports: catalog-driven report API', () => {
 
     it('renders Markdown and CSV', async () => {
       const { app, seed, token, r3 } = await seedThreeRuns();
-      const md = await report(app, token, seed.projectId, 'run_summary', { run_id: r3 }, 'markdown');
+      const md = await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3 }, 'markdown');
       expect(md.statusCode).toBe(200);
       expect(md.headers['content-type']).toContain('text/markdown');
       expect(md.payload).toContain('## Test run "R3"');
@@ -273,7 +277,7 @@ describe('Reports: catalog-driven report API', () => {
       expect(md.payload).toContain('| SHOP-101 |');
       expect(md.payload).toContain('boom');
 
-      const csv = await report(app, token, seed.projectId, 'run_summary', { run_id: r3 }, 'csv');
+      const csv = await report(app, token, seed.projectId, 'run_summary', { test_run_id: r3 }, 'csv');
       expect(csv.statusCode).toBe(200);
       expect(csv.headers['content-type']).toContain('text/csv');
       const lines = csv.payload.trim().split('\r\n');
@@ -286,36 +290,36 @@ describe('Reports: catalog-driven report API', () => {
   describe('case_history, plan_trend, test_health, breakdown, overview', () => {
     it('case_history: every result across runs, by id or external id, paginated, with stats', async () => {
       const { app, seed, token } = await seedThreeRuns();
-      const page1 = JSON.parse((await report(app, token, seed.projectId, 'case_history', { case_id: 'shop-102', limit: 2 })).payload);
+      const page1 = JSON.parse((await report(app, token, seed.projectId, 'case_history', { test_case_id: 'shop-102', limit: 2 })).payload);
       expect(page1.case).toMatchObject({ external_id: 'SHOP-102' });
-      expect(page1.stats).toMatchObject({ total_executions: 3, runs: 3, pass_rate: 0, current_streak: { verdict: 'FAILED', runs: 3 }, last_passed_at: null });
-      expect(page1.executions.map((e: any) => e.run.name)).toEqual(['R3', 'R2']);
-      expect(page1.executions[0]).toMatchObject({ verdict: 'FAILED', duration_ms: 500, source: 'API', environment: { environment: 'staging' } });
-      const page2 = JSON.parse((await report(app, token, seed.projectId, 'case_history', { case_id: 'SHOP-102', limit: 2, cursor: page1.next_cursor })).payload);
-      expect(page2.executions).toHaveLength(1);
+      expect(page1.stats).toMatchObject({ total_results: 3, runs: 3, pass_rate: 0, current_streak: { verdict: 'FAILED', runs: 3 }, last_passed_at: null });
+      expect(page1.results.map((e: any) => e.run.name)).toEqual(['R3', 'R2']);
+      expect(page1.results[0]).toMatchObject({ verdict: 'FAILED', duration_ms: 500, source: 'API', environment: { environment: 'staging' } });
+      const page2 = JSON.parse((await report(app, token, seed.projectId, 'case_history', { test_case_id: 'SHOP-102', limit: 2, cursor: page1.next_cursor })).payload);
+      expect(page2.results).toHaveLength(1);
       expect(page2.next_cursor).toBeNull();
 
-      const failing = JSON.parse((await report(app, token, seed.projectId, 'case_history', { case_id: 'SHOP-101' })).payload);
-      expect(failing.executions[0]).toMatchObject({ failure_message: 'boom', stack_trace: 'at line 1' });
-      expect((await report(app, token, seed.projectId, 'case_history', { case_id: 'NOPE-1' })).statusCode).toBe(404);
+      const failing = JSON.parse((await report(app, token, seed.projectId, 'case_history', { test_case_id: 'SHOP-101' })).payload);
+      expect(failing.results[0]).toMatchObject({ failure_message: 'boom', stack_trace: 'at line 1' });
+      expect((await report(app, token, seed.projectId, 'case_history', { test_case_id: 'NOPE-1' })).statusCode).toBe(404);
     });
 
     it('plan_trend: one point per run, oldest first, with new failures versus the run before', async () => {
       const { app, seed, token, r1, r2, r3 } = await seedThreeRuns();
-      const body = JSON.parse((await report(app, token, seed.projectId, 'plan_trend', { plan_id: seed.planId })).payload);
-      expect(body.points.map((p: any) => p.run_id)).toEqual([r1, r2, r3]);
+      const body = JSON.parse((await report(app, token, seed.projectId, 'plan_trend', { test_plan_id: seed.planId })).payload);
+      expect(body.points.map((p: any) => p.test_run_id)).toEqual([r1, r2, r3]);
       expect(body.points[0]).toMatchObject({ passed: 3, failed: 2, untested: 5, pass_rate: 0.6, new_failures: null });
       expect(body.points[1]).toMatchObject({ passed: 4, failed: 2, new_failures: 1, fixed: 1 });
       expect(body.points[2]).toMatchObject({ new_failures: 1, fixed: 1 });
 
-      const lastTwo = JSON.parse((await report(app, token, seed.projectId, 'plan_trend', { plan_id: seed.planId, runs: 2 })).payload);
-      expect(lastTwo.points.map((p: any) => p.run_id)).toEqual([r2, r3]);
+      const lastTwo = JSON.parse((await report(app, token, seed.projectId, 'plan_trend', { test_plan_id: seed.planId, runs: 2 })).payload);
+      expect(lastTwo.points.map((p: any) => p.test_run_id)).toEqual([r2, r3]);
       expect(lastTwo.points[0].new_failures).toBe(1); // still compared with R1, outside the window
     });
 
     it('test_health: flaky, slowest, always failing and stale', async () => {
       const { app, seed, token } = await seedThreeRuns();
-      const body = JSON.parse((await report(app, token, seed.projectId, 'test_health', { plan_id: seed.planId, runs: 3 })).payload);
+      const body = JSON.parse((await report(app, token, seed.projectId, 'test_health', { test_plan_id: seed.planId, runs: 3 })).payload);
       expect(ids(body.flaky)).toEqual(['SHOP-104', 'SHOP-105']);
       expect(body.flaky[0]).toMatchObject({ flip_score: 1, flips: 2 });
       expect(body.flaky[1]).toMatchObject({ flip_score: 0, passed_on_retry_runs: 1 });
@@ -327,28 +331,28 @@ describe('Reports: catalog-driven report API', () => {
       expect(body.stale[0].days_since).toBeNull();
       expect(body.counts).toMatchObject({ flaky: 2, slowest: 2, always_failing: 1, stale: 4, slowing: 0 });
 
-      const csv = await report(app, token, seed.projectId, 'test_health', { plan_id: seed.planId, runs: 3 }, 'csv');
+      const csv = await report(app, token, seed.projectId, 'test_health', { test_plan_id: seed.planId, runs: 3 }, 'csv');
       expect(csv.payload.split('\r\n')[1]).toMatch(/^flaky,SHOP-104,/);
     });
 
     it('breakdown: coverage without a run, verdicts per group with one; rejects unknown or run-only groupings', async () => {
       const { app, db, seed, token, r3 } = await seedThreeRuns();
-      const coverage = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, group_by: 'execution_type' })).payload);
+      const coverage = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, group_by: 'execution_type' })).payload);
       expect(coverage.mode).toBe('coverage');
       const totalCases = coverage.groups.reduce((n: number, g: any) => n + g.total_cases, 0);
       expect(totalCases).toBe(10);
       expect(coverage.groups.every((g: any) => g.coverage === 1)).toBe(true);
 
-      const verdicts = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, run_id: r3, group_by: 'suite' })).payload);
+      const verdicts = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, test_run_id: r3, group_by: 'suite' })).payload);
       expect(verdicts.mode).toBe('verdicts');
       expect(verdicts.groups).toHaveLength(1);
       expect(verdicts.groups[0]).toMatchObject({ total: 10, passed: 3, failed: 2, pass_rate: 0.6 });
 
-      const byTester = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, run_id: r3, group_by: 'tester' })).payload);
+      const byTester = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, test_run_id: r3, group_by: 'tester' })).payload);
       expect(byTester.groups.map((g: any) => g.key)).toEqual(['admin', '(not run)']);
 
-      expect((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, group_by: 'tester' })).statusCode).toBe(400);
-      expect((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, group_by: 'cf:nope' })).statusCode).toBe(400);
+      expect((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, group_by: 'tester' })).statusCode).toBe(400);
+      expect((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, group_by: 'cf:nope' })).statusCode).toBe(400);
 
       // A custom MULTI_SELECT field: a case lands in every group it has a value for.
       const defRes = await app.inject({
@@ -362,12 +366,12 @@ describe('Reports: catalog-driven report API', () => {
       const case101 = await db.selectFrom('test_cases').select('id').where('external_id', '=', 'SHOP-101').executeTakeFirstOrThrow();
       const setRes = await app.inject({
         method: 'PUT',
-        url: `/api/v1/test-cases/${case101.id}/custom-field-values/${defId}`,
+        url: `/api/v1/cases/${case101.id}/custom-fields/${defId}`,
         headers: { authorization: `Bearer ${token}` },
         payload: { value: ['ui', 'api'] },
       });
       expect(setRes.statusCode).toBe(200);
-      const byArea = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { plan_id: seed.planId, run_id: r3, group_by: `cf:${defId}` })).payload);
+      const byArea = JSON.parse((await report(app, token, seed.projectId, 'breakdown', { test_plan_id: seed.planId, test_run_id: r3, group_by: `cf:${defId}` })).payload);
       expect(byArea.group_by.label).toBe('Area');
       expect(byArea.groups.map((g: any) => [g.key, g.total])).toEqual([['UI', 1], ['API', 1], ['(no value)', 9]]);
     });
@@ -402,18 +406,18 @@ describe('Reports: catalog-driven report API', () => {
       const planCase = await db.selectFrom('test_plan_cases').selectAll().where('test_plan_id', '=', seed.planId).executeTakeFirstOrThrow();
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/executions',
+        url: `/api/v1/runs/${seed.buildId}/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { build_id: seed.buildId, test_plan_case_id: planCase.id, verdict: 'PASSED' },
+        payload: { test_plan_case_id: planCase.id, verdict: 'PASSED' },
       });
       expect(res.statusCode).toBe(201);
-      const uiRow = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
+      const uiRow = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).result.id).executeTakeFirstOrThrow();
       expect(uiRow).toMatchObject({ source: 'UI', environment: null, runner: null });
     });
   });
 
   describe('execution_duration_ms nullable-duration regression', () => {
-    it('POST /api/v1/executions with no execution_duration_ms stores null, not a fabricated 450', async () => {
+    it('POST /api/v1/runs/:runId/results with no duration stores null, not a fabricated 450', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
 
@@ -425,19 +429,19 @@ describe('Reports: catalog-driven report API', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/executions',
+        url: `/api/v1/runs/${seed.buildId}/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { build_id: seed.buildId, test_plan_case_id: planCaseRow.id, verdict: 'PASSED' },
+        payload: { test_plan_case_id: planCaseRow.id, verdict: 'PASSED' },
       });
       expect(res.statusCode).toBe(201);
 
-      const execId = JSON.parse(res.payload).id ?? JSON.parse(res.payload).execution?.id;
+      const execId = JSON.parse(res.payload).result.id;
       const row = await db.selectFrom('test_results').selectAll().where('id', '=', execId).executeTakeFirstOrThrow();
       expect(row.duration_ms).toBeNull();
       expect(row.duration_ms).not.toBe(450);
     });
 
-    it('POST /api/v1/executions (manual) ignores a supplied duration -- manual execution is never timed', async () => {
+    it('POST /api/v1/runs/:runId/results (manual) ignores a supplied duration -- manual execution is never timed', async () => {
       const { app, db, seed } = serverInstance;
       const { token } = await loginAsAdmin(app);
       const planCaseRow = await db
@@ -448,12 +452,12 @@ describe('Reports: catalog-driven report API', () => {
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/executions',
+        url: `/api/v1/runs/${seed.buildId}/results`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { build_id: seed.buildId, test_plan_case_id: planCaseRow.id, verdict: 'PASSED', execution_duration_ms: 777 },
+        payload: { test_plan_case_id: planCaseRow.id, verdict: 'PASSED', duration_ms: 777 },
       });
       expect(res.statusCode).toBe(201);
-      const row = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).id).executeTakeFirstOrThrow();
+      const row = await db.selectFrom('test_results').selectAll().where('id', '=', JSON.parse(res.payload).result.id).executeTakeFirstOrThrow();
       expect(row.duration_ms).toBeNull();
     });
 
@@ -463,9 +467,9 @@ describe('Reports: catalog-driven report API', () => {
 
       await app.inject({
         method: 'POST',
-        url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch`,
+        url: `/api/v1/runs/${seed.buildId}/results/batch`,
         headers: { authorization: `Bearer ${token}` },
-        payload: { executions: [{ case_identifier: { external_id: 'SHOP-104' }, verdict: 'PASSED' }] },
+        payload: { results: [{ case_identifier: { external_id: 'SHOP-104' }, verdict: 'PASSED' }] },
       });
 
       const caseRow = await db.selectFrom('test_cases').selectAll().where('external_id', '=', 'SHOP-104').executeTakeFirstOrThrow();

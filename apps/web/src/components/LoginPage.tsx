@@ -3,6 +3,7 @@ import { UserProfile } from './AuthModal';
 import { jsonHeaders } from '../utils/session';
 
 import { errorMessage as apiErrorMessage } from "../api/errors";
+import { api } from "../api/routes";
 interface LoginPageProps {
   onLoginSuccess: (user: UserProfile) => void;
   /** Why you're back here, e.g. the sign-in ended while you were working. */
@@ -25,7 +26,7 @@ export function LoginPage({ onLoginSuccess, notice }: LoginPageProps) {
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch(api.login, {
         method: 'POST',
         headers: jsonHeaders(),
         // The server keeps the sign-in in an HttpOnly cookie (never readable here) rather

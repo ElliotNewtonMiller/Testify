@@ -9,7 +9,7 @@ export interface SpecCaseGridItem {
   test_suite_id: string;
   latest_version: { id: string; version_number: number; status: string } | null;
   in_plan: boolean;
-  plan_case_id: string | null;
+  test_plan_case_id: string | null;
   linkable: boolean;
 }
 

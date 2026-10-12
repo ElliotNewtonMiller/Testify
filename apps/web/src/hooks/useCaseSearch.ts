@@ -10,6 +10,7 @@ import type { SpecTreeData, WorkspaceData } from "../types";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
 import { errorMessage } from "../api/errors";
+import { api } from "../api/routes";
 export interface CaseSearchOptions {
   selectedProjectId: string;
   selectedPlanId: string;
@@ -58,7 +59,7 @@ export function useCaseSearch({
     const seq = ++caseFilterFieldsRequestSeq.current;
     if (!selectedProjectId) return;
     try {
-      const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search/fields`, { headers: authHeaders() });
+      const res = await fetch(api.caseSearchFields(selectedProjectId), { headers: authHeaders() });
       if (seq !== caseFilterFieldsRequestSeq.current || !res.ok) return;
       const data = await res.json();
       if (seq !== caseFilterFieldsRequestSeq.current) return;
@@ -114,20 +115,20 @@ export function useCaseSearch({
       q: string;
       filters: Array<{ field: string; op: string; value?: unknown }>;
     };
-    // Only send plan/build when a filter needs them, so a plan/run switch that's still
+    // Only send plan/run when a filter needs them, so a plan/run switch that's still
     // settling can't 404 an unrelated search.
     const needsPlan = filters.some((f) => f.field === "in_plan");
-    const needsBuild = filters.some((f) => f.field === "verdict");
+    const needsRun = filters.some((f) => f.field === "verdict");
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/v1/projects/${selectedProjectId}/case-search`, {
+        const res = await fetch(api.caseSearch(selectedProjectId), {
           method: "POST",
           headers: jsonHeaders(),
           body: JSON.stringify({
             q,
             filters,
-            ...(needsPlan && selectedPlanId ? { plan_id: selectedPlanId } : {}),
-            ...(needsBuild && selectedRunId ? { build_id: selectedRunId } : {}),
+            ...(needsPlan && selectedPlanId ? { test_plan_id: selectedPlanId } : {}),
+            ...(needsRun && selectedRunId ? { test_run_id: selectedRunId } : {}),
           }),
         });
         const data = await res.json().catch(() => ({}));

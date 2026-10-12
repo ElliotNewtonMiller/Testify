@@ -27,7 +27,7 @@ describe('EXECUTE_RUN without SPEC_VIEW', () => {
     runnerToken = await login('runner', 'Runner-Pass-123');
     // One case of the project that isn't in the plan.
     removedCaseId = seed.caseIds[9];
-    expect((await call(adminToken, 'DELETE', `/api/v1/test-plans/${seed.planId}/cases/${removedCaseId}`)).statusCode).toBe(204);
+    expect((await call(adminToken, 'DELETE', `/api/v1/plans/${seed.planId}/cases/${removedCaseId}`)).statusCode).toBe(204);
   });
   afterEach(async () => {
     await app.close();
@@ -36,18 +36,18 @@ describe('EXECUTE_RUN without SPEC_VIEW', () => {
   it('can see the project, its plans and runs, and the run queue, and record a result', async () => {
     expect(body(await call(runnerToken, 'GET', '/api/v1/projects')).projects.map((p: any) => p.id)).toContain(seed.projectId);
     expect(body(await call(runnerToken, 'GET', `/api/v1/projects/${seed.projectId}/plans`)).plans.map((p: any) => p.id)).toContain(seed.planId);
-    expect(body(await call(runnerToken, 'GET', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`)).builds.map((b: any) => b.id)).toContain(seed.buildId);
-    const queue = body(await call(runnerToken, 'GET', `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`)).cases;
+    expect(body(await call(runnerToken, 'GET', `/api/v1/plans/${seed.planId}/runs`)).runs.map((b: any) => b.id)).toContain(seed.buildId);
+    const queue = body(await call(runnerToken, 'GET', `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`)).cases;
     expect(queue).toHaveLength(9);
-    expect((await call(runnerToken, 'GET', `/api/v1/test-cases/${queue[0].case_id}/custom-field-values`)).statusCode).toBe(200);
+    expect((await call(runnerToken, 'GET', `/api/v1/cases/${queue[0].test_case_id}/custom-fields`)).statusCode).toBe(200);
     expect((await call(runnerToken, 'GET', `/api/v1/projects/${seed.projectId}/case-search/fields`)).statusCode).toBe(200);
 
-    const recorded = await call(runnerToken, 'POST', '/api/v1/executions', { build_id: seed.buildId, test_plan_case_id: queue[0].plan_case_id, verdict: 'PASSED' });
+    const recorded = await call(runnerToken, 'POST', `/api/v1/runs/${seed.buildId}/results`, { test_plan_case_id: queue[0].test_plan_case_id, verdict: 'PASSED' });
     expect(recorded.statusCode).toBe(201);
   });
 
   it("sees only the plan's cases and their folders in the suite tree", async () => {
-    const tree = body(await call(runnerToken, 'GET', `/api/v1/projects/${seed.projectId}/spec-tree?plan_id=${seed.planId}`));
+    const tree = body(await call(runnerToken, 'GET', `/api/v1/projects/${seed.projectId}/spec-tree?test_plan_id=${seed.planId}`));
     expect(tree.cases).toHaveLength(9);
     expect(tree.cases.map((c: any) => c.id)).not.toContain(removedCaseId);
     expect(tree.suites).toHaveLength(1);
@@ -58,20 +58,20 @@ describe('EXECUTE_RUN without SPEC_VIEW', () => {
 
   it("can't browse the full spec or reports, or change projects, plans or runs", async () => {
     for (const url of [
-      `/api/v1/test-cases/${seed.caseIds[0]}/latest-version`,
-      `/api/v1/test-suites/${seed.suiteId}/custom-field-values`,
+      `/api/v1/cases/${seed.caseIds[0]}/versions/latest`,
+      `/api/v1/suites/${seed.suiteId}/custom-fields`,
       `/api/v1/projects/${seed.projectId}/reports`,
     ]) {
       expect((await call(runnerToken, 'GET', url)).statusCode, url).toBe(403);
     }
     const changes: Array<[string, string, unknown?]> = [
       ['POST', `/api/v1/projects/${seed.projectId}/plans`, { name: 'Mine' }],
-      ['PUT', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`, { name: 'Renamed' }],
-      ['DELETE', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}`],
-      ['POST', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds`, { name: 'Run 9' }],
-      ['PUT', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`, { status: 'CLOSED' }],
-      ['DELETE', `/api/v1/projects/${seed.projectId}/plans/${seed.planId}/builds/${seed.buildId}`],
-      ['POST', `/api/v1/test-plans/${seed.planId}/cases`, { test_case_id: removedCaseId }],
+      ['PATCH', `/api/v1/plans/${seed.planId}`, { name: 'Renamed' }],
+      ['DELETE', `/api/v1/plans/${seed.planId}`],
+      ['POST', `/api/v1/plans/${seed.planId}/runs`, { name: 'Run 9' }],
+      ['PATCH', `/api/v1/runs/${seed.buildId}`, { status: 'CLOSED' }],
+      ['DELETE', `/api/v1/runs/${seed.buildId}`],
+      ['POST', `/api/v1/plans/${seed.planId}/cases`, { test_case_id: removedCaseId }],
       ['POST', '/api/v1/projects', { name: 'X', prefix: 'XX' }],
     ];
     for (const [method, url, payload] of changes) {

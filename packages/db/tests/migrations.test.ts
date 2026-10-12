@@ -131,4 +131,23 @@ describe('migrateToLatest', () => {
     expect(await tables()).toEqual(expect.arrayContaining(['builds', 'executions', 'execution_steps']));
     expect((await sql<any>`SELECT build_id, execution_duration_ms FROM executions`.execute(db)).rows).toEqual([{ build_id: 'r1', execution_duration_ms: 1200 }]);
   }, 30_000);
+  it('008 renames plan_id to test_plan_id in stored report schedule sections; rolling back restores it', async () => {
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('007_rename_runs_and_results')).error).toBeUndefined();
+    const t = '2026-10-12T00:00:00.000Z';
+    await sql`INSERT INTO projects (id, name, prefix, settings, created_at, updated_at) VALUES ('p1', 'P', 'P', '{}', ${t}, ${t})`.execute(db);
+    const sections = JSON.stringify([{ kind: 'overview' }, { kind: 'latest_run', plan_id: 'pl1', filter: { q: 'x' } }]);
+    await sql`INSERT INTO report_schedules (id, project_id, name, sections, recipients, frequency, time_of_day, timezone, next_run_at, created_by, created_at, updated_at)
+              VALUES ('rs1', 'p1', 'Weekly', ${sections}, '[]', 'DAILY', '09:00', 'UTC', ${t}, 'u', ${t}, ${t})`.execute(db);
+    await sql`INSERT INTO report_schedules (id, project_id, name, sections, recipients, frequency, time_of_day, timezone, next_run_at, created_by, created_at, updated_at)
+              VALUES ('rs2', 'p1', 'Broken', 'not json', '[]', 'DAILY', '09:00', 'UTC', ${t}, 'u', ${t}, ${t})`.execute(db);
+    const stored = async (id: string) => (await sql<{ sections: string }>`SELECT sections FROM report_schedules WHERE id = ${id}`.execute(db)).rows[0].sections;
+
+    expect(await migrateToLatest(db)).toContain('008_rename_report_schedule_fields');
+    expect(JSON.parse(await stored('rs1'))).toEqual([{ kind: 'overview' }, { kind: 'latest_run', filter: { q: 'x' }, test_plan_id: 'pl1' }]);
+    expect(await stored('rs2')).toBe('not json'); // unreadable sections are left alone
+
+    expect((await migrator.migrateTo('007_rename_runs_and_results')).error).toBeUndefined();
+    expect(JSON.parse(await stored('rs1'))).toEqual([{ kind: 'overview' }, { kind: 'latest_run', filter: { q: 'x' }, plan_id: 'pl1' }]);
+  }, 30_000);
 });

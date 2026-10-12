@@ -1,8 +1,8 @@
 import React from "react";
 import { ErrorNote, Kpi, Loading, VerdictPill, buttonStyle, downloadReportCsv, fmtMs, fmtWhen, pct, runLabel, runReport, type CaseRef } from "./shared";
 
-interface Execution {
-  execution_id: string;
+interface HistoryResult {
+  test_result_id: string;
   executed_at: string;
   verdict: string;
   run: { id: string; name: string };
@@ -21,7 +21,7 @@ interface Execution {
 interface CaseHistory {
   case: CaseRef & { priority: string; execution_type: string; version_status: string | null };
   stats: {
-    total_executions: number;
+    total_results: number;
     runs: number;
     pass_rate: number;
     last_executed_at: string | null;
@@ -29,7 +29,7 @@ interface CaseHistory {
     last_failed_at: string | null;
     current_streak: { verdict: string; runs: number } | null;
   };
-  executions: Execution[];
+  results: HistoryResult[];
   next_cursor: string | null;
 }
 
@@ -46,7 +46,7 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
     let cancelled = false;
     setData(null);
     setError(null);
-    runReport<CaseHistory>(projectId, "case_history", { case_id: caseId, limit: PAGE })
+    runReport<CaseHistory>(projectId, "case_history", { test_case_id: caseId, limit: PAGE })
       .then((d) => !cancelled && setData(d))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
@@ -64,8 +64,8 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
     if (!data?.next_cursor) return;
     setLoadingMore(true);
     try {
-      const next = await runReport<CaseHistory>(projectId, "case_history", { case_id: caseId, limit: PAGE, cursor: data.next_cursor });
-      setData({ ...next, executions: [...data.executions, ...next.executions] });
+      const next = await runReport<CaseHistory>(projectId, "case_history", { test_case_id: caseId, limit: PAGE, cursor: data.next_cursor });
+      setData({ ...next, results: [...data.results, ...next.results] });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -127,28 +127,28 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
                   value={streak ? `${streak.runs}×` : "—"}
                   hint={streak ? <VerdictPill verdict={streak.verdict} /> : "Never executed"}
                 />
-                <Kpi label="Results" value={data.stats.total_executions} hint={`last ${fmtWhen(data.stats.last_executed_at)}`} />
+                <Kpi label="Results" value={data.stats.total_results} hint={`last ${fmtWhen(data.stats.last_executed_at)}`} />
               </div>
               <div style={{ fontSize: "11px", color: "#94a3b8", display: "flex", gap: "14px", flexWrap: "wrap" }}>
                 <span>Last passed: {fmtWhen(data.stats.last_passed_at)}</span>
                 <span>Last failed: {fmtWhen(data.stats.last_failed_at)}</span>
                 <button
                   style={{ ...buttonStyle, marginLeft: "auto" }}
-                  onClick={() => downloadReportCsv(projectId, "case_history", { case_id: caseId, limit: 200 }, `history-${data.case.external_id}.csv`)}
+                  onClick={() => downloadReportCsv(projectId, "case_history", { test_case_id: caseId, limit: 200 }, `history-${data.case.external_id}.csv`)}
                 >
                   CSV
                 </button>
               </div>
 
-              {data.executions.length === 0 ? (
+              {data.results.length === 0 ? (
                 <div style={{ fontSize: "12px", color: "#64748b" }}>This case has never been executed.</div>
               ) : (
                 <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {data.executions.map((e) => {
+                  {data.results.map((e) => {
                     const error = e.failure_message || (e.verdict !== "PASSED" ? e.notes : null);
-                    const traceOpen = openTraces.has(e.execution_id);
+                    const traceOpen = openTraces.has(e.test_result_id);
                     return (
-                      <li key={e.execution_id} style={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "8px 10px" }}>
+                      <li key={e.test_result_id} style={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "8px 10px" }}>
                         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                           <VerdictPill verdict={e.verdict} />
                           <span style={{ fontSize: "12px", color: "#e2e8f0", fontWeight: 600 }}>{runLabel(e.run.name)}</span>
@@ -179,8 +179,8 @@ export function CaseHistoryDrawer({ projectId, caseId, onClose, onOpenInSpec }: 
                               onClick={() =>
                                 setOpenTraces((s) => {
                                   const next = new Set(s);
-                                  if (next.has(e.execution_id)) next.delete(e.execution_id);
-                                  else next.add(e.execution_id);
+                                  if (next.has(e.test_result_id)) next.delete(e.test_result_id);
+                                  else next.add(e.test_result_id);
                                   return next;
                                 })
                               }

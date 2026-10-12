@@ -49,9 +49,9 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
     expect((await call(managerToken, 'POST', '/api/v1/admin/roles', { name: 'Readers', permission_keys: ['SPEC_VIEW'] })).statusCode).toBe(201);
 
     // 2. Giving themselves the Admin role, globally or in a project.
-    res = await call(managerToken, 'PUT', `/api/v1/admin/users/${managerId}/roles`, { global_role: 'Admin' });
+    res = await call(managerToken, 'PATCH', `/api/v1/admin/users/${managerId}/roles`, { global_role: 'Admin' });
     expect(body(res).code).toBe('PERMISSION_CEILING');
-    res = await call(managerToken, 'PUT', `/api/v1/admin/users/${managerId}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Admin' }] });
+    res = await call(managerToken, 'PATCH', `/api/v1/admin/users/${managerId}/roles`, { project_roles: [{ project_id: seed.projectId, role: 'Admin' }] });
     expect(body(res).code).toBe('PERMISSION_CEILING');
 
     // 3. A SYSTEM_ADMIN override, globally or in a project.
@@ -69,7 +69,7 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
     expect(body(res).code).toBe('PERMISSION_CEILING');
 
     // 5. Adding permissions to their own role.
-    res = await call(managerToken, 'PUT', `/api/v1/admin/roles/${await roleId('User Manager')}`, { permission_keys: ['USER_MANAGE', 'SPEC_VIEW', 'PLAN_MANAGE'] });
+    res = await call(managerToken, 'PATCH', `/api/v1/admin/roles/${await roleId('User Manager')}`, { permission_keys: ['USER_MANAGE', 'SPEC_VIEW', 'PLAN_MANAGE'] });
     expect(body(res).code).toBe('PERMISSION_CEILING');
 
     // 6. Clearing a deny override to get back something an admin took away.
@@ -87,14 +87,14 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
   });
 
   it("a user manager can't change admins or the roles that make them admins", async () => {
-    let res = await call(managerToken, 'PUT', `/api/v1/admin/users/${adminId}/status`, { status: 'DISABLED' });
+    let res = await call(managerToken, 'PATCH', `/api/v1/admin/users/${adminId}`, { status: 'DISABLED' });
     expect(res.statusCode).toBe(403);
     expect(body(res).code).toBe('TARGET_OUTRANKS_ACTOR');
-    res = await call(managerToken, 'PUT', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Viewer' });
+    res = await call(managerToken, 'PATCH', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Viewer' });
     expect(body(res).code).toBe('TARGET_OUTRANKS_ACTOR');
     res = await call(managerToken, 'PUT', `/api/v1/admin/users/${adminId}/permission-overrides`, { overrides: [{ permission_key: 'SPEC_VIEW', is_granted: false }] });
     expect(body(res).code).toBe('TARGET_OUTRANKS_ACTOR');
-    res = await call(managerToken, 'PUT', `/api/v1/admin/roles/${await roleId('Admin')}`, { description: 'mine now' });
+    res = await call(managerToken, 'PATCH', `/api/v1/admin/roles/${await roleId('Admin')}`, { description: 'mine now' });
     expect(body(res).code).toBe('ROLE_OUTRANKS_ACTOR');
     res = await call(managerToken, 'DELETE', `/api/v1/admin/roles/${await roleId('Admin')}`);
     expect(body(res).code).toBe('ROLE_OUTRANKS_ACTOR');
@@ -104,7 +104,7 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
       username: 'reader', email: 'reader@testify.local', password: 'Reader-Pass-123', global_role: 'User Manager',
     });
     expect(viewer.statusCode).toBe(201);
-    expect((await call(managerToken, 'PUT', `/api/v1/admin/users/${body(viewer).user.id}/status`, { status: 'DISABLED' })).statusCode).toBe(200);
+    expect((await call(managerToken, 'PATCH', `/api/v1/admin/users/${body(viewer).user.id}`, { status: 'DISABLED' })).statusCode).toBe(200);
   });
 
   it('never leaves the system without an active admin', async () => {
@@ -112,10 +112,10 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
       expect(res.statusCode).toBe(409);
       expect(body(res).code).toBe('LAST_ADMIN');
     };
-    await lastAdmin(await call(adminToken, 'PUT', `/api/v1/admin/users/${adminId}/status`, { status: 'DISABLED' }));
-    await lastAdmin(await call(adminToken, 'PUT', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Tester' }));
+    await lastAdmin(await call(adminToken, 'PATCH', `/api/v1/admin/users/${adminId}`, { status: 'DISABLED' }));
+    await lastAdmin(await call(adminToken, 'PATCH', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Tester' }));
     await lastAdmin(await call(adminToken, 'PUT', `/api/v1/admin/users/${adminId}/permission-overrides`, { overrides: [{ permission_key: 'SYSTEM_ADMIN', is_granted: false }] }));
-    await lastAdmin(await call(adminToken, 'PUT', `/api/v1/admin/roles/${await roleId('Admin')}`, { permission_keys: ['USER_MANAGE'] }));
+    await lastAdmin(await call(adminToken, 'PATCH', `/api/v1/admin/roles/${await roleId('Admin')}`, { permission_keys: ['USER_MANAGE'] }));
 
     // Every attempt was rolled back.
     const me = body(await call(adminToken, 'GET', '/api/v1/auth/me')).user;
@@ -125,8 +125,8 @@ describe('Admin routes: no privilege escalation, and never zero admins', () => {
     expect(adminRole.permission_keys).toContain('SYSTEM_ADMIN');
 
     // With a second admin, the first can step down.
-    expect((await call(adminToken, 'PUT', `/api/v1/admin/users/${managerId}/roles`, { global_role: 'Admin' })).statusCode).toBe(200);
-    expect((await call(adminToken, 'PUT', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Tester' })).statusCode).toBe(200);
+    expect((await call(adminToken, 'PATCH', `/api/v1/admin/users/${managerId}/roles`, { global_role: 'Admin' })).statusCode).toBe(200);
+    expect((await call(adminToken, 'PATCH', `/api/v1/admin/users/${adminId}/roles`, { global_role: 'Tester' })).statusCode).toBe(200);
   });
 
   it('an admin can still grant anything, including SYSTEM_ADMIN', async () => {

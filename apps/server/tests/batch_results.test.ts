@@ -12,9 +12,9 @@ describe('Batch results: validation, steps and transactions', () => {
   const batch = (executions: unknown, atomic = false) =>
     app.inject({
       method: 'POST',
-      url: `/api/v1/test-plans/${seed.planId}/builds/${seed.buildId}/executions/batch${atomic ? '?all_or_nothing=true' : ''}`,
+      url: `/api/v1/runs/${seed.buildId}/results/batch${atomic ? '?all_or_nothing=true' : ''}`,
       headers,
-      payload: { executions },
+      payload: { results: executions },
     });
   const count = async (table: string) => Number((await db.selectFrom(table).select(db.fn.countAll().as('n')).executeTakeFirst()).n);
   const item = (verdict: string, extra: Record<string, unknown> = {}, id = 'SHOP-101') => ({ case_identifier: { external_id: id }, verdict, ...extra });
@@ -23,7 +23,7 @@ describe('Batch results: validation, steps and transactions', () => {
   async function caseOutsidePlan(title: string) {
     const res = await app.inject({
       method: 'POST',
-      url: `/api/v1/projects/${seed.projectId}/test-cases`,
+      url: `/api/v1/projects/${seed.projectId}/cases`,
       headers,
       payload: { test_suite_id: seed.suiteId, title, steps: [{ step_number: 1, action: 'Do it', expected_result: 'Done' }] },
     });
@@ -65,28 +65,28 @@ describe('Batch results: validation, steps and transactions', () => {
     const r = body(mixed).results;
     expect(r.map((x: any) => x.status)).toEqual([201, 400, 400, 400, 400, 400]);
     expect(r[1].code).toBe('INVALID_RESULT');
-    expect(r[1].invalid_params[0].name).toBe('executions[1].verdict');
-    expect(r[3].invalid_params.map((p: any) => p.name).sort()).toEqual(['executions[3].duration_ms', 'executions[3].executed_at']);
-    expect(r[4].invalid_params[0].name).toBe('executions[4].step_results[0].verdict');
-    expect(r[5].invalid_params[0].name).toBe('executions[5].case_identifier');
+    expect(r[1].invalid_params[0].name).toBe('results[1].verdict');
+    expect(r[3].invalid_params.map((p: any) => p.name).sort()).toEqual(['results[3].duration_ms', 'results[3].executed_at']);
+    expect(r[4].invalid_params[0].name).toBe('results[4].step_results[0].verdict');
+    expect(r[5].invalid_params[0].name).toBe('results[5].case_identifier');
     expect(await count('test_results')).toBe(1);
 
     const atomic = await batch([item('PASSED', {}, 'SHOP-105'), item('nope'), item('PASSED', { status: 'x' })], true);
     expect(atomic.statusCode).toBe(400);
     expect(body(atomic).code).toBe('INVALID_RESULT');
-    expect(body(atomic).invalid_params.map((p: any) => p.name)).toEqual(['executions[1].verdict', 'executions[2].status']);
+    expect(body(atomic).invalid_params.map((p: any) => p.name)).toEqual(['results[1].verdict', 'results[2].status']);
     expect(await count('test_results')).toBe(1);
 
     for (const executions of [[], 'all of them', null]) {
       const res = await batch(executions);
       expect(res.statusCode).toBe(400);
-      expect(body(res).invalid_params[0].name).toBe('executions');
+      expect(body(res).invalid_params[0].name).toBe('results');
     }
   });
 
   it('records step results against the step they name, and refuses unknown steps instead of using step 1', async () => {
     const queue = body(
-      await app.inject({ method: 'GET', url: `/api/v1/test-plans/${seed.planId}/cases?build_id=${seed.buildId}`, headers })
+      await app.inject({ method: 'GET', url: `/api/v1/plans/${seed.planId}/cases?test_run_id=${seed.buildId}`, headers })
     ).cases;
     const shop101 = queue.find((c: any) => c.external_id === 'SHOP-101');
     const shop102 = queue.find((c: any) => c.external_id === 'SHOP-102');
@@ -109,7 +109,7 @@ describe('Batch results: validation, steps and transactions', () => {
     const steps = await db
       .selectFrom('test_step_results')
       .select(['test_step_id', 'step_number', 'verdict', 'actual_result'])
-      .where('test_result_id', '=', r[0].execution_id)
+      .where('test_result_id', '=', r[0].test_result_id)
       .orderBy('step_number')
       .execute();
     expect(steps).toEqual([

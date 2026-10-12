@@ -4,7 +4,7 @@ import type { Database } from '@testify/db';
 import { ProjectRepository, TestPlanRepository, TestRunRepository } from '@testify/db';
 import { authenticateRequest, requirePermission, permissionsInProject, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
-import { sendPlanInUseError, sendBuildInUseError, sendProjectInUseError, sendError } from '../errors.js';
+import { sendPlanInUseError, sendRunInUseError, sendProjectInUseError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
@@ -77,7 +77,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
 
   // Editing uses PROJECT_CREATE -- the registry has no separate "edit project" key, and
   // whoever can create projects is the natural owner of renaming them.
-  app.put(
+  app.patch(
     '/api/v1/projects/:projectId',
     { preHandler: requirePermission('PROJECT_CREATE', db, jwtSecret) },
     async (request, reply) => {
@@ -139,7 +139,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         return sendProjectInUseError(
           reply,
           projectId,
-          { suites: c.suiteCount, cases: c.caseCount, plans: c.planCount, runs: c.runCount, executions: c.executionCount },
+          { suites: c.suiteCount, cases: c.caseCount, plans: c.planCount, runs: c.runCount, results: c.resultCount },
           request.url,
           existing.name
         );
@@ -213,11 +213,12 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     }
   );
 
-  app.put(
-    '/api/v1/projects/:projectId/plans/:planId',
+  app.patch(
+    '/api/v1/plans/:planId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
-      const { projectId, planId } = request.params as { projectId: string; planId: string };
+      const { planId } = request.params as { planId: string };
+      const projectId = request.projectId ?? '';
       const existing = await planRepo.findById(planId);
       if (!existing || existing.project_id !== projectId) {
         return sendError(reply, 404, 'Test plan not found in this project');
@@ -241,10 +242,11 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   );
 
   app.delete(
-    '/api/v1/projects/:projectId/plans/:planId',
+    '/api/v1/plans/:planId',
     { preHandler: requirePermission('PLAN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
-      const { projectId, planId } = request.params as { projectId: string; planId: string };
+      const { planId } = request.params as { planId: string };
+      const projectId = request.projectId ?? '';
       const { force } = request.query as { force?: string };
 
       const existing = await planRepo.findById(planId);
@@ -257,28 +259,29 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
         return sendPlanInUseError(
           reply,
           planId,
-          { builds: result.blockedRunCount, caseLinks: result.blockedCaseLinkCount, executions: result.blockedResultCount },
+          { runs: result.blockedRunCount, caseLinks: result.blockedCaseLinkCount, results: result.blockedResultCount },
           request.url,
           existing.name
         );
       }
 
-      return reply.status(200).send({ deleted: true });
+      return reply.status(204).send();
     }
   );
 
-  // Test Run (Build) mutation routes, nested one level deeper than Plans (a build only ever
-  // exists under one plan -- see TestRunRepository/migration's uq_build_plan_name constraint,
+  // Test Run (Run) mutation routes, nested one level deeper than Plans (a run only ever
+  // exists under one plan -- see TestRunRepository/migration's uq_test_run_plan_name constraint,
   // already enforcing unique run names per plan at the DB layer). Same resurrection story as
   // the Plan routes above: TestRunRepository.create/update/deleteWithForce existed since the
   // first migration, never called by any route -- the Run create/edit/delete toolbar was
   // 100% client-side mock state. Gated on RUN_MANAGE (already registered/seeded, held by
   // Admin/Test Lead/Automation Service, just never had a route to gate until now).
   app.post(
-    '/api/v1/projects/:projectId/plans/:planId/builds',
+    '/api/v1/plans/:planId/runs',
     { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
-      const { projectId, planId } = request.params as { projectId: string; planId: string };
+      const { planId } = request.params as { planId: string };
+      const projectId = request.projectId ?? '';
       const plan = await planRepo.findById(planId);
       if (!plan || plan.project_id !== projectId) {
         return sendError(reply, 404, 'Test plan not found in this project');
@@ -293,16 +296,16 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       }
 
       try {
-        const build = await runRepo.create({
+        const run = await runRepo.create({
           test_plan_id: planId,
           name: name.trim(),
           description: description ?? null,
           status,
           release_date: release_date ?? null,
         });
-        return reply.status(201).send({ build });
+        return reply.status(201).send({ run });
       } catch (err: any) {
-        // uq_build_plan_name -- a Postgres unique_violation surfaces as a raw 500 otherwise.
+        // uq_test_run_plan_name -- a Postgres unique_violation surfaces as a raw 500 otherwise.
         if (err?.code === '23505') {
           return sendError(reply, 409, `A test run named "${name.trim()}" already exists in this test plan`);
         }
@@ -311,18 +314,22 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
     }
   );
 
-  app.put(
-    '/api/v1/projects/:projectId/plans/:planId/builds/:buildId',
+  // The run, with its plan, if it belongs to the request's project (null otherwise).
+  async function findRunInProject(runId: string, projectId: string) {
+    const run = await runRepo.findById(runId);
+    if (!run) return null;
+    const plan = await planRepo.findById(run.test_plan_id);
+    return plan && plan.project_id === projectId ? { run, plan } : null;
+  }
+
+  app.patch(
+    '/api/v1/runs/:runId',
     { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
-      const { projectId, planId, buildId } = request.params as { projectId: string; planId: string; buildId: string };
-      const plan = await planRepo.findById(planId);
-      if (!plan || plan.project_id !== projectId) {
-        return sendError(reply, 404, 'Test plan not found in this project');
-      }
-      const existing = await runRepo.findById(buildId);
-      if (!existing || existing.test_plan_id !== planId) {
-        return sendError(reply, 404, 'Test run not found in this test plan');
+      const { runId } = request.params as { runId: string };
+      const found = await findRunInProject(runId, request.projectId ?? '');
+      if (!found) {
+        return sendError(reply, 404, 'Test run not found');
       }
 
       const { name, description, status, release_date } = (request.body as any) || {};
@@ -334,13 +341,13 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
       }
 
       try {
-        const build = await runRepo.update(buildId, {
+        const run = await runRepo.update(runId, {
           ...(name !== undefined ? { name: name.trim() } : {}),
           ...(description !== undefined ? { description } : {}),
           ...(status !== undefined ? { status } : {}),
           ...(release_date !== undefined ? { release_date } : {}),
         });
-        return reply.status(200).send({ build });
+        return reply.status(200).send({ run });
       } catch (err: any) {
         if (err?.code === '23505') {
           return sendError(reply, 409, `A test run named "${name?.trim()}" already exists in this test plan`);
@@ -351,27 +358,24 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
   );
 
   app.delete(
-    '/api/v1/projects/:projectId/plans/:planId/builds/:buildId',
+    '/api/v1/runs/:runId',
     { preHandler: requirePermission('RUN_MANAGE', db, jwtSecret) },
     async (request, reply) => {
-      const { projectId, planId, buildId } = request.params as { projectId: string; planId: string; buildId: string };
+      const { runId } = request.params as { runId: string };
       const { force } = request.query as { force?: string };
 
-      const plan = await planRepo.findById(planId);
-      if (!plan || plan.project_id !== projectId) {
-        return sendError(reply, 404, 'Test plan not found in this project');
+      const found = await findRunInProject(runId, request.projectId ?? '');
+      if (!found) {
+        return sendError(reply, 404, 'Test run not found');
       }
-      const existing = await runRepo.findById(buildId);
-      if (!existing || existing.test_plan_id !== planId) {
-        return sendError(reply, 404, 'Test run not found in this test plan');
-      }
+      const existing = found.run;
 
-      const result = await runRepo.deleteWithForce(buildId, { force: force === 'true' });
+      const result = await runRepo.deleteWithForce(runId, { force: force === 'true' });
       if (!result.deleted) {
-        return sendBuildInUseError(reply, buildId, { executions: result.blockedResultCount }, request.url, existing.name);
+        return sendRunInUseError(reply, runId, { results: result.blockedResultCount }, request.url, existing.name);
       }
 
-      return reply.status(200).send({ deleted: true });
+      return reply.status(204).send();
     }
   );
 }

@@ -38,13 +38,13 @@ describe('Import size and concurrency limits', () => {
   });
 
   it('imports a multipart upload, including one larger than the JSON body limit', async () => {
-    const fields = { target_project_id: seed.projectId, format: 'TESTLINK_XML' };
-    const dry = await upload('/api/v1/imports/dry-run', fields, [{ name: 'small.xml', content: xml() }]);
+    const fields = { format: 'TESTLINK_XML' };
+    const dry = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, fields, [{ name: 'small.xml', content: xml() }]);
     expect(dry.statusCode).toBe(200);
     expect(body(dry).dry_run_summary.total_cases_detected).toBe(1);
 
     const exec = await upload(
-      '/api/v1/imports/execute',
+      `/api/v1/projects/${seed.projectId}/imports/execute`,
       { ...fields, configuration: JSON.stringify({ duplicate_resolution: { default_action: 'VERSION_UP' } }) },
       [{ name: 'small.xml', content: xml() }]
     );
@@ -53,29 +53,29 @@ describe('Import size and concurrency limits', () => {
 
     // Past the JSON limit, but fine as a file.
     const big = xml('x'.repeat(IMPORT_JSON_BODY_LIMIT_BYTES + 1024 * 1024));
-    const bigRes = await upload('/api/v1/imports/dry-run', fields, [{ name: 'big.xml', content: big }]);
+    const bigRes = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, fields, [{ name: 'big.xml', content: big }]);
     expect(bigRes.statusCode).toBe(200);
   }, 60_000);
 
   it('refuses an oversized JSON body, an oversized file, and more than one file -- with a clear 413', async () => {
     const json = await app.inject({
       method: 'POST',
-      url: '/api/v1/imports/dry-run',
+      url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { file_content: xml('x'.repeat(IMPORT_JSON_BODY_LIMIT_BYTES)), target_project_id: seed.projectId },
+      payload: { file_content: xml('x'.repeat(IMPORT_JSON_BODY_LIMIT_BYTES)) },
     });
     expect(json.statusCode).toBe(413);
     expect(body(json).code).toBe('IMPORT_TOO_LARGE');
     expect(body(json).detail).toContain('multipart');
 
-    const tooBig = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [
+    const tooBig = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, {}, [
       { name: 'huge.xml', content: Buffer.alloc(IMPORT_MAX_FILE_BYTES + 1, 0x20) },
     ]);
     expect(tooBig.statusCode).toBe(413);
     expect(body(tooBig).code).toBe('IMPORT_TOO_LARGE');
     expect(body(tooBig).detail).toContain('50 MB');
 
-    const two = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [
+    const two = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, {}, [
       { name: 'a.xml', content: xml() },
       { name: 'b.xml', content: xml() },
     ]);
@@ -86,24 +86,24 @@ describe('Import size and concurrency limits', () => {
   it(`runs at most ${MAX_CONCURRENT_IMPORTS} imports at once; anonymous requests take no slot`, async () => {
     // Anonymous requests are refused before taking a slot.
     for (let i = 0; i < 3; i++) {
-      const anon = await app.inject({ method: 'POST', url: '/api/v1/imports/dry-run', payload: { file_content: xml() } });
+      const anon = await app.inject({ method: 'POST', url: `/api/v1/projects/${seed.projectId}/imports/dry-run`, payload: { file_content: xml() } });
       expect(anon.statusCode).toBe(401);
     }
 
     // Hold every slot with uploads whose bodies haven't finished arriving.
-    const { payload, contentType } = await multipart({ target_project_id: seed.projectId }, [{ name: 'slow.xml', content: xml() }]);
+    const { payload, contentType } = await multipart({}, [{ name: 'slow.xml', content: xml() }]);
     const streams = Array.from({ length: MAX_CONCURRENT_IMPORTS }, () => new PassThrough());
     const held = streams.map((stream) =>
       app.inject({
         method: 'POST',
-        url: '/api/v1/imports/dry-run',
+        url: `/api/v1/projects/${seed.projectId}/imports/dry-run`,
         headers: { authorization: `Bearer ${token}`, 'content-type': contentType },
         payload: stream,
       })
     );
     await new Promise((r) => setTimeout(r, 1000));
 
-    const busy = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [{ name: 'c.xml', content: xml() }]);
+    const busy = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, {}, [{ name: 'c.xml', content: xml() }]);
     expect(busy.statusCode).toBe(429);
     expect(body(busy).code).toBe('IMPORT_BUSY');
     expect(busy.headers['retry-after']).toBeDefined();
@@ -112,7 +112,7 @@ describe('Import size and concurrency limits', () => {
     for (const res of await Promise.all(held)) expect(res.statusCode).toBe(200);
 
     // Slots are given back once those finish.
-    const after = await upload('/api/v1/imports/dry-run', { target_project_id: seed.projectId }, [{ name: 'd.xml', content: xml() }]);
+    const after = await upload(`/api/v1/projects/${seed.projectId}/imports/dry-run`, {}, [{ name: 'd.xml', content: xml() }]);
     expect(after.statusCode).toBe(200);
   }, 60_000);
 });
