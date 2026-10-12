@@ -1806,3 +1806,18 @@ Facts were checked against the code as each doc was written, including a schema 
   - a new workflow rule: fix a design doc in the same change that makes it wrong.
 
 Every item of the 2026-10-07 audit is now fixed. Docs only; no code changed.
+
+## Removed the audit list; added the API & MCP roadmap (2026-10-11)
+
+- **Audit list removed:** `docs/audit_2026-10-07.md` is deleted, since every item is fixed. Each fix has its own entry in this log, and "Audit item N" in older entries refers to that file, which is still in git history. One fix remains open from it, as a known gap in `CLAUDE.md`: plan and run changes write no audit entry.
+- **New `docs/api_roadmap.md`:** where the API stands (what's good and what's weak, with concrete examples), what an OpenAPI spec and "try it" docs page are and how they'd fit Fastify, and seven next steps:
+  1. consistency;
+  2. versioning;
+  3. the OpenAPI spec and docs page;
+  4. paging;
+  5. CI integration;
+  6. MCP write tools;
+  7. webhooks.
+
+  Each step has a recommendation, open questions and a status line. The file also gives a recommended order and has a Decisions table.
+- **`CLAUDE.md`:** points to it in the doc map and the workflow, in place of the audit file.

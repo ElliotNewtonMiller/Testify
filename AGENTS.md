@@ -81,7 +81,7 @@ packages/core/     Domain logic with no database, each module unit-tested: inges
                    (verdict and status lists), security/ (JWT, password policy).
 packages/db/       Kysely, Postgres-compatible SQL only. createDbClient(): no connection string = in-memory PGlite,
                    otherwise pg. migrations/ (tracked), repositories/, seeds/ (rbac registry, sample project, dev fixtures).
-docs/              changelog.md, deployment.md, reports_api_and_mcp.md, audit_2026-10-07.md, and the design docs (RFCs, blueprint, roadmap).
+docs/              changelog.md, api_roadmap.md, deployment.md, reports_api_and_mcp.md, and the design docs (RFCs, blueprint, roadmap).
 ```
 
 ## Domain rules
@@ -252,7 +252,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - **Commits:** Elliot has authorized committing directly to the local repo, in logical commits with clear messages. There's no git remote; don't add one or push unless asked.
 - **Ask before downloading** packages or images.
 - **After a change,** give Elliot a short checklist of what to test.
-- **Audit:** `docs/audit_2026-10-07.md` records the 2026-10-07 audit; every item is fixed.
+- **API work:** `docs/api_roadmap.md` tracks the planned API and MCP steps. Update a step's status and the Decisions table as the work happens.
 - **Design docs:** when a change makes an RFC, the blueprint or the roadmap wrong, fix that doc in the same change.
 
 ## Doc map
@@ -260,7 +260,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 1. `README.md`: overview and quick start. `docs/deployment.md`: running Testify for real.
 2. `docs/changelog.md`: the history and reasoning behind everything.
 3. `docs/reports_api_and_mcp.md`: reports, the results API, MCP.
-4. `docs/audit_2026-10-07.md`: the 2026-10-07 audit and what's been fixed.
+4. `docs/api_roadmap.md`: where the API stands, and the planned next steps for the API and MCP, with their status.
 5. Design documents, updated 2026-10-11 to match the code (each says plainly what isn't built):
    - `docs/MASTER_ARCHITECTURE_BLUEPRINT.md`: the overview, linking to the RFCs.
    - `docs/rfc_01_domain_model.md` (domain, schema, state machines), `rfc_02` (layout, hotkeys), `rfc_03` (CI results, import; §1-4 are still the original API design), `rfc_04` (permissions, tokens, audit, threat model).
