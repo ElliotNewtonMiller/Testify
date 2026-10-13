@@ -145,7 +145,7 @@ flowchart TD
   - attachments and `IStorageProvider`, including the pre-signed upload route;
   - streaming 100 MB+ imports in bounded memory;
   - `tf_live_` tokens;
-  - webhooks.
+  - webhooks (built later, with API roadmap step 7).
 
 **Verified by:**
 - `packages/core/tests/ingestion.test.ts`, `CsvParser.test.ts`, `JUnitXmlParser.test.ts`, `TestRailCsvParser.test.ts`, `reporting.test.ts`;
@@ -161,7 +161,7 @@ flowchart TD
 | **1** | Three-pane workspace, suite tree, specification | Built |
 | **2** | Hotkeys, results, plans and runs | Built (step-level results API-only) |
 | **3** | Permissions, admin, custom fields | Built (no project settings form) |
-| **4** | Import, export, API tokens, reports | Built, except attachments, storage, streaming import and webhooks |
+| **4** | Import, export, API tokens, reports | Built, except attachments, storage and streaming import (webhooks came with API roadmap step 7) |
 
 How to run everything: `npm test` (every test), `npm run typecheck`, `npm run build`. See `CLAUDE.md` and `README.md`.
 

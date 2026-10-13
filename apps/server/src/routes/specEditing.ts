@@ -16,6 +16,7 @@ import type { InvalidParam } from '../services/resultValidation.js';
 import { actorType, requestOrigin, type RequestOrigin } from '../audit.js';
 import * as S from '../openapi/areas/spec.js';
 import { internalVia } from '../internalRequests.js';
+import { emitTestCaseEvent, webhookActor } from '../services/webhookEvents.js';
 import { PRIORITIES, VERSION_STATUSES } from '../openapi/schemas.js';
 import { commaList, readPage } from '../paging.js';
 
@@ -361,6 +362,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         diff: { external_id: externalId, title, test_suite_id: testSuiteId },
       });
 
+      await emitTestCaseEvent(db, webhookActor(actor), 'test_case.created', testCase.id, { via: internalVia(request) === 'mcp' ? 'mcp' : null });
       return reply.status(201).send({ test_case: testCase, version });
     }
   );
@@ -596,7 +598,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         await insertAuditLog({
         origin: requestOrigin(request),
           actorId: actor.id,
-        actorType: actorType(actor),
+          actorType: actorType(actor),
           action: 'CASE_DRAFT_CREATED',
           resourceType: 'test_case_version',
           resourceId: version.id,
@@ -723,6 +725,7 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         diff: { test_case_id: version.test_case_id, repinned_plan_count: repinnedPlanCount },
       });
 
+      await emitTestCaseEvent(db, webhookActor(actor), 'test_case.approved', version.test_case_id);
       return reply.status(200).send({ version: approved, repinned_plan_count: repinnedPlanCount });
     }
   );
@@ -783,13 +786,14 @@ export async function registerSpecEditingRoutes(app: FastifyInstance, db: Kysely
         await insertAuditLog({
         origin: requestOrigin(request),
           actorId: actor.id,
-        actorType: actorType(actor),
+          actorType: actorType(actor),
           action: transition.action,
           resourceType: 'test_case_version',
           resourceId: versionId,
           projectId,
           diff: { test_case_id: owningCase.id, from: transition.from, to: transition.to },
         });
+        await emitTestCaseEvent(db, webhookActor(actor), transition.to === 'DEPRECATED' ? 'test_case.deprecated' : 'test_case.restored', owningCase.id);
 
         return reply.status(200).send({ version: updated });
       }

@@ -14,6 +14,7 @@ import { registerIngestionRoutes, IMPORT_FIELD_LIMIT_BYTES, IMPORT_MAX_FILE_BYTE
 import { registerBatchExecutionRoutes } from './routes/batchExecution.js';
 import { registerJUnitResultRoutes } from './routes/junitResults.js';
 import { registerBulkChangeRoutes } from './routes/bulkChanges.js';
+import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerResultRoutes } from './routes/results.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -31,11 +32,12 @@ import { registerReportEmailRoutes } from './routes/reportEmail.js';
 import { registerEmailAdminRoutes } from './routes/emailAdmin.js';
 import { createRateLimits } from './services/rateLimits.js';
 import { runDueSchedules } from './services/reportEmailService.js';
-import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, resolveJwtSecret, resolveLogLevel, ConfigError } from './config.js';
+import { resolveDatabaseConfig, resolveInitialAdminPassword, resolveCorsOrigins, resolveSecretsKey, resolveWebDistDir, resolveJwtSecret, resolveLogLevel, resolveWebhookAllowLocal, ConfigError } from './config.js';
 import { loggerOptions, registerRequestLogging, registerHealthRoute } from './observability.js';
 import { registerWebApp } from './webApp.js';
 import { registerOpenApi, validationProblem } from './openapi/index.js';
 import { setSecretBox } from './services/secrets.js';
+import { configureWebhooks, runDueWebhookDeliveries } from './services/webhooks.js';
 import { encryptStoredSmtpPassword } from './services/mailer.js';
 import { UserRepository } from '@testify/db';
 
@@ -46,7 +48,14 @@ import { UserRepository } from '@testify/db';
 // from DATABASE_URL, and never falls back to the in-memory database silently (config.ts).
 export async function createServer(
   connectionString?: string,
-  options: { db?: Kysely<Database>; webDistDir?: string | null; logStream?: NodeJS.WritableStream; checkResponses?: boolean } = {}
+  options: {
+    db?: Kysely<Database>;
+    webDistDir?: string | null;
+    logStream?: NodeJS.WritableStream;
+    checkResponses?: boolean;
+    /** Tests: let webhooks reach local receivers, and send deliveries only when told to (runDueWebhookDeliveries). */
+    webhooks?: { allowLocal?: boolean; deliverImmediately?: boolean; timeoutMs?: number };
+  } = {}
 ) {
   // TRUST_PROXY=true behind a reverse proxy, so request.ip (used by the sign-in limits) is the
   // real client address rather than the proxy's.
@@ -114,6 +123,11 @@ export async function createServer(
   // Key for secrets stored in the database (SECRETS_KEY), then encrypt an SMTP password saved
   // in plaintext by an older version.
   setSecretBox(resolveSecretsKey({ inMemory: !connectionString }));
+  configureWebhooks({
+    allowLocal: options.webhooks?.allowLocal ?? resolveWebhookAllowLocal(),
+    deliverImmediately: options.webhooks?.deliverImmediately ?? true,
+    timeoutMs: options.webhooks?.timeoutMs,
+  });
   await encryptStoredSmtpPassword(db);
   await seedRbacRegistry(db);
   const seedSampleData = process.env.NODE_ENV === 'test' || process.env.SEED_SAMPLE_DATA === 'true';
@@ -155,6 +169,7 @@ export async function createServer(
   await registerBatchExecutionRoutes(app, db, jwtSecret);
   await registerJUnitResultRoutes(app, db, jwtSecret);
   await registerBulkChangeRoutes(app, db, jwtSecret);
+  await registerWebhookRoutes(app, db, jwtSecret);
   await registerAuthRoutes(app, db, jwtSecret);
   await registerAdminRoutes(app, db, jwtSecret);
   await registerTestPlanCaseRoutes(app, db, jwtSecret);
@@ -230,4 +245,10 @@ if (process.env.NODE_ENV !== 'test') {
   setInterval(() => {
     runDueSchedules(db).catch((err) => console.error('Report email scheduler failed:', err));
   }, 60_000);
+
+  // Webhook deliveries are sent as soon as their event happens; this picks up retries, and
+  // deliveries another instance queued or didn't finish. Claims are compare-and-set here too.
+  setInterval(() => {
+    runDueWebhookDeliveries(db).catch((err) => console.error('[webhooks] Delivery failed:', err));
+  }, 15_000);
 }

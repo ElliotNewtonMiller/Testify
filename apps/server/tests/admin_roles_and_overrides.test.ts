@@ -90,7 +90,7 @@ describe('Admin: template roles & per-user permission overrides', () => {
     });
     expect(res.statusCode).toBe(200);
     const permissions = JSON.parse(res.payload).permissions;
-    expect(permissions).toHaveLength(19);
+    expect(permissions).toHaveLength(20);
     expect(permissions.map((p: any) => p.key)).toContain('SYSTEM_ADMIN');
   });
 

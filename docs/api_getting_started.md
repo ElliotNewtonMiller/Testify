@@ -341,7 +341,52 @@ The full list is in [RFC 03 §4.2](rfc_03_api_and_xml_contracts.md). An unexpect
 - 120 exports and 60 report emails an hour.
 - Imports: 50 MB per file, two at a time.
 
-## 9. Going further
+## 9. Get notified: webhooks
+
+A webhook makes Testify send a project's events to another system as they happen: a run finishing (with its pass rate and new failures), tests failing, a case drafted by an AI agent waiting for review, an import finishing. Setting one up needs `WEBHOOK_MANAGE` in the project (Admin and Test Lead have it); API tokens can't. `GET /api/v1/webhook-events` lists the events.
+
+**To a Slack channel.** In Slack, add an *Incoming Webhook* to the channel and copy its URL. Then:
+
+```bash
+curl -s -X POST "$TESTIFY/api/v1/projects/$PROJECT_ID/webhooks" -H "Authorization: Bearer $LOGIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name": "QA channel", "url": "https://hooks.slack.com/services/T000/B000/XXXX", "format": "slack",
+       "events": ["run.closed", "results.failed", "test_case.created"]}' | jq '{id: .webhook.id, secret}'
+curl -s -X POST "$TESTIFY/api/v1/webhooks/$WEBHOOK_ID/ping" -H "Authorization: Bearer $LOGIN_TOKEN" | jq '.delivery | {status, response_status, error}'
+```
+
+The `slack` format also suits Mattermost and Rocket.Chat, and Discord when its webhook URL ends in `/slack`. (`$LOGIN_TOKEN` is from `POST /api/v1/auth/login`; set the server's public address in Admin Panel → Email for the messages to link back to Testify.)
+
+**To your own code** (`"format": "json"`, the default), each event arrives as a signed JSON `POST`, described in [RFC 03 §7.3](rfc_03_api_and_xml_contracts.md). Check the signature before trusting it: the secret is answered once when the webhook is created (`secret`), or by `POST /api/v1/webhooks/{id}/rotate-secret`.
+
+```js
+// Node (Express): app.post('/testify', express.raw({ type: 'application/json' }), handler)
+import { createHmac, timingSafeEqual } from 'node:crypto';
+function fromTestify(req, secret) {
+  const ts = req.get('X-Signature-Timestamp');
+  const expected = createHmac('sha256', secret).update(`${ts}.${req.body}`).digest('hex'); // req.body: the raw bytes
+  const given = req.get('X-Signature-SHA256') ?? '';
+  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected))
+    && Math.abs(Date.now() / 1000 - Number(ts)) < 300; // and not a replay
+}
+```
+
+```python
+# Python (Flask)
+import hmac, hashlib, time
+def from_testify(request, secret: str) -> bool:
+    ts = request.headers.get("X-Signature-Timestamp", "")
+    expected = hmac.new(secret.encode(), f"{ts}.".encode() + request.get_data(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, request.headers.get("X-Signature-SHA256", "")) and abs(time.time() - float(ts or 0)) < 300
+```
+
+What to know:
+- **Answer quickly with a 2xx.** Anything else, no answer within 10 seconds, or a redirect, counts as a failure, retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 8 hours.
+- **Events can arrive twice or out of order** (after a retry). Each has an `id` that stays the same: use it to ignore repeats.
+- **The delivery log** (`GET /api/v1/webhooks/{id}/deliveries`, then `GET /api/v1/webhook-deliveries/{id}`) shows each attempt and the start of your answer; `POST /api/v1/webhook-deliveries/{id}/redeliver` sends one again.
+- **Addresses:** webhooks can reach the internet and your private network, but not the Testify server's own machine (`localhost`) or link-local addresses, unless the server sets `WEBHOOK_ALLOW_LOCAL=true`.
+
+## 10. Going further
 
 - **Everything else** (suites, cases, versions, plans, custom fields, imports, reports, report emails): see `/docs`.
 - **Generated client libraries:** tools that read OpenAPI 3.1 (for example OpenAPI Generator) can build a typed client for Python, TypeScript and other languages from `/docs/json`.

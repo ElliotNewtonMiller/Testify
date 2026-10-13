@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sendPlanInUseError, sendRunInUseError, sendProjectInUseError, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
 import * as S from '../openapi/areas/projects.js';
+import { emitRunClosed, emitRunCreated, webhookActor } from '../services/webhookEvents.js';
 
 const VALID_PLAN_STATUSES = new Set(['ACTIVE', 'LOCKED', 'ARCHIVED']);
 const VALID_BUILD_STATUSES = new Set(['OPEN', 'CLOSED']);
@@ -327,6 +328,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
           status,
           release_date: release_date ?? null,
         });
+        await emitRunCreated(db, webhookActor(request.user), run.id);
         return reply.status(201).send({ run });
       } catch (err: any) {
         // uq_test_run_plan_name -- a Postgres unique_violation surfaces as a raw 500 otherwise.
@@ -371,6 +373,7 @@ export async function registerProjectRoutes(app: FastifyInstance, db: Kysely<Dat
           ...(status !== undefined ? { status } : {}),
           ...(release_date !== undefined ? { release_date } : {}),
         });
+        if (status === 'CLOSED' && found.run.status !== 'CLOSED') await emitRunClosed(db, webhookActor(request.user), runId, 'person');
         return reply.status(200).send({ run });
       } catch (err: any) {
         if (err?.code === '23505') {

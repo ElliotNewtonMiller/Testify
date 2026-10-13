@@ -9,6 +9,7 @@ import { resolveCaseLinkability } from '../routes/testPlanCases.js';
 import type { AuthenticatedUser } from '../middleware/auth.js';
 import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResultsInRun } from './resultOverwrite.js';
 import { requestOrigin } from '../audit.js';
+import { emitResultsRecorded, emitRunClosed, webhookActor } from './webhookEvents.js';
 
 /**
  * Recording many results in a run at once: the CI batch (routes/batchExecution.ts, JSON) and JUnit
@@ -493,6 +494,17 @@ export async function recordResultsBatch(
     await db.updateTable('test_runs').set({ status: 'CLOSED', updated_at: new Date().toISOString() }).where('id', '=', runId).execute();
   }
   responsePayload.run_status = options.closeRun ? 'CLOSED' : 'OPEN';
+
+  // Webhooks: what this batch recorded, then (with close_run) the closed run.
+  const actor = webhookActor(user);
+  await emitResultsRecorded(
+    db,
+    actor,
+    runId,
+    'API',
+    results.flatMap((r) => (r.status === 201 && r.test_case_id ? [{ test_case_id: r.test_case_id, verdict: r.verdict!, failure_message: executions[r.index]?.failure_message ?? null }] : []))
+  );
+  if (options.closeRun) await emitRunClosed(db, actor, runId, 'ci');
 
   const httpStatus = failedCount > 0 && !allOrNothing ? 207 : 201;
   return new BatchRecorded(httpStatus, responsePayload);

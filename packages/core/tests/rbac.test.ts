@@ -9,9 +9,9 @@ import {
 
 describe('RBAC permission registry', () => {
   it('has exactly 19 entries, all with unique keys', () => {
-    expect(PERMISSION_REGISTRY).toHaveLength(19);
-    expect(PERMISSION_KEYS).toHaveLength(19);
-    expect(new Set(PERMISSION_KEYS).size).toBe(19);
+    expect(PERMISSION_REGISTRY).toHaveLength(20);
+    expect(PERMISSION_KEYS).toHaveLength(20);
+    expect(new Set(PERMISSION_KEYS).size).toBe(20);
   });
 
   it('every entry has a non-empty key, description, and module', () => {

@@ -35,6 +35,7 @@ export const OPENAPI_TAGS = [
   { name: 'Import', description: 'Importing suites and cases: TestLink XML, JUnit XML, Testify JSON, CSV, TestRail CSV. Preview first, then import.' },
   { name: 'Export', description: 'Exporting suites and cases, or a run\'s results, as JSON or CSV.' },
   { name: 'API tokens', description: 'Tokens for CI and scripts. Each works only in its own project.' },
+  { name: 'Webhooks', description: "Sending a project's events (runs, results, test cases, imports) to other systems as they happen: signed JSON, or Slack-style messages. Not available to API tokens." },
   { name: 'Admin: users and roles', description: 'Users, roles, project roles and permission overrides. Not available to API tokens.' },
   { name: 'Admin: custom fields', description: 'Defining custom fields for cases and suites. Not available to API tokens.' },
   { name: 'Admin: email', description: 'The mail server for report emails. Not available to API tokens.' },

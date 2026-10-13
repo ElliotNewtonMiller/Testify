@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
 import { TestRunRepository } from '@testify/db';
 import { NO_ORIGIN, type RequestOrigin } from './audit.js';
+import { emitRunClosed } from './services/webhookEvents.js';
 
 /**
  * The run closes automatically the FIRST time every case in its plan has a result. Called
@@ -52,6 +53,7 @@ export async function autoCloseRunIfComplete(
         created_at: new Date().toISOString(),
       })
       .execute();
+    await emitRunClosed(db, { id: actor.id, type: actor.type }, runId, 'auto');
   }
   const run = await runRepo.findById(runId);
   return run?.status === 'CLOSED' ? 'CLOSED' : 'OPEN';

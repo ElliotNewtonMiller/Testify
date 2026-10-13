@@ -26,6 +26,7 @@ import {
 import { authenticateRequest, permissionsInProject } from '../middleware/auth.js';
 import { isPublicError, publicErrorMessage, sendError } from '../errors.js';
 import { requestOrigin } from '../audit.js';
+import { emitImportCompleted, webhookActor } from '../services/webhookEvents.js';
 import * as O from '../openapi/areas/other.js';
 
 /**
@@ -819,6 +820,13 @@ export async function registerIngestionRoutes(app: FastifyInstance, db: Kysely<D
       });
 
       const durationMs = Date.now() - startTime;
+      await emitImportCompleted(db, webhookActor(user), targetProjectId!, selectedParser.formatId, {
+        imported_suites_count: importedSuitesCount,
+        imported_cases_count: importedCasesCount,
+        created_versions_count: createdVersionsCount,
+        overwritten_cases_count: overwrittenCasesCount,
+        skipped_cases_count: skippedCasesCount,
+      });
       return reply.status(200).send({
         object: 'import_execute_result',
         summary: {

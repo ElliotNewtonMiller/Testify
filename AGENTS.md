@@ -17,6 +17,7 @@ Testify is an open-source, self-hosted test case management app meant to replace
 
 **Everything else:**
 - Reports: run summaries and diffs, trends, flaky and slow tests, case history, breakdowns. They're available in the app, the REST API, scheduled email and MCP.
+- Webhooks: a project's events (runs, results, test cases, imports) sent as they happen, as signed JSON or Slack-style messages, with retries and a delivery log.
 - Import (TestLink XML, JUnit XML, TestRail CSV, CSV, JSON) and export (JSON, CSV).
 - Editable roles, per-project roles and permission overrides, and project-scoped API tokens.
 
@@ -49,7 +50,7 @@ npx tsx apps/server/scripts/report-demo.ts   # loads a demo project with 8 runs 
 **Configuration** comes only from environment variables; there's no `.env` loader except Docker Compose's. A bad value stops startup with a `ConfigError` saying what to set. The full table is in `docs/deployment.md`. In short:
 - `DATABASE_URL` is required: a Postgres URL, or `memory` (refused with `NODE_ENV=production`).
 - `JWT_SECRET` (32+ characters) is required with a real database.
-- Also read: `SECRETS_KEY`, `ADMIN_PASSWORD`, `PORT`, `TRUST_PROXY`, `CORS_ORIGINS`, `LOG_LEVEL`, `WEB_DIST_DIR`, `SEED_SAMPLE_DATA`, `SEED_DEV_FIXTURES`.
+- Also read: `SECRETS_KEY`, `ADMIN_PASSWORD`, `PORT`, `TRUST_PROXY`, `CORS_ORIGINS`, `LOG_LEVEL`, `WEB_DIST_DIR`, `SEED_SAMPLE_DATA`, `SEED_DEV_FIXTURES`, `WEBHOOK_ALLOW_LOCAL`.
 - All of it is parsed in `apps/server/src/config.ts`.
 
 **First admin on a real database:** username `admin`. The password is `ADMIN_PASSWORD` if set; otherwise a random one is printed once in the log, and Testify makes the admin change it at first sign-in.
@@ -63,10 +64,11 @@ apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createSer
   src/routes/      One file per area: auth, admin, projects (projects/plans/runs), specEditing (suites/cases/versions/move),
                    testPlanCases (spec tree, plan membership, Execute queue), customFields, caseSearch, ingestion (import),
                    exports, results (one result), batchExecution (CI results as JSON), junitResults (CI results as JUnit XML),
-                   bulkChanges (many cases in one call), reports, reportEmail, emailAdmin, apiTokens.
+                   bulkChanges (many cases in one call), webhooks, reports, reportEmail, emailAdmin, apiTokens.
   src/services/    Logic shared by routes: adminGuard, caseFilterService, reportService, reportEmailService, mailer,
                    rateLimits, loginThrottle, resultValidation, resultOverwrite, stepValidation, secrets,
-                   batchResults (recording a CI batch, JSON or JUnit), runByName (CI's run per build).
+                   batchResults (recording a CI batch, JSON or JUnit), runByName (CI's run per build),
+                   webhooks (the delivery worker), webhookEvents (what each event sends), webhookTargets (address rules).
   src/middleware/auth.ts   Authentication and permission checks (see "Auth and permissions").
   src/mcp/          mcpServer.ts: POST /mcp, read tools over the same services; writeTools.ts: write tools that call
                    the REST routes as the caller (internalRequests.ts).
@@ -83,7 +85,8 @@ apps/web/          React + Vite. src/App.tsx (~680 lines) calls the hooks, provi
 packages/core/     Domain logic with no database, each module unit-tested: ingestion/ (parsers), export/, reporting/
                    (report math, catalog, email rendering, schedules), rbac/ (permission registry, default roles),
                    custom-fields/ (validation, defaults, type inference, regex time limit), case-filter/, execution/
-                   (verdict and status lists), security/ (JWT, password policy).
+                   (verdict and status lists), security/ (JWT, password policy), webhooks/ (events, signing, Slack messages,
+                   blocked addresses).
 packages/db/       Kysely, Postgres-compatible SQL only. createDbClient(): no connection string = in-memory PGlite,
                    otherwise pg. migrations/ (tracked), repositories/, seeds/ (rbac registry, sample project, dev fixtures).
 docs/              changelog.md, api_roadmap.md, api_getting_started.md, deployment.md, reports_api_and_mcp.md, and the design docs (RFCs, blueprint, roadmap).
@@ -142,11 +145,11 @@ docs/              changelog.md, api_roadmap.md, api_getting_started.md, deploym
 - Each is bound to one project, so a token used on another project gets 403 (`TOKEN_PROJECT_MISMATCH`).
 - Routes outside any project (`/admin/...`, creating a project, `PATCH /auth/me`) refuse tokens (`TOKEN_NOT_ALLOWED`); deny by default via `tokenMayUseRoute`, except `GET /auth/me`, `GET /projects` and `/mcp`. A new route outside a project is therefore closed to tokens automatically.
 - A token's capabilities are capped by its issuer's **current** permissions, checked on every use. Disabling the issuer revokes their tokens.
-- System-wide permissions can never be granted to a token: `SYSTEM_ADMIN`, `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE`, `API_TOKEN_MANAGE` (`TOKEN_EXCLUDED_PERMISSIONS` in `packages/core/src/rbac/registry.ts`; existing tokens lose them on use).
+- Some permissions can never be granted to a token: the system-wide `SYSTEM_ADMIN`, `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE`, `API_TOKEN_MANAGE`, and `WEBHOOK_MANAGE` (a webhook sends data anywhere) (`TOKEN_EXCLUDED_PERMISSIONS` in `packages/core/src/rbac/registry.ts`; existing tokens lose them on use).
 - Limit: 1,200 requests per minute per token.
 
 **Permissions:**
-- The registry is in `packages/core/src/rbac/registry.ts` (19 keys).
+- The registry is in `packages/core/src/rbac/registry.ts` (20 keys).
 - Default roles: Admin, Test Lead, Tester, Viewer, Automation Service and No Access. Roles are editable and deletable once unused. New users default to Tester.
 - `SYSTEM_ADMIN` passes every check.
 - A project role replaces the global role in that project. Overrides (global or per project) have the final say.
@@ -191,6 +194,7 @@ docs/              changelog.md, api_roadmap.md, api_getting_started.md, deploym
   - Write one for every security-relevant change, with `...requestOrigin(request)` (real address and User-Agent) and `actor_type: actorType(user)` (`SERVICE_ACCOUNT` for an API token).
   - A new action only shows in the Admin Panel's Security Audit Log once it's added to `securityActions` in `routes/admin.ts`.
   - Plan and run create/edit/delete currently write none.
+- **Webhook events:** after a change commits, call the matching helper in `services/webhookEvents.ts` (`emitRunClosed`, `emitResultsRecorded`, ...); it queues deliveries for subscribed webhooks and never throws. A new event goes into `WEBHOOK_EVENTS` (`packages/core/src/webhooks/`), the Slack renderer there, and RFC 03 §7.3.
 - **Validate input up front** (`resultValidation.ts`, `stepValidation.ts`, `nameProblem` in `specEditing.ts`), so bad input gets a 400 naming each field instead of a database error.
 - **Transactions:** group a change into one transaction. Repositories that may run inside a caller's transaction use the `runInTransaction` pattern (if `db.isTransaction`, run directly; otherwise open one).
 - **Schema changes:** a new migration `packages/db/src/migrations/00N_<name>.ts` with `up` and `down`, registered in `MIGRATIONS`. Never edit a migration that has shipped; databases record which ones they ran. Ids are `varchar(36)` UUIDs, so never prefix them.
@@ -255,6 +259,10 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - A custom-field change made by another admin shows only after the next case or suite switch or a reload; nothing is pushed.
 - `AuditLogRepository` is used only by tests; routes insert audit rows directly.
 - Recharts 2 is deprecated upstream; the Recharts 3 upgrade hasn't been done.
+- Webhooks:
+  - A webhook that keeps failing isn't turned off automatically; each delivery gives up after 6 attempts.
+  - No filters beyond events (e.g. only one plan's runs), and no Teams card format.
+  - Events are queued just after their change commits, so a crash between the two loses one. Order isn't guaranteed across retries.
 
 ## Testing and verification
 

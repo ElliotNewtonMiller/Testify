@@ -30,6 +30,7 @@ services:
       SECRETS_KEY: ${SECRETS_KEY:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      WEBHOOK_ALLOW_LOCAL: ${WEBHOOK_ALLOW_LOCAL:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${TESTIFY_PORT:-3001}:3001"

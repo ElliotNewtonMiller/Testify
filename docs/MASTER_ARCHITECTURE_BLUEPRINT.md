@@ -93,11 +93,12 @@ See [RFC 02](./rfc_02_ux_density_and_hotkeys.md). In brief:
 ## 5. API, CI Results & Import
 
 - **REST API:** under `/api/v1`. Lists and creation sit under the parent and each item has its own address (`/projects/{id}/plans`, `/plans/{id}`, `/runs/{id}/results`); `PATCH` for partial updates; 201/200/204; problem-details errors. The conventions, route map and error codes are in [RFC 03 §1-4](./rfc_03_api_and_xml_contracts.md). The OpenAPI spec (`/docs/json`) and a docs page with "Try it out" (`/docs`) cover every route ([api_roadmap.md](./api_roadmap.md) step 3).
+- **Webhooks:** a project's events sent as they happen, signed JSON or Slack-style, from an outbox with retries ([RFC 03 §7.3](./rfc_03_api_and_xml_contracts.md)).
 - **Reports and MCP:** a catalog-driven reports API and an MCP endpoint for agents (reading, and changing cases, plans and results as the caller, with agent-made cases as DRAFTs) ([reports_api_and_mcp.md](./reports_api_and_mcp.md)).
 - **CI results:** `POST /api/v1/runs/{runId}/results/batch`, up to 5,000 results per request in one transaction, with an all-or-nothing option; or a JUnit XML file to `/results/junit` (up to 20,000 tests). Both also go into a run by name, created if needed (`POST /api/v1/plans/{planId}/results/batch|junit?run_name=`) ([RFC 03 §3](./rfc_03_api_and_xml_contracts.md)).
 - **Import:** dry run then execute, with interactive custom-field mapping and duplicate handling, up to 50 MB per file ([RFC 03 §6](./rfc_03_api_and_xml_contracts.md)).
 - **Export:** suite and case definitions, or a run's results, as JSON or CSV.
-- **Not built:** attachments and storage, the retention purge, webhooks ([RFC 03 §5, §7.3](./rfc_03_api_and_xml_contracts.md)).
+- **Not built:** attachments and storage, and the retention purge ([RFC 03 §5](./rfc_03_api_and_xml_contracts.md)).
 
 ---
 

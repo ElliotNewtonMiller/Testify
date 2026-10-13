@@ -45,7 +45,7 @@ describe('API tokens are limited to their own project', () => {
   });
 
   it("can't be given a system-wide permission, and the list of grantable ones leaves them out", async () => {
-    expect(Object.keys(TOKEN_EXCLUDED_PERMISSIONS).sort()).toEqual(['API_TOKEN_MANAGE', 'CUSTOM_FIELD_MANAGE', 'PROJECT_CREATE', 'SYSTEM_ADMIN', 'USER_MANAGE']);
+    expect(Object.keys(TOKEN_EXCLUDED_PERMISSIONS).sort()).toEqual(['API_TOKEN_MANAGE', 'CUSTOM_FIELD_MANAGE', 'PROJECT_CREATE', 'SYSTEM_ADMIN', 'USER_MANAGE', 'WEBHOOK_MANAGE']);
     for (const key of Object.keys(TOKEN_EXCLUDED_PERMISSIONS)) {
       const res = await mint(['SPEC_VIEW', key]);
       expect(res.statusCode, key).toBe(400);

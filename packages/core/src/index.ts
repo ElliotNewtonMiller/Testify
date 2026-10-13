@@ -8,3 +8,4 @@ export * from './rbac/evaluate.js';
 export * from './custom-fields/index.js';
 export * from './case-filter/index.js';
 export * from './execution/results.js';
+export * from './webhooks/index.js';

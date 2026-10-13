@@ -12,10 +12,11 @@ Status values: **Not started**, **Planning**, **In progress**, **Done**, **Dropp
 ## Where the API stands (2026-10-12)
 
 **Good:**
-- **Coverage:** 101 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
+- **Coverage:** 112 endpoints cover nearly everything the web app does: projects, suites, cases and versions, plans, runs, results, search, import, export, custom fields, admin, API tokens, reports and report emails. The web app itself uses these endpoints, so anything you can click, a script can do.
 - **Security:** project-bound API tokens (`tf_ci_...`), permissions checked per project, rate limits and an audit log (RFC 04).
 - **CI:** a build uploads its JUnit XML report as it is (up to 20,000 tests), or sends JSON batches of up to 5,000 results, into a run named after the build (step 5).
 - **Consistent** (step 1, 2026-10-12): one address style, verbs and status codes, one error format, one name per id, "runs" and "results" throughout.
+- **Webhooks:** a project's events reach Slack, CI or your own code as they happen, signed, with retries (step 7).
 - **Agents:** `POST /mcp` lets them list projects, search and read cases, run every report, and (with the right token) write cases as DRAFTs, manage plans and record results.
 
 **Weak:**
@@ -187,7 +188,7 @@ Many tools read that format, so the one file gives:
 
 ### 7. Webhooks
 
-**Status:** Not started
+**Status:** In progress. Part 1 of 2 done (2026-10-12): the server. That covers the events, delivery with signing and retries, the address rules, the management and delivery-log API, and docs. Left: the Admin Panel's Webhooks tab.
 
 **What:** Testify calls other systems when something happens, such as a run finishing, a test failing or a case being approved, so Slack, a bug tracker or CI can react. Each call is signed so the receiver can trust it. Designed in RFC 03 §7.3; not built.
 
@@ -270,3 +271,8 @@ Many tools read that format, so the one file gives:
 | 2026-10-12 | Agents get: create suites and cases, edit cases (one or many), create runs, record results, add and remove plan cases. Not: approve, deprecate, restore, delete. | Decided with Elliot. |
 | 2026-10-12 | Cases an agent creates always start as DRAFT, even with `SPEC_AUTO_APPROVE`; editing an approved case's content makes a new DRAFT. | Decided with Elliot: a person approves agents' work, which also limits what prompt injection could do. |
 | 2026-10-12 | Every MCP write-tool call writes an `MCP_WRITE` row to the Security Audit Log, and its changes say "(via Testify MCP)" in their User-Agent. | The changes keep their usual audit rows too. |
+| 2026-10-12 | Webhooks are managed with a new per-project `WEBHOOK_MANAGE` permission (Admin and Test Lead by default), never grantable to API tokens, in an Admin Panel tab. | Decided with Elliot. A webhook sends project data to any address. |
+| 2026-10-12 | Webhook targets: public and private networks yes; loopback and link-local (cloud metadata) no, unless `WEBHOOK_ALLOW_LOCAL=true`. Checked on save and on every connection after DNS; redirects not followed. | Decided with Elliot. |
+| 2026-10-12 | Two formats: signed JSON, and Slack-style messages (also Mattermost, Rocket.Chat, Discord's `/slack`). | Decided with Elliot; Teams later if asked for. |
+| 2026-10-12 | Nine events: runs (created, closed with summary), results (recorded, failed: one per request), test cases (created, approved, deprecated, restored), imports (completed). | Decided with Elliot. |
+| 2026-10-12 | Delivery is an outbox with claimed leases (several instances, at least once), retried after 1 min, 5 min, 30 min, 2 h, 8 h; one sender per webhook, so a dead receiver holds up only itself. | The per-webhook sender came from the live check: sending everything in one queue let one unreachable address delay every other webhook. |

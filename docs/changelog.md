@@ -2284,3 +2284,77 @@ Verified live on a production build, with the MCP SDK's HTTP client (as Claude C
 - `update_plan_cases`: a DRAFT can't join a plan.
 - A duplicate run name came back as a tool error.
 - The `MCP_WRITE` rows and the marked `CASE_CREATED` row were checked; this is where the `actor_type` bug showed.
+
+## Added: webhooks, the server (API roadmap step 7, part 1) (2026-10-12)
+
+Testify pushed nothing out but report emails. Now a project's events go to other systems as they happen: Slack when a run finishes or tests fail, CI or a bug tracker reacting to results, reviewers told about an agent's draft cases. Part 2 is the Admin Panel tab.
+
+**Decided with Elliot:**
+- **Who and where:** a new per-project permission `WEBHOOK_MANAGE`, Admin and Test Lead by default, never grantable to API tokens. It'll be managed in an Admin Panel tab (part 2).
+- **Targets:** public and private networks, but not loopback or link-local (cloud metadata), unless `WEBHOOK_ALLOW_LOCAL=true`.
+- **Formats:** signed JSON, or a Slack-style message.
+- **Events:** all four groups.
+
+**What changed:**
+- **Events** (`packages/core/src/webhooks/`, `WEBHOOK_EVENTS`):
+  - `run.created`;
+  - `run.closed`, with a summary from the run_summary report: counts, pass rate, new failures and fixes against the previous run, up to 20 failures;
+  - `results.recorded` and `results.failed`, one per request: a hotkey, a CI batch or a JUnit file;
+  - `test_case.created` (with `via: mcp` for an agent), `.approved`, `.deprecated`, `.restored`;
+  - `import.completed`;
+  - `ping`.
+  - Each comes from where the change happens, after it commits: the helpers in `services/webhookEvents.ts`, called from the run, result, batch, version, case and import routes. So bulk changes, JUnit uploads and MCP tools send them too.
+- **Envelope and signing:** `{ id, event, created_at, project, actor, url, data }`. `url` links into the web app when the public URL is set.
+  - Headers: `X-Testify-Event`, `-Event-Id`, `-Delivery`, `X-Signature-Timestamp`, and `X-Signature-SHA256`, the hex HMAC-SHA256 of `{timestamp}.{body}`.
+  - The secret (`whsec_…`) is shown once and stored encrypted with `SECRETS_KEY`. Without `SECRETS_KEY` on a real database, creating a webhook is refused (`SECRETS_KEY_REQUIRED`), as SMTP passwords are.
+- **Slack format:** `renderSlackMessage`. Its `text` has everything (for Mattermost, Rocket.Chat and Discord's `/slack`), and `blocks` lay it out for Slack. Test content is escaped, so it can't mention `@channel`.
+- **Delivery** (`services/webhooks.ts`): an outbox (`webhook_deliveries`, migration `010_webhooks`), sent at once and retried after 1 min, 5 min, 30 min, 2 h and 8 h, then `FAILED`.
+  - Each delivery is claimed with a compare-and-set lease, so several instances never send one twice.
+  - One sender per webhook per process sends in order; webhooks are sent to in parallel.
+  - A receiver that can't be reached gets one attempt per pass, so it holds up only itself.
+  - The answer must be 2xx within 10 s; redirects aren't followed.
+  - A 15-second poller (`startServer`) picks up retries. Deliveries are kept 30 days.
+- **Addresses** (`services/webhookTargets.ts`, `isBlockedAddress` in core):
+  - Loopback, unspecified, link-local and multicast are refused, IPv6 and IPv4-mapped forms included.
+  - The check happens when saving (literal addresses and `localhost`) and on every connection after DNS (a custom `lookup`), so DNS rebinding doesn't get around it.
+  - `WEBHOOK_ALLOW_LOCAL=true` lifts it. `npm run dev` sets it.
+- **API** (`routes/webhooks.ts`, a new "Webhooks" tag on `/docs`, 11 routes):
+  - `GET /webhook-events`;
+  - `GET`/`POST /projects/{id}/webhooks` (at most 20 per project);
+  - `GET`/`PATCH`/`DELETE /webhooks/{id}`, `rotate-secret`, `ping`;
+  - the paged delivery log, one delivery in full, `redeliver`.
+  - Project resolution and the token route check know `:webhookId` and `:deliveryId`.
+  - Audit rows `WEBHOOK_CREATED`/`UPDATED`/`DELETED`/`SECRET_ROTATED` show in the Security Audit Log.
+- **Permission:** `WEBHOOK_MANAGE` (registry 19 → 20 keys), added to `TOKEN_EXCLUDED_PERMISSIONS`. The seed adds it to existing databases' Admin and Test Lead roles.
+- **Docs:**
+  - RFC 03 §7.3 rewritten as built, with a test vector for signatures; the route map, error codes and summary table;
+  - RFC 04: the permission, the role matrix, token exclusions, audit actions, and a threat-model entry (exfiltration, server-side request forgery);
+  - `deployment.md`, `.env.example` and `docker-compose.yml`: `WEBHOOK_ALLOW_LOCAL`, and `SECRETS_KEY` for webhooks;
+  - the getting-started guide: a new §9 with Slack setup and signature checks in Node and Python (both run against the test vector and fresh signatures);
+  - README, blueprint, slices roadmap;
+  - roadmap: step 7 in progress, five decisions;
+  - CLAUDE.md/AGENTS.md.
+
+Found and fixed during the live check:
+- **One dead receiver delayed every webhook.** Deliveries went out one after another, so a webhook pointing at an unreachable address held up everything queued behind it, for up to 10 s per attempt. Now each webhook has its own sender and webhooks are sent to in parallel.
+- **Two timing bugs left deliveries for the poller** (up to 15 s late):
+  - A sender looked for deliveries due when its pass started, so it missed ones queued while it ran.
+  - A delivery queued just as a sender finished was skipped by the other passes.
+  - Senders now use the current time and check once more before letting go.
+
+Tests:
+- `packages/core/tests/webhooks.test.ts` (5): the signature (with the test vector), blocked and allowed addresses, the Slack message for every event, escaping, and failure lists.
+- `apps/server/tests/webhooks.test.ts` (6), against a local HTTP receiver:
+  - CRUD, validation, rotation; permissions, including that a token can't hold `WEBHOOK_MANAGE`; audit rows;
+  - a signed delivery checked at the receiver; the envelope; ping and redeliver; the Slack format; the paged log; a turned-off webhook;
+  - every event from its route (single results until auto-close, a JUnit upload with `close_run`, a manual close, case create, approve, deprecate, restore, an MCP agent's case, an import), only to subscribed webhooks of the project;
+  - retries with backoff to `FAILED`; two concurrent workers sending once; a redirect; a timeout;
+  - a dead receiver not holding up a healthy one;
+  - local addresses refused on save and after DNS; a project's force-delete removing its webhooks and deliveries.
+- `migrations.test.ts` +1 (010, its cascade and rollback). Permission counts and token exclusions updated in `rbac.test.ts`, `admin_roles_and_overrides.test.ts` and `api_token_scope.test.ts`. `openapi.test.ts` now expects 112 routes.
+
+Verified live on a production build (port 3995, `WEBHOOK_ALLOW_LOCAL=true`), with a receiver script checking every signature:
+- **Real events:** a JUnit upload with `close_run`, results recorded by hand until the run auto-closed, an approval, an MCP agent's case (its `<!channel>` escaped in Slack), and an import.
+- **Two webhooks** (JSON and Slack format) got all 15 deliveries within about 0.35 s, each signature valid and fresh. This was with a third webhook pointing at an unreachable address.
+- **Retries:** the receiver's first answer was a 500, and the delivery came again by itself about 71 s later.
+- **Default settings** (another instance without the flag): 169.254.169.254, 127.0.0.1, `localhost` and `[::ffff:127.0.0.1]` were refused; a 10.x address was accepted.

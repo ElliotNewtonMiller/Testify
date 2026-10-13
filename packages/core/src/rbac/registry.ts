@@ -35,6 +35,7 @@ export const PERMISSION_REGISTRY: PermissionDefinition[] = [
   { key: 'IMPORT_DATA', description: 'Bulk-import test suites and cases from XML/CSV/JSON.', module: 'Data' },
   { key: 'EXPORT_DATA', description: 'Export test data out of the project.', module: 'Data' },
   { key: 'REPORT_EMAIL', description: 'Email reports to anyone and manage scheduled report emails.', module: 'Data' },
+  { key: 'WEBHOOK_MANAGE', description: "Set up webhooks that send the project's events (runs, results, test cases, imports) to other systems.", module: 'Data' },
 ];
 
 export const PERMISSION_KEYS: string[] = PERMISSION_REGISTRY.map((p) => p.key);
@@ -43,7 +44,7 @@ export const PERMISSION_KEYS: string[] = PERMISSION_REGISTRY.map((p) => p.key);
  * Permissions an API token can never hold, with why. A token works only inside its one
  * project, so it can't hold permissions whose routes reach the whole system (users and roles,
  * global custom fields, creating projects), nor issue tokens (a token's tokens would never
- * work: their issuer isn't a user). Refused when a token is created, and dropped from existing
+ * work: their issuer isn't a user), nor set up webhooks (a way to send project data anywhere). Refused when a token is created, and dropped from existing
  * tokens on every use (middleware/auth.ts). The API Tokens tab never offers them.
  */
 export const TOKEN_EXCLUDED_PERMISSIONS: Readonly<Record<string, string>> = {
@@ -52,6 +53,7 @@ export const TOKEN_EXCLUDED_PERMISSIONS: Readonly<Record<string, string>> = {
   CUSTOM_FIELD_MANAGE: 'custom field definitions apply to every project',
   PROJECT_CREATE: 'creating projects happens outside any one project',
   API_TOKEN_MANAGE: "a token can't issue or revoke tokens",
+  WEBHOOK_MANAGE: 'a webhook sends project data to any address, so only people set them up',
 };
 
 /** Whether a permission can be given to an API token (see TOKEN_EXCLUDED_PERMISSIONS). */
@@ -89,6 +91,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'API_TOKEN_MANAGE',
     'CUSTOM_FIELD_MANAGE',
     'REPORT_EMAIL',
+    'WEBHOOK_MANAGE',
   ],
   'Test Lead': [
     'SPEC_VIEW',
@@ -105,6 +108,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'EXPORT_DATA',
     'API_TOKEN_MANAGE',
     'REPORT_EMAIL',
+    'WEBHOOK_MANAGE',
   ],
   Tester: ['SPEC_VIEW', 'SPEC_CREATE', 'SPEC_EDIT', 'EXECUTE_RUN', 'EXPORT_DATA'],
   Viewer: ['SPEC_VIEW', 'EXPORT_DATA'],

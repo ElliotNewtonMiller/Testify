@@ -48,7 +48,7 @@ declare module 'fastify' {
  *
  * The project comes from every id the request names:
  * - path params `:projectId`, `:planId`, `:runId`, `:caseId`, `:suiteId`, `:versionId`,
- *   `:scheduleId`, `:tokenId`, `:resultId` (a case may be named by its readable id, e.g. SHOP-12);
+ *   `:scheduleId`, `:tokenId`, `:resultId`, `:webhookId`, `:deliveryId` (a case may be named by its readable id, e.g. SHOP-12);
  * - `project_id`, `test_plan_id`, `test_run_id`, `test_case_id`, `test_suite_id` in the query or
  *   JSON body.
  * They must all belong to the same project, or the request is refused (`PROJECTS_DIFFER`) -- so a
@@ -98,6 +98,17 @@ export async function resolveRequestProject(request: FastifyRequest, db: Kysely<
   }
   if (params.scheduleId) add(await db.selectFrom('report_schedules').select('project_id').where('id', '=', params.scheduleId).executeTakeFirst());
   if (params.tokenId) add(await db.selectFrom('api_tokens').select('project_id').where('id', '=', params.tokenId).executeTakeFirst());
+  if (params.webhookId) add(await db.selectFrom('webhooks').select('project_id').where('id', '=', params.webhookId).executeTakeFirst());
+  if (params.deliveryId) {
+    add(
+      await db
+        .selectFrom('webhook_deliveries')
+        .innerJoin('webhooks', 'webhooks.id', 'webhook_deliveries.webhook_id')
+        .select('webhooks.project_id')
+        .where('webhook_deliveries.id', '=', params.deliveryId)
+        .executeTakeFirst()
+    );
+  }
   if (params.resultId) {
     add(
       await db
@@ -166,7 +177,7 @@ export async function apiTokenIssuerAccess(
 }
 
 /** A route address names a project item when it has one of these parameters. */
-const PROJECT_ROUTE_PARAM = /:(projectId|planId|runId|resultId|caseId|suiteId|versionId|scheduleId|tokenId)\b/;
+const PROJECT_ROUTE_PARAM = /:(projectId|planId|runId|resultId|caseId|suiteId|versionId|scheduleId|tokenId|webhookId|deliveryId)\b/;
 /** The routes outside any project that a token may still use: each stays within the token's project. */
 const TOKEN_PROJECTLESS_ROUTES = new Set([
   'GET /api/v1/auth/me', // who am I

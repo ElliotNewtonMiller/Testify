@@ -8,6 +8,7 @@ import { RESULT_OVERWRITE_MESSAGE, canOverwriteResults, isOverwrite, latestResul
 import { requirePermission, requireAnyPermission, EXECUTION_READ_PERMISSIONS } from '../middleware/auth.js';
 import { autoCloseRunIfComplete } from '../runAutoClose.js';
 import { actorType, requestOrigin } from '../audit.js';
+import { emitResultsRecorded, webhookActor } from '../services/webhookEvents.js';
 import { recordResultSchema, listRunResultsSchema, getResultSchema, RESULT_PAGE } from '../openapi/areas/projects.js';
 import { actorNames } from '../services/actorNames.js';
 import { commaList, readPage } from '../paging.js';
@@ -179,7 +180,8 @@ export async function registerResultRoutes(app: FastifyInstance, db: Kysely<Data
         .execute();
     });
 
-    // 5. Auto-close the run once every case in its plan has a result.
+    // 5. Webhooks, then auto-close the run once every case in its plan has a result.
+    await emitResultsRecorded(db, webhookActor(request.user), runId, 'UI', [{ test_case_id: planCase.test_case_id, verdict: body.verdict }]);
     const runStatus = await autoCloseRunIfComplete(db, runId, {
       id: actorId,
       type: request.user!.api_token ? 'SERVICE_ACCOUNT' : 'USER',

@@ -150,7 +150,7 @@ describe('OpenAPI spec and docs page', () => {
     expect(missing.map((r) => `${r.method} ${r.url}`)).toEqual([]);
     expect(apiRoutes.filter((r) => r.hidden).map((r) => `${r.method} ${r.url}`).sort()).toEqual(['DELETE /mcp', 'GET /mcp']);
     expect(inSpec.size).toBe(apiRoutes.length - 2);
-    expect(inSpec.size).toBe(101);
+    expect(inSpec.size).toBe(112);
     // Sign-in needs no credential; everything else does.
     expect(spec.paths['/api/v1/auth/login'].post.security).toEqual([]);
     expect(spec.security).toEqual([{ bearerAuth: [] }, { sessionCookie: [] }]);

@@ -94,6 +94,7 @@ All addresses below are under `/api/v1`. The permission each route needs is in R
 | Import | `POST /projects/{projectId}/imports/dry-run`, `POST /projects/{projectId}/imports/execute`, `GET /projects/{projectId}/imports/custom-field-options` (§6) |
 | Export | `POST /projects/{projectId}/exports/definitions`, `POST /projects/{projectId}/exports/results` |
 | API tokens | `GET`/`POST /projects/{projectId}/api-tokens`, `DELETE /api-tokens/{tokenId}` (revokes) |
+| Webhooks | `GET /webhook-events`, `GET`/`POST /projects/{projectId}/webhooks`, `GET`/`PATCH`/`DELETE /webhooks/{webhookId}`, `POST /webhooks/{webhookId}/rotate-secret`, `POST /webhooks/{webhookId}/ping`, `GET /webhooks/{webhookId}/deliveries` (paged), `GET /webhook-deliveries/{deliveryId}`, `POST /webhook-deliveries/{deliveryId}/redeliver` (§7.3) |
 | Users and roles | `GET`/`POST /admin/users`, `PATCH /admin/users/{userId}` (status), `PATCH /admin/users/{userId}/roles`, `GET`/`PUT /admin/users/{userId}/permission-overrides[?project_id=]`, `POST /admin/users/{userId}/reset-password`, `GET`/`POST /admin/roles`, `PATCH`/`DELETE /admin/roles/{roleId}`, `GET /admin/permissions` |
 | Custom field definitions | `GET`/`POST /admin/custom-fields`, `PATCH`/`DELETE /admin/custom-fields/{fieldId}` |
 | Email settings | `GET`/`PUT /admin/email-settings`, `POST /admin/email-settings/test`, `GET /admin/last-email` |
@@ -281,13 +282,13 @@ The codes a client is most likely to handle (the code is always in `code`; `deta
 
 | Status | Codes |
 | :--- | :--- |
-| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `INVALID_CURSOR`, `INVALID_JUNIT`, `UNKNOWN_FIELD` (a bulk change naming a custom field that doesn't exist), `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
+| `400` | `INVALID_REQUEST` (default), `INVALID_PARAMS` (reports, schedules), `INVALID_RESULT`, `INVALID_STEPS`, `INVALID_NAME`, `INVALID_FILTER`, `INVALID_FIELD_VALUE`, `INVALID_VALIDATION_PATTERN`, `PROJECTS_DIFFER`, `AMBIGUOUS_CASE_ID`, `INVALID_CURSOR`, `INVALID_JUNIT`, `INVALID_WEBHOOK_URL`, `SECRETS_KEY_REQUIRED`, `UNKNOWN_FIELD` (a bulk change naming a custom field that doesn't exist), `CAPABILITY_NOT_GRANTABLE`, `PASSWORD_POLICY_VIOLATION`, `CURRENT_PASSWORD_REQUIRED`, `PASSWORD_UNCHANGED` |
 | `401` | `UNAUTHORIZED` (no credential), `SESSION_ENDED` (signed out, expired, or signed by another server key), `INVALID_TOKEN`, `TOKEN_REVOKED`, `TOKEN_EXPIRED`, `TOKEN_ISSUER_INACTIVE` |
 | `403` | `FORBIDDEN` (with `required_permission`), `TOKEN_PROJECT_MISMATCH`, `TOKEN_NOT_ALLOWED` (an API token on a route outside any project), `RESULT_OVERWRITE_NOT_PERMITTED`, `CAPABILITY_CEILING_EXCEEDED`, `PASSWORD_CHANGE_REQUIRED`, `CSRF_HEADER_MISSING`, `CURRENT_PASSWORD_INCORRECT`, and the Admin Panel guards `PERMISSION_CEILING`, `TARGET_OUTRANKS_ACTOR`, `ROLE_OUTRANKS_ACTOR` |
 | `404` | `NOT_FOUND`, and in reports `PROJECT_NOT_FOUND`, `PLAN_NOT_FOUND`, `RUN_NOT_FOUND`, `CASE_NOT_FOUND`, `REPORT_NOT_FOUND` |
-| `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `LAST_RECIPIENT` (a report schedule's only recipient), `USER_EXISTS`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, a taken project prefix or run name |
+| `409` | "Still contains" on delete without `force`: `PROJECT_IN_USE`, `SUITE_IN_USE`, `CASE_IN_USE`, `PLAN_IN_USE`, `RUN_IN_USE`, `CUSTOM_FIELD_IN_USE`, `ROLE_IN_USE`, `CASE_HAS_RESULTS` (removing a case with results from a plan); also `LAST_ADMIN`, `LAST_RECIPIENT` (a report schedule's only recipient), `USER_EXISTS`, `ROLE_NAME_TAKEN`, `FIELD_NAME_TAKEN`, `WEBHOOK_LIMIT` (20 per project), a taken project prefix or run name |
 | `413` | `IMPORT_TOO_LARGE`, `PAYLOAD_TOO_LARGE` |
-| `422` | `RUN_CLOSED`, `PLAN_LOCKED`, `CASE_VERSION_LOCKED` (editing an approved version), `CASE_VERSION_NOT_APPROVED` (adding a draft to a plan), `CASE_REMOVED_FROM_PLAN`, `VERSION_NOT_DRAFT`, `VERSION_NOT_APPROVED`, `VERSION_NOT_DEPRECATED`, `VERSION_NOT_LATEST`, `REQUIRED_CUSTOM_FIELDS_MISSING`, `REQUIRED_FIELD_NEEDS_DEFAULT` |
+| `422` | `RUN_CLOSED`, `PLAN_LOCKED`, `CASE_VERSION_LOCKED` (editing an approved version), `CASE_VERSION_NOT_APPROVED` (adding a draft to a plan), `CASE_REMOVED_FROM_PLAN`, `VERSION_NOT_DRAFT`, `VERSION_NOT_APPROVED`, `VERSION_NOT_DEPRECATED`, `VERSION_NOT_LATEST`, `REQUIRED_CUSTOM_FIELDS_MISSING`, `REQUIRED_FIELD_NEEDS_DEFAULT`, `WEBHOOK_DISABLED` (pinging or redelivering to a webhook that's turned off) |
 | `429` | `RATE_LIMITED`, `ACCOUNT_LOCKED`, `TOO_MANY_ATTEMPTS`, `IMPORT_BUSY` (with `Retry-After`) |
 | `500` | `INTERNAL_ERROR` (with `request_id`) |
 
@@ -477,11 +478,51 @@ Content-Type: application/problem+json
 
 ### 7.3 Webhooks
 
-> **Not built.** Nothing pushes events out of Testify yet, except scheduled and manual report emails (see [reports_api_and_mcp.md](reports_api_and_mcp.md)).
+A project's webhooks send its events to other systems as they happen (`apps/server/src/routes/webhooks.ts`, delivery in `services/webhooks.ts`). Managing them needs `WEBHOOK_MANAGE` in the project, which API tokens can never hold: a webhook sends project data to any address. Admin and Test Lead have it by default.
 
-The plan:
-- **Events:** e.g. `result.failed`, `run.closed`, `test_case.approved`, `import.completed`.
-- **Signing:** each delivery is signed so receivers can verify it and reject replays. `X-Signature-Timestamp` holds the Unix time; `X-Signature-SHA256` holds an HMAC-SHA256 over `${timestamp}.${raw_json_body}` with the webhook's secret.
+**Events** (`WEBHOOK_EVENTS` in `packages/core/src/webhooks/`; `GET /api/v1/webhook-events` lists them). Each webhook subscribes to some:
+
+| Event | When | `data` |
+| :--- | :--- | :--- |
+| `run.created` | A run was created: in the web app, through the API, or by CI naming a new run (§3.4) | `run`, `plan` |
+| `run.closed` | A run was closed by a person, by CI (`close_run=true`), or automatically (`closed_by`: `person`, `ci`, `auto`) | `run`, `plan`, `closed_by`, `summary`: counts, `pass_rate`, `compared_to` and `new_failures`/`fixed`/`still_failing` against the plan's previous run, up to 20 `failures` with their messages |
+| `results.recorded` | A request recorded results: one result from the web app, or a whole CI batch or JUnit file | `run`, `plan`, `source` (UI/API), `recorded`, `counts` by verdict, `failed_count`, up to 20 `failures` |
+| `results.failed` | The same, when at least one result is FAILED or BLOCKED | the same |
+| `test_case.created` | A case was created (not by an import) | `test_case`, `version`, `via` (`mcp` for an AI agent) |
+| `test_case.approved` / `deprecated` / `restored` | A version was approved, or the case deprecated or restored | `test_case`, `version` |
+| `import.completed` | An import finished | `format`, its counts |
+| `ping` | "Send test" (`POST /webhooks/{id}/ping`), whatever the subscriptions | `webhook` |
+
+**Envelope.** A `json` webhook receives the envelope itself; a `slack` webhook receives a Slack-style message rendered from it (`{ text, blocks }`, which Slack, Mattermost, Rocket.Chat and Discord's `/slack` URLs show; test content is escaped, so it can't mention `@channel`):
+
+```json
+{
+  "id": "e7c1…",
+  "event": "run.closed",
+  "created_at": "2026-10-12T10:00:00.000Z",
+  "project": { "id": "…", "name": "Shop", "prefix": "SHOP" },
+  "actor": { "type": "SERVICE_ACCOUNT", "name": "ci (API token)" },
+  "url": "https://testify.example.com/#/reports/run?project=…&plan=…&run=…",
+  "data": { "run": { "id": "…", "name": "CI build 42", "status": "CLOSED" }, "plan": { "id": "…", "name": "Release" }, "closed_by": "ci", "summary": { "total": 120, "passed": 117, "failed": 3, "pass_rate": 0.975, "new_failures": 1, "failures": [ … ] } }
+}
+```
+
+`id` is the event's: the same for every webhook, retry and redelivery, so receivers can drop duplicates. `url` links into the web app when the server's public URL is set (Admin Panel → Email); `actor.type` is `SYSTEM` for automatic closes.
+
+**Signing.** Every delivery is a `POST` with `Content-Type: application/json`, `User-Agent: Testify-Webhooks/1`, `X-Testify-Event`, `X-Testify-Event-Id`, `X-Testify-Delivery` and:
+- `X-Signature-Timestamp`: Unix seconds;
+- `X-Signature-SHA256`: the hex HMAC-SHA256 of `{timestamp}.{body}` with the webhook's secret (`whsec_…`, shown once when created or rotated, stored encrypted with `SECRETS_KEY`).
+
+A receiver recomputes the signature over the raw body, compares in constant time, and rejects timestamps more than a few minutes old. For checking an implementation: secret `whsec_example`, timestamp `1760000000` and body `{"event":"ping"}` give `1d37f6891520fb7adc41c64e4abdedd5493ba5989b8bdb31a64f4da1462fdceb`.
+
+**Delivery and retries.** Events are queued in `webhook_deliveries` (an outbox) right after the change commits, and sent at once.
+- **Success:** a 2xx answer within 10 s. Redirects aren't followed (a 3xx is a failure).
+- **Retries:** after 1 min, 5 min, 30 min, 2 h and 8 h, then the delivery is `FAILED`.
+- **Workers:** deliveries are claimed with a compare-and-set lease, so several server instances never send one twice. Each webhook has one sender at a time per process, sending in order; a receiver that can't be reached holds up only its own webhook.
+- **Order:** not guaranteed across retries. Delivery is at least once.
+- **The delivery log:** `GET /webhooks/{id}/deliveries` (paged) and `GET /webhook-deliveries/{id}` (payload and the start of the answer), kept 30 days. `POST /webhook-deliveries/{id}/redeliver` sends one again.
+
+**Addresses.** `http(s)` only, no user name or password in the URL. Public and private-network addresses are allowed (a self-hosted Jenkins or Jira), but loopback, unspecified, link-local (cloud metadata at 169.254.169.254) and multicast addresses are refused: when saving, for literal addresses and `localhost`, and on every connection after DNS, so a name can't later resolve to one. `WEBHOOK_ALLOW_LOCAL=true` lifts this, for a receiver on the same machine (`npm run dev` sets it).
 
 ---
 
@@ -544,4 +585,4 @@ sequenceDiagram
 | **Field mapping and duplicates** | Drop / auto-create / map; create / overwrite / version up / skip (§6.4) | Built; per-case duplicate choices are API-only. |
 | **Dry run** | `POST /projects/{id}/imports/dry-run` preview before import (§6.5) | Built. |
 | **Auth and rate limits** | Bearer tokens, 429 with `Retry-After` (§7.1-7.2) | Built (RFC 04). |
-| **Webhooks** | HMAC-SHA256 signed events (§7.3) | Not built. |
+| **Webhooks** | HMAC-SHA256 signed events (§7.3) | Built (2026-10-12): 9 events, JSON or Slack format, retries, delivery log. |

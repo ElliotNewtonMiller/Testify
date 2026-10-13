@@ -10,7 +10,7 @@ Testify is one Node.js process that serves the API, the MCP endpoint (`/mcp`) an
 
 `docker-compose.yml` runs Testify and PostgreSQL together, with the database kept in a Docker volume.
 
-1. `cp .env.example .env`, then fill in `POSTGRES_PASSWORD` and `JWT_SECRET`. Generate each with `openssl rand -hex 32`. Also set `SECRETS_KEY` if you'll send email.
+1. `cp .env.example .env`, then fill in `POSTGRES_PASSWORD` and `JWT_SECRET`. Generate each with `openssl rand -hex 32`. Also set `SECRETS_KEY` if you'll send email or use webhooks.
 2. `docker compose up -d`
 3. `docker compose logs testify` shows the first admin's password. Sign in at http://localhost:3001 as `admin`; you'll be asked to choose a new password.
 
@@ -46,11 +46,12 @@ All configuration comes from environment variables; nothing reads a `.env` file 
 | --- | --- | --- |
 | `DATABASE_URL` | none (required) | `postgres://user:password@host:5432/database`. Development only: `memory` for a throwaway in-memory database. |
 | `JWT_SECRET` | none (required) | Signs sign-ins. At least 32 characters. Must be the same on every instance and must not change, or everyone is signed out. |
-| `SECRETS_KEY` | none | Encrypts the SMTP password saved in Admin Panel → Email. At least 32 characters. Without it, no SMTP password can be saved. If it changes, the password must be entered again. |
+| `SECRETS_KEY` | none | Encrypts the SMTP password saved in Admin Panel → Email and webhooks' signing secrets. At least 32 characters. Without it, no SMTP password can be saved and no webhook created. If it changes, the password must be entered again and webhook secrets rotated. |
 | `ADMIN_PASSWORD` | generated | The first admin's password, used only when the database has no users. Unset, a random one is printed once in the log and must be changed at first sign-in. |
 | `PORT` | `3001` | The port to listen on. |
 | `NODE_ENV` | | Set to `production` to refuse `DATABASE_URL=memory`. |
 | `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy, so client addresses and HTTPS come from its `X-Forwarded-*` headers. |
+| `WEBHOOK_ALLOW_LOCAL` | `false` | Set `true` to let webhooks reach loopback and link-local addresses (`localhost`, `127.x`, `169.254.x`), e.g. a receiver on the same machine. Private-network addresses (`10.x`, `192.168.x`, ...) work either way. `npm run dev` sets it. |
 | `CORS_ORIGINS` | none | Only needed if the web app is served from a different address than the API: a comma-separated list of exact origins. |
 | `LOG_LEVEL` | `info` | `info` logs one JSON line per request. `warn` and `error` log only problems; `silent` logs nothing. |
 | `WEB_DIST_DIR` | `apps/web/dist` | Where the built web app is. If there's no build, only the API is served. |
@@ -80,7 +81,7 @@ The session cookie is `SameSite=Strict`, so serve the web app and the API from t
 
 ## More than one instance
 
-Several instances can share one database if they share `JWT_SECRET` and `SECRETS_KEY`. Scheduled report emails are claimed atomically, so none is sent twice. Some limits are counted per instance, so with N instances they're effectively N times higher:
+Several instances can share one database if they share `JWT_SECRET` and `SECRETS_KEY`. Scheduled report emails and webhook deliveries are claimed atomically, so none is sent twice. Some limits are counted per instance, so with N instances they're effectively N times higher:
 - sign-in attempts per address;
 - API token, export and email rate limits;
 - at most 2 imports at a time.

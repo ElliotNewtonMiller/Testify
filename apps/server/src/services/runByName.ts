@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '@testify/db';
 import { sendError, sendPlanLockedError } from '../errors.js';
 import type { AuthenticatedUser } from '../middleware/auth.js';
+import { emitRunCreated, webhookActor } from './webhookEvents.js';
 
 export interface RunByName {
   id: string;
@@ -59,7 +60,10 @@ export async function findOrCreateRun(
     .onConflict((oc) => oc.columns(['test_plan_id', 'name']).doNothing())
     .returning('id')
     .executeTakeFirst();
-  if (inserted) return { id, name, created: true };
+  if (inserted) {
+    await emitRunCreated(db, webhookActor(user), id);
+    return { id, name, created: true };
+  }
   // Another request created it a moment ago.
   const raced = await db.selectFrom('test_runs').select(['id', 'name']).where('test_plan_id', '=', planId).where('name', '=', name).executeTakeFirstOrThrow();
   return { ...raced, created: false };

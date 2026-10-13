@@ -24,7 +24,7 @@ Testify's security model enforces:
 
 ## 2. Permission Key Registry
 
-Permissions are string constants named `<DOMAIN>_<ACTION>`, e.g. `SPEC_APPROVE`, `EXECUTE_RUN`, `API_TOKEN_MANAGE`. The registry holds 19 keys. Any key can be granted globally (through the global role or a global override) or for one project (through a project role or a project override).
+Permissions are string constants named `<DOMAIN>_<ACTION>`, e.g. `SPEC_APPROVE`, `EXECUTE_RUN`, `API_TOKEN_MANAGE`. The registry holds 20 keys. Any key can be granted globally (through the global role or a global override) or for one project (through a project role or a project override).
 
 ### 2.1 Permission Keys
 
@@ -49,6 +49,7 @@ Permissions are string constants named `<DOMAIN>_<ACTION>`, e.g. `SPEC_APPROVE`,
 | `IMPORT_DATA` | Data | Import suites and cases (TestLink XML, JUnit XML, TestRail CSV, CSV, JSON), including creating project-scoped custom fields while mapping. | **HIGH** |
 | `EXPORT_DATA` | Data | Export suites, cases and run results (JSON, CSV). | **HIGH** |
 | `REPORT_EMAIL` | Data | Email reports to any address and manage scheduled report emails. | **HIGH** |
+| `WEBHOOK_MANAGE` | Data | Set up webhooks that send the project's events to any address. Never grantable to an API token. | **HIGH** |
 
 ---
 
@@ -92,6 +93,7 @@ New users default to `Tester`.
 | `IMPORT_DATA` | ✓ | ✓ | | | | |
 | `EXPORT_DATA` | ✓ | ✓ | ✓ | | ✓ | |
 | `REPORT_EMAIL` | ✓ | ✓ | | | | |
+| `WEBHOOK_MANAGE` | ✓ | ✓ | | | | |
 
 Because `SYSTEM_ADMIN` passes every check, an Admin effectively holds every key; the Admin role's bundle also lists them all explicitly.
 
@@ -194,7 +196,7 @@ sequenceDiagram
 2. **Stored as a digest:** `api_tokens.token_hash` is an unsalted SHA-256 digest, looked up by value. A 32-byte random token has enough entropy that a slow, salted hash isn't needed (the same approach GitHub and Stripe use).
 3. **Bound to one project:** a token used on any other project gets `403 TOKEN_PROJECT_MISMATCH`, checked centrally for every route and every MCP tool call. A route that isn't part of any project (the `/api/v1/admin/...` routes, creating a project, changing your own account) refuses tokens outright with `403 TOKEN_NOT_ALLOWED`: deny by default, except `GET /auth/me`, `GET /projects` (only the token's project) and `/mcp` (which checks each call). See `tokenMayUseRoute` in `middleware/auth.ts`.
 4. **Capped by its issuer:** a token's capabilities can't exceed the issuer's permissions at creation. On every use they're intersected with the issuer's **current** permissions in the project. If the issuer is disabled or loses `API_TOKEN_MANAGE` there, the token stops working (`401 TOKEN_ISSUER_INACTIVE`), and disabling the issuer revokes their tokens for good.
-5. **System-wide permissions are never grantable** to a token, even by an admin (`TOKEN_EXCLUDED_PERMISSIONS` in `packages/core/src/rbac/registry.ts`): `SYSTEM_ADMIN` (it would be a cross-project superuser), `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE` (their routes reach the whole system) and `API_TOKEN_MANAGE` (a token can't issue tokens). Asking for one is `400 CAPABILITY_NOT_GRANTABLE`; the API Tokens tab doesn't offer them, and a token made before 2026-10-12 that holds one loses it on every use.
+5. **System-wide permissions are never grantable** to a token, even by an admin (`TOKEN_EXCLUDED_PERMISSIONS` in `packages/core/src/rbac/registry.ts`): `SYSTEM_ADMIN` (it would be a cross-project superuser), `USER_MANAGE`, `CUSTOM_FIELD_MANAGE`, `PROJECT_CREATE` (their routes reach the whole system), `API_TOKEN_MANAGE` (a token can't issue tokens) and `WEBHOOK_MANAGE` (a webhook sends project data anywhere, so only people set them up). Asking for one is `400 CAPABILITY_NOT_GRANTABLE`; the API Tokens tab doesn't offer them, and a token made before 2026-10-12 that holds one loses it on every use.
 6. **Expiry is optional:** no expiry by default, since a token can't outlive its issuer's access.
 7. **Revocation:** anyone with `API_TOKEN_MANAGE` on the project can revoke a token at once (`DELETE /api/v1/api-tokens/{tokenId}`). Revoked tokens are kept, greyed out, with their last-used time, for investigation.
 8. **Rate limit:** 1,200 requests per minute per token.
@@ -277,6 +279,8 @@ Actions written today, by area. The Admin Panel's Security Audit Log shows those
 | Results | `RESULT_RECORDED`, `RESULTS_BATCH_RECORDED`, `RUN_AUTO_CLOSED` (rows written before 2026-10-12 say `EXECUTION_RECORDED`, `BATCH_EXECUTION_RECORDED`, `BUILD_AUTO_CLOSED`; audit rows can't be changed) |
 | Custom fields | `CUSTOM_FIELD_DEFINITION_CREATED`, `CUSTOM_FIELD_DEFINITION_UPDATED`, `CUSTOM_FIELD_DEFINITION_DELETED` |
 | Data and email | `IMPORT_EXECUTED`, `DATA_EXPORTED`, `REPORT_EMAILED`, `REPORT_SCHEDULE_CREATED`, `REPORT_SCHEDULE_UPDATED`, `REPORT_SCHEDULE_DELETED`, `EMAIL_SETTINGS_UPDATED` |
+| Webhooks | `WEBHOOK_CREATED`, `WEBHOOK_UPDATED`, `WEBHOOK_DELETED`, `WEBHOOK_SECRET_ROTATED` |
+| Agents | `MCP_WRITE` (one per MCP write-tool call) |
 
 Not yet audited: creating, editing and deleting test plans and test runs, and closing or reopening a run by hand.
 
@@ -375,6 +379,16 @@ Mitigations:
 - On every send, a scheduled email re-checks that its creator is still active and still allowed to email that project.
 - Sending is rate limited to 60 emails per hour per user or token. That covers manual sends, a schedule's Send now, and the admin's test email; previews and scheduled sends aren't counted.
 - The SMTP password is encrypted at rest with `SECRETS_KEY` and never returned by the API.
+
+**Webhooks** send project events to an address someone typed in, from the server: an exfiltration channel like report emails, and a way to make the server call into its own network (server-side request forgery).
+
+Mitigations:
+- A dedicated `WEBHOOK_MANAGE` permission (Admin and Test Lead by default), project-scoped, which API tokens can never hold, so a leaked token or an agent can't set one up.
+- Creating, changing, deleting a webhook and rotating its secret are audit-logged (`WEBHOOK_*`).
+- Addresses (`apps/server/src/services/webhookTargets.ts`): loopback, unspecified, link-local (cloud metadata at 169.254.169.254) and multicast addresses are refused, when the URL is saved and again on every connection, after DNS, so a name that later resolves to 127.0.0.1 can't get through (DNS rebinding). Redirects aren't followed. Private networks are allowed (self-hosted Jenkins or Jira); `WEBHOOK_ALLOW_LOCAL=true` also allows local addresses.
+- Only the event is sent: no credentials, and the receiver's answer is kept only as its first 2 KB in the delivery log, visible to `WEBHOOK_MANAGE` holders.
+- Each delivery is signed (HMAC-SHA256 with a per-webhook secret, encrypted at rest with `SECRETS_KEY`, shown once), so receivers can reject forgeries and replays.
+- Test content in Slack-format messages is escaped, so it can't mention `@channel` or add links.
 
 ---
 

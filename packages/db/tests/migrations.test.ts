@@ -159,4 +159,25 @@ describe('migrateToLatest', () => {
     expect((await migrator.migrateTo('008_rename_report_schedule_fields')).error).toBeUndefined();
     expect(await indexes()).not.toContain('idx_test_cases_external_id');
   }, 30_000);
+
+  it("010 adds webhooks and their deliveries, which go with their project; rolling back removes them", async () => {
+    const tables = async () => (await db.introspection.getTables()).map((t) => t.name);
+    expect(await migrateToLatest(db)).toContain('010_webhooks');
+    expect(await tables()).toEqual(expect.arrayContaining(['webhooks', 'webhook_deliveries']));
+    const now = new Date().toISOString();
+    await db.insertInto('projects').values({ id: 'p1', name: 'P', prefix: 'P', created_at: now, updated_at: now } as any).execute();
+    await db
+      .insertInto('webhooks')
+      .values({ id: 'w1', project_id: 'p1', name: 'w', url: 'https://x.example', format: 'json', events: '[]', secret: 's', created_by: 'u', created_at: now, updated_at: now } as any)
+      .execute();
+    await db
+      .insertInto('webhook_deliveries')
+      .values({ id: 'd1', webhook_id: 'w1', event_id: 'e1', event: 'ping', payload: '{}', status: 'PENDING', next_attempt_at: now, created_at: now } as any)
+      .execute();
+    await db.deleteFrom('projects').where('id', '=', 'p1').execute();
+    expect(await db.selectFrom('webhook_deliveries' as any).selectAll().execute()).toHaveLength(0);
+    const migrator = new Migrator({ db, provider: { getMigrations: async () => MIGRATIONS } });
+    expect((await migrator.migrateTo('009_index_case_external_id')).error).toBeUndefined();
+    expect(await tables()).not.toContain('webhooks');
+  }, 30_000);
 });

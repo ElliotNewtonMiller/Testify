@@ -320,6 +320,8 @@ export interface Database {
   report_schedules: ReportSchedulesTable;
   last_email: LastEmailTable;
   sessions: SessionsTable;
+  webhooks: WebhooksTable;
+  webhook_deliveries: WebhookDeliveriesTable;
 }
 
 /** One row per sign-in (migration 003). The login token carries the id as `sid`. */
@@ -329,4 +331,37 @@ export interface SessionsTable {
   created_at: string;
   expires_at: string;
   revoked_at: string | null;
+}
+
+/** A project's webhook (migration 010). `events` is a JSON list; `secret` is encrypted. */
+export interface WebhooksTable {
+  id: string;
+  project_id: string;
+  name: string;
+  url: string;
+  format: string; // 'json' | 'slack'
+  events: string;
+  secret: string;
+  enabled: Generated<boolean>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One event for one webhook: the outbox the delivery worker sends and retries (migration 010). */
+export interface WebhookDeliveriesTable {
+  id: string;
+  webhook_id: string;
+  event_id: string;
+  event: string;
+  payload: string;
+  status: string; // 'PENDING' | 'SUCCEEDED' | 'FAILED'
+  attempts: Generated<number>;
+  next_attempt_at: string;
+  last_attempt_at: string | null;
+  response_status: number | null;
+  response_body: string | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
 }

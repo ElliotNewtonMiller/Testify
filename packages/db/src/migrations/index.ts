@@ -8,6 +8,7 @@ import * as m006 from './006_drop_unused_columns.js';
 import * as m007 from './007_rename_runs_and_results.js';
 import * as m008 from './008_rename_report_schedule_fields.js';
 import * as m009 from './009_index_case_external_id.js';
+import * as m010 from './010_webhooks.js';
 
 /**
  * Every schema migration, in the order they run. The keys are permanent names, recorded in
@@ -27,6 +28,7 @@ export const MIGRATIONS: Record<string, Migration> = {
   '007_rename_runs_and_results': m007,
   '008_rename_report_schedule_fields': m008,
   '009_index_case_external_id': m009,
+  '010_webhooks': m010,
 };
 
 const MIGRATION_TABLE = 'kysely_migration';

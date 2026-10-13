@@ -193,3 +193,15 @@ export function resolveLogLevel(env: NodeJS.ProcessEnv = process.env): LogLevel 
   }
   return raw as LogLevel;
 }
+
+/**
+ * WEBHOOK_ALLOW_LOCAL=true lets webhooks reach loopback and link-local addresses (localhost,
+ * 127.0.0.1, 169.254.x.x), which are refused otherwise (services/webhookTargets.ts). For a
+ * receiver on the same machine; `npm run dev` turns it on.
+ */
+export function resolveWebhookAllowLocal(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.WEBHOOK_ALLOW_LOCAL?.trim().toLowerCase();
+  if (!raw || raw === 'false') return false;
+  if (raw === 'true') return true;
+  throw new ConfigError(`WEBHOOK_ALLOW_LOCAL must be true or false (got "${env.WEBHOOK_ALLOW_LOCAL}").`);
+}
