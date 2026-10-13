@@ -2358,3 +2358,36 @@ Verified live on a production build (port 3995, `WEBHOOK_ALLOW_LOCAL=true`), wit
 - **Two webhooks** (JSON and Slack format) got all 15 deliveries within about 0.35 s, each signature valid and fresh. This was with a third webhook pointing at an unreachable address.
 - **Retries:** the receiver's first answer was a 500, and the delivery came again by itself about 71 s later.
 - **Default settings** (another instance without the flag): 169.254.169.254, 127.0.0.1, `localhost` and `[::ffff:127.0.0.1]` were refused; a 10.x address was accepted.
+
+## Added: the Admin Panel's Webhooks tab; API roadmap step 7 done (2026-10-12)
+
+The screen for webhooks, so they can be set up without the API.
+
+- **Admin Panel → 🔔 Webhooks** (new `apps/web/src/components/WebhooksPanel.tsx`), shown to holders of `WEBHOOK_MANAGE` (or `SYSTEM_ADMIN`). `WEBHOOK_MANAGE` also opens the Admin Panel now (`hasAdminPanelAccess`). There's a project picker, limited to projects where the user manages webhooks.
+  - **The list:** each webhook's name, host, format (CHAT or JSON), event count, the secret's last 4 characters, and its last delivery (Delivered, Waiting to retry, or Gave up, with the error).
+  - **Actions:** an On/Off pill; Send test, which reports the HTTP status and time, or the error; Edit; New secret (amber confirmation); Delete (amber warning, then Delete Anyway). Warnings show in the webhook's own card.
+  - **New or edit form:** name, URL, format pills (Chat message or JSON event), and event pills grouped as in the catalog (`GET /webhook-events`, with descriptions as tooltips).
+  - **The secret** is shown once, with Copy, after creating or replacing it.
+  - **Deliveries:** the log, 25 at a time with Load more. Each row shows when, event, status (and the next attempt), tries and answer. Clicking a row shows the payload sent and the receiver's answer, with Send again.
+- **Addresses** in `apps/web/src/api/routes.ts`; the `hasWebhookManagePermission` flag in `utils/permissions.ts`. Admin Panel projects now carry their permissions.
+- **Docs:**
+  - roadmap step 7 Done (every step of the API roadmap is done now);
+  - the getting-started guide points to the tab;
+  - CLAUDE.md/AGENTS.md: the components line, and a known gap (the tab follows global permissions, like API Tokens).
+
+Found and fixed while checking it live:
+- A confirmation and a new secret showed at the top of the list, out of view when scrolled down to the webhook. Confirmations now show in the webhook's card, and a new secret, a message or the form scrolls into view.
+- A paused webhook's confirmation was faded with the rest of its card; now only its summary is.
+- A failed delivery's answer read "HTTP 500 HTTP 500".
+
+Tests: `permissions.test.ts` covers `WEBHOOK_MANAGE` opening the Admin Panel. Web tests 48/48.
+
+Verified live on a production build (`http://127.0.0.1:3995`, a separate origin):
+- The tab listed three webhooks with their states.
+- **Send test** reported HTTP 200 in 2 ms.
+- **The delivery log** opened, and a `run.closed` row expanded to its payload.
+- **Created** a chat-format webhook from the form. The API confirmed its format and events, and the secret was shown once.
+- **Deleted** the unreachable webhook through the in-card warning.
+- **Paused** one (dimmed, Send test disabled), then **replaced its secret** (the hint updated).
+- **Edited** one: the form opened prefilled, and the added event was saved.
+- **The audit log** showed one row for each change.

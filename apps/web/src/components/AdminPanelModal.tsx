@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { EmailSettingsPanel } from "./EmailSettingsPanel";
+import { WebhooksPanel } from "./WebhooksPanel";
 import { UserProfile } from "./AuthModal";
 import { authHeaders, jsonHeaders } from "../utils/session";
 
@@ -41,6 +42,8 @@ interface ProjectItem {
   id: string;
   name: string;
   prefix?: string;
+  /** What the signed-in user may do in it (from GET /projects). */
+  permissions?: string[];
 }
 
 interface RoleTemplate {
@@ -132,7 +135,7 @@ export function AdminPanelModal({
   onCustomFieldsChanged,
 }: AdminPanelModalProps) {
   const [activeTab, setActiveTab] = useState<
-    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "EMAIL" | "AUDIT"
+    "ROSTER" | "MATRIX" | "TEMPLATES" | "CUSTOM_FIELDS" | "API_TOKENS" | "WEBHOOKS" | "EMAIL" | "AUDIT"
   >("ROSTER");
   // Each part of the panel needs its own permission; SYSTEM_ADMIN has them all.
   const myPermissions = currentUser?.permissions || [];
@@ -140,10 +143,12 @@ export function AdminPanelModal({
   const canManageUsers = isSystemAdmin || myPermissions.includes("USER_MANAGE");
   const canManageFields = isSystemAdmin || myPermissions.includes("CUSTOM_FIELD_MANAGE");
   const canManageTokens = isSystemAdmin || myPermissions.includes("API_TOKEN_MANAGE");
+  const canManageWebhooks = isSystemAdmin || myPermissions.includes("WEBHOOK_MANAGE");
   const visibleTabs: Array<typeof activeTab> = [
     ...(canManageUsers ? (["ROSTER", "MATRIX", "TEMPLATES"] as const) : []),
     ...(canManageFields ? (["CUSTOM_FIELDS"] as const) : []),
     ...(canManageTokens ? (["API_TOKENS"] as const) : []),
+    ...(canManageWebhooks ? (["WEBHOOKS"] as const) : []),
     ...(isSystemAdmin ? (["EMAIL"] as const) : []),
     ...(canManageUsers ? (["AUDIT"] as const) : []),
   ];
@@ -1149,6 +1154,22 @@ export function AdminPanelModal({
               🔑 API Tokens
             </button>
           )}
+          {canManageWebhooks && (
+            <button
+              onClick={() => setActiveTab("WEBHOOKS")}
+              style={{
+                padding: "10px 16px",
+                backgroundColor: "transparent",
+                border: "none",
+                borderBottom: activeTab === "WEBHOOKS" ? "2px solid #38bdf8" : "none",
+                color: activeTab === "WEBHOOKS" ? "#38bdf8" : "#94a3b8",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🔔 Webhooks
+            </button>
+          )}
           {isSystemAdmin && (
             <button
               onClick={() => setActiveTab("EMAIL")}
@@ -1218,6 +1239,7 @@ export function AdminPanelModal({
         )}
 
         {activeTab === "EMAIL" && <EmailSettingsPanel />}
+        {activeTab === "WEBHOOKS" && <WebhooksPanel projects={projects} />}
 
         {/* TAB 1: USER ROSTER & ADD USER */}
         {activeTab === "ROSTER" && (

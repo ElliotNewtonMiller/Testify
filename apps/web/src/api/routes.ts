@@ -85,6 +85,17 @@ export const api = {
   projectApiTokens: (projectId: string) => `${V1}/projects/${enc(projectId)}/api-tokens`,
   apiToken: (tokenId: string) => `${V1}/api-tokens/${enc(tokenId)}`,
 
+  // Webhooks
+  webhookEvents: `${V1}/webhook-events`,
+  projectWebhooks: (projectId: string) => `${V1}/projects/${enc(projectId)}/webhooks`,
+  webhook: (webhookId: string) => `${V1}/webhooks/${enc(webhookId)}`,
+  webhookRotateSecret: (webhookId: string) => `${V1}/webhooks/${enc(webhookId)}/rotate-secret`,
+  webhookPing: (webhookId: string) => `${V1}/webhooks/${enc(webhookId)}/ping`,
+  webhookDeliveries: (webhookId: string, params: { cursor?: string | null; limit?: number } = {}) =>
+    withQuery(`${V1}/webhooks/${enc(webhookId)}/deliveries`, params),
+  webhookDelivery: (deliveryId: string) => `${V1}/webhook-deliveries/${enc(deliveryId)}`,
+  webhookRedeliver: (deliveryId: string) => `${V1}/webhook-deliveries/${enc(deliveryId)}/redeliver`,
+
   // Administration
   admin: {
     users: `${V1}/admin/users`,

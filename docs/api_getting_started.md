@@ -343,7 +343,7 @@ The full list is in [RFC 03 §4.2](rfc_03_api_and_xml_contracts.md). An unexpect
 
 ## 9. Get notified: webhooks
 
-A webhook makes Testify send a project's events to another system as they happen: a run finishing (with its pass rate and new failures), tests failing, a case drafted by an AI agent waiting for review, an import finishing. Setting one up needs `WEBHOOK_MANAGE` in the project (Admin and Test Lead have it); API tokens can't. `GET /api/v1/webhook-events` lists the events.
+A webhook makes Testify send a project's events to another system as they happen: a run finishing (with its pass rate and new failures), tests failing, a case drafted by an AI agent waiting for review, an import finishing. Setting one up needs `WEBHOOK_MANAGE` in the project (Admin and Test Lead have it); API tokens can't. The easiest way is **Admin Panel → Webhooks** in the web app, which also shows each webhook's deliveries; the API below does the same. `GET /api/v1/webhook-events` lists the events.
 
 **To a Slack channel.** In Slack, add an *Incoming Webhook* to the channel and copy its URL. Then:
 

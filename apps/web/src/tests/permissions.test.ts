@@ -26,8 +26,8 @@ describe('permissionFlags', () => {
     expect(permissionFlags(['SYSTEM_ADMIN', 'EXECUTE_RUN']).hasExecuteRunPermission).toBe(true);
   });
 
-  it('opens the Admin Panel to anyone managing users, custom fields or API tokens', () => {
-    for (const key of ['USER_MANAGE', 'CUSTOM_FIELD_MANAGE', 'API_TOKEN_MANAGE']) {
+  it('opens the Admin Panel to anyone managing users, custom fields, API tokens or webhooks', () => {
+    for (const key of ['USER_MANAGE', 'CUSTOM_FIELD_MANAGE', 'API_TOKEN_MANAGE', 'WEBHOOK_MANAGE']) {
       expect(permissionFlags([key]).hasAdminPanelAccess).toBe(true);
     }
     expect(permissionFlags(['CUSTOM_FIELD_MANAGE']).hasUserManagePermission).toBe(false);

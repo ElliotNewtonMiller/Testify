@@ -5,8 +5,8 @@ export interface PermissionFlags {
   hasExecuteRunPermission: boolean;
   hasRunManagePermission: boolean;
   hasUserManagePermission: boolean;
-  /** The Admin Panel holds users/roles, custom fields and API tokens -- open to anyone who
-   * manages any of them (each tab is then shown only to those with its permission). */
+  /** The Admin Panel holds users/roles, custom fields, API tokens and webhooks -- open to anyone
+   * who manages any of them (each tab is then shown only to those with its permission). */
   hasAdminPanelAccess: boolean;
   hasProjectCreatePermission: boolean;
   hasProjectDeletePermission: boolean;
@@ -19,6 +19,7 @@ export interface PermissionFlags {
   hasExportDataPermission: boolean;
   hasSpecViewPermission: boolean;
   hasReportEmailPermission: boolean;
+  hasWebhookManagePermission: boolean;
 }
 
 export function permissionFlags(permissions: string[]): PermissionFlags {
@@ -29,7 +30,10 @@ export function permissionFlags(permissions: string[]): PermissionFlags {
     hasRunManagePermission: has("RUN_MANAGE"),
     hasUserManagePermission,
     hasAdminPanelAccess:
-      hasUserManagePermission || permissions.includes("CUSTOM_FIELD_MANAGE") || permissions.includes("API_TOKEN_MANAGE"),
+      hasUserManagePermission ||
+      permissions.includes("CUSTOM_FIELD_MANAGE") ||
+      permissions.includes("API_TOKEN_MANAGE") ||
+      permissions.includes("WEBHOOK_MANAGE"),
     hasProjectCreatePermission: has("PROJECT_CREATE"),
     hasProjectDeletePermission: has("PROJECT_DELETE"),
     hasPlanManagePermission: has("PLAN_MANAGE"),
@@ -41,5 +45,6 @@ export function permissionFlags(permissions: string[]): PermissionFlags {
     hasExportDataPermission: has("EXPORT_DATA"),
     hasSpecViewPermission: has("SPEC_VIEW"),
     hasReportEmailPermission: has("REPORT_EMAIL"),
+    hasWebhookManagePermission: has("WEBHOOK_MANAGE"),
   };
 }

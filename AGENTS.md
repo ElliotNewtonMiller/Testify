@@ -79,7 +79,8 @@ apps/server/       Fastify API (TypeScript, ESM). Entry src/server.ts (createSer
 apps/web/          React + Vite. src/App.tsx (~680 lines) calls the hooks, provides the context, lays out panes and modals, wires hotkeys.
   src/hooks/       One hook per feature: useSession, useScope (project/plan/run), useExecutionWorkspace, useSpecTree,
                    useCaseSearch, useExecution, useSpecSelection, useCaseEditor, useSuiteEditor, useHotkeyEngine, useFocusFSM, ...
-  src/components/  layout/ (header, banners), workspace/ (panes 1-2), spec/ and execute/ (pane 3), reports/ (Reports view), modals.
+  src/components/  layout/ (header, banners), workspace/ (panes 1-2), spec/ and execute/ (pane 3), reports/ (Reports view), modals,
+                   Admin Panel tabs (AdminPanelModal, EmailSettingsPanel, WebhooksPanel).
   src/api/         routes.ts (every API address, as functions) and errors.ts (reading error messages).
   src/app/         AppContext (useApp) and shared messages. src/utils/ pure helpers. src/types.ts shared types.
 packages/core/     Domain logic with no database, each module unit-tested: ingestion/ (parsers), export/, reporting/
@@ -263,6 +264,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
   - A webhook that keeps failing isn't turned off automatically; each delivery gives up after 6 attempts.
   - No filters beyond events (e.g. only one plan's runs), and no Teams card format.
   - Events are queued just after their change commits, so a crash between the two loses one. Order isn't guaranteed across retries.
+  - The Admin Panel's Webhooks tab (and the Admin Panel button) follow global permissions, like API Tokens: someone with `WEBHOOK_MANAGE` only through a project role uses the API.
 
 ## Testing and verification
 

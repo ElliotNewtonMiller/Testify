@@ -188,7 +188,9 @@ Many tools read that format, so the one file gives:
 
 ### 7. Webhooks
 
-**Status:** In progress. Part 1 of 2 done (2026-10-12): the server. That covers the events, delivery with signing and retries, the address rules, the management and delivery-log API, and docs. Left: the Admin Panel's Webhooks tab.
+**Status:** Done (2026-10-12), in two parts:
+- the server: events, delivery with signing and retries, address rules, the management and delivery-log API;
+- the Admin Panel's Webhooks tab: create, edit, pause, test, new secret, delete, and the delivery log with Send again.
 
 **What:** Testify calls other systems when something happens, such as a run finishing, a test failing or a case being approved, so Slack, a bug tracker or CI can react. Each call is signed so the receiver can trust it. Designed in RFC 03 §7.3; not built.
 
