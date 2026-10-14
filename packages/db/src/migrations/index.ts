@@ -1,4 +1,5 @@
-import { Migrator, NO_MIGRATIONS, sql, type Kysely, type Migration } from 'kysely';
+import { sql, type Kysely } from 'kysely';
+import { Migrator, NO_MIGRATIONS, type Migration } from 'kysely/migration';
 import * as m001 from './001_initial_schema.js';
 import * as m002 from './002_password_change_required.js';
 import * as m003 from './003_sessions.js';

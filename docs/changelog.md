@@ -2391,3 +2391,31 @@ Verified live on a production build (`http://127.0.0.1:3995`, a separate origin)
 - **Paused** one (dimmed, Send test disabled), then **replaced its secret** (the hint updated).
 - **Edited** one: the form opened prefilled, and the added event was saved.
 - **The audit log** showed one row for each change.
+
+## Updated: dependencies (security advisories) and CI actions (2026-10-14)
+
+`npm audit` reported 5 advisories in runtime dependencies (2 high) and 4 in development tools (2 critical). Now it reports none.
+
+- **Runtime:**
+  - `fastify` 5.12.3 → 5.12.7, and `fast-uri`: patch updates for a DoS through HTTP/2 trailers and for URI normalization.
+  - `@fastify/swagger-ui` 5 → 6. That brings `@fastify/static` 10.1.6, fixing a path-traversal route-guard bypass. In Testify it only served the public `/docs` assets.
+  - `kysely` 0.27 → 0.29: SQL injection through JSON-path keys and `sql.lit`. Testify uses neither, but the package is the database layer, so it's updated. The one breaking change: the migration tools moved to `kysely/migration` (`packages/db/src/migrations/index.ts` and its test).
+- **Development:**
+  - `vitest` 3 → 5: prototype-pollution RCE in tinypool, file read through mocks. It's now a root dev dependency too.
+  - `source-map-js` via `npm audit fix`.
+  - `vite` in the web app pinned to `^6.4.4`. The installed tree had vite 7 against a `^6.1.0` range.
+  - esbuild 0.25.12 (under vite 6.4) added to `allowScripts`, as 0.28.2 already was.
+- **`npm test --workspace=apps/server` now uses the repo's vitest config** (new `apps/server/vitest.config.ts`). Run alone, it used vitest's 5-second default, so five whole-server tests timed out. That predates this update; CI and the root `npm test` were fine.
+- **CI:** `actions/checkout` and `actions/setup-node` v4 → v7. GitHub has deprecated v4's Node 20 runtime. Nothing in v5–v7 breaks this workflow: it already sets `cache: npm`.
+- **CLAUDE.md/AGENTS.md:** the repo is on GitHub now, and pushes run CI.
+
+**Real PostgreSQL:** CI on Elliot's push of the previous commit passed every job, including "Production build on PostgreSQL". That job runs migrations 001–010 on a fresh PostgreSQL, loads the demo through the API and restarts. These upgrades get the same check on the next push.
+
+Verified:
+- `npm audit`: 0 vulnerabilities. Typecheck clean.
+- Tests: 661/661 from the root; 327/327 (server) and 48/48 (web) from their workspaces.
+- Production build on port 3995:
+  - migrations at start-up;
+  - `/docs` renders in the browser, and its JSON lists 112 routes;
+  - `/docs/static/../` traversal is refused (404 and 403);
+  - the JUnit, MCP and webhook flows work, with all 15 deliveries signed and valid.

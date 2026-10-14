@@ -281,7 +281,7 @@ These were chosen deliberately; don't reverse them without asking Elliot.
 - **Every change gets an entry at the end of `docs/changelog.md`:** what changed, why, decisions made with Elliot, tests added, and how it was verified.
 - **Update this file** only when a fact, convention, decision or gap above changes. Keep it describing the present.
 - **`AGENTS.md` is an identical copy** of this file for other agents. Update both together.
-- **Commits:** Elliot has authorized committing directly to the local repo, in logical commits with clear messages. There's no git remote; don't add one or push unless asked.
+- **Commits:** Elliot has authorized committing directly to the local repo, in logical commits with clear messages. The repo is on GitHub (`origin`, `ElliotNewtonMiller/Testify`), where every push runs CI, including the production build on real PostgreSQL. Don't push unless asked.
 - **Ask before downloading** packages or images.
 - **After a change,** give Elliot a short checklist of what to test.
 - **API work:** `docs/api_roadmap.md` tracks the planned API and MCP steps. Update a step's status and the Decisions table as the work happens.

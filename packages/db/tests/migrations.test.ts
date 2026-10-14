@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { Migrator, sql, type Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
+import { Migrator } from 'kysely/migration';
 import { createDbClient } from '../src/client.js';
 import type { Database } from '../src/types.js';
 import * as initialSchema from '../src/migrations/001_initial_schema.js';
